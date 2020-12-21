@@ -73,7 +73,7 @@ def invert_Poisson(force, dims, BCs=['fixed', 'fixed'],
     S =(forcing - forcing).load()
     A = forcing - forcing + 1.0/np.cos(np.deg2rad(lats))
     B = forcing - forcing
-    C = forcing - forcing + np.cos(np.deg2rad((lats+lats.shift({'lat':1}))/2.0))
+    C = forcing - forcing + np.cos(np.deg2rad((lats+lats.shift({dims[0]:1}))/2.0))
     F =(forcing * np.cos(np.deg2rad(lats))).where(forcing!=undeftmp, undeftmp)
     
     dimAll = F.dims
@@ -145,10 +145,10 @@ def invert_Poisson(force, dims, BCs=['fixed', 'fixed'],
         
         if printInfo:
             if flags[0]:
-                print(info + ' {0:4.0f} and tolerance is {1:e} (   overflows!)'
+                print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
                       .format(flags[2], flags[1]))
             else:
-                print(info + ' {0:4.0f} and tolerance is {1:e}'
+                print(info + ' loops {0:4.0f} and tolerance is {1:e}'
                       .format(flags[2], flags[1]))
     
     S = S.where(forcing!=undeftmp, other=undef).rename('inverted')
@@ -213,7 +213,7 @@ def invert_Poisson_animated(force, BCs=['fixed', 'fixed'], undef=np.nan,
     
     A = zero + 1.0/np.cos(np.deg2rad(lats))
     B = zero.copy()
-    C = zero + np.cos(np.deg2rad((lats+lats.shift({'lat':1}))/2.0))
+    C = zero + np.cos(np.deg2rad((lats+lats.shift({force.dims[0]:1}))/2.0))
     F =(forcing * np.cos(np.deg2rad(lats))).where(forcing!=undeftmp, undeftmp)
     
     dimAll = F.dims
@@ -255,6 +255,8 @@ def invert_Poisson_animated(force, BCs=['fixed', 'fixed'], undef=np.nan,
     snapshot = zero
     loop = 0
     while True:
+        loop += 1
+        
         invert_slice(snapshot.values, A.values, B.values, C.values, F.values,
                      dim2, dim1, del2, del1, BC2, BC1, delD2Sqr,
                      ratioQtr, ratioSqr, optArg, undeftmp, flags,
@@ -262,7 +264,7 @@ def invert_Poisson_animated(force, BCs=['fixed', 'fixed'], undef=np.nan,
         
         if printInfo:
             if flags[0]:
-                print('loops {0:4.0f} and tolerance is {1:e} (   overflows!)'
+                print('loops {0:4.0f} and tolerance is {1:e} (overflows!)'
                       .format(flags[2], flags[1]))
             else:
                 print('loops {0:4.0f} and tolerance is {1:e}'
@@ -270,12 +272,16 @@ def invert_Poisson_animated(force, BCs=['fixed', 'fixed'], undef=np.nan,
         
         lst.append(snapshot.copy())
         
-        if flags[2] < loop_per_frame or loop > max_loop:
+        if flags[2] < loop_per_frame or loop >= max_loop:
             break
-        
-        loop += 1
     
-    return xr.concat(lst, dim='iteration')
+    re = xr.concat(lst, dim='iteration').rename('inverted')
+    re['iteration'] = xr.DataArray(np.arange(loop_per_frame,
+                                             loop_per_frame*(max_loop+1),
+                                             loop_per_frame),
+                                   dims=['iteration'])
+    
+    return re
 
 
 

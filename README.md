@@ -99,3 +99,4 @@ psi = invert_Poisson_animated(vor[0,0] BCs=['extend', 'periodic'],
 ```
 ![animate plot](https://raw.githubusercontent.com/miniufo/xinvert/master/pics/animateConverge.gif)
 
+More examples can be found at this [notebook](https://github.com/miniufo/xinvert/blob/master/notebooks/1.%20Invert%20Poisson%20equation.ipynb)
