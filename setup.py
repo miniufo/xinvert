@@ -33,7 +33,7 @@ setup(
         'Programming Language :: Python :: 3.7'
     ],
 
-    keywords='invert inversion atmosphere ocean SOR iteration',
+    keywords='invert inversion atmosphere ocean SOR successive overrelaxation iteration',
 
     packages=find_packages(exclude=['docs', 'tests', "notebooks", "pics"]),
 
