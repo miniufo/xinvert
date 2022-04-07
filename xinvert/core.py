@@ -7,23 +7,73 @@ Copyright 2018. All rights reserved. Use is subject to license terms.
 """
 import numpy as np
 import xarray as xr
-from .numbas import invert_standard_2D, invert_general_2D, invert_general_bih_2D
+from .numbas import invert_standard_3D, invert_standard_2D, invert_general_2D,\
+                    invert_general_bih_2D
+from .utils import loop_noncore
 
 
 """
 Core functions are defined below
 """
 _R_earth = 6371200.0 # consistent with GrADS
-_omega = 7.292e-5
+_omega = 7.292e-5 # angular speed of the earth rotation
+_g = 9.80665 # gravitational
 _undeftmp = -9.99e8
 
-_latlon = ['lat', 'LAT', 'latitude' , 'LATITUDE' , 'lats', 'LATS',
-           'lon', 'LON', 'longitude', 'LONGITUDE', 'long', 'LONG']
+_latlon = ['lat', 'LAT', 'latitude' , 'LATITUDE' , 'lats', 'LATS', 'YC',
+           'lon', 'LON', 'longitude', 'LONGITUDE', 'long', 'LONG', 'XC']
+
+
+def invert_MultiGrid(invert_func, *args, ratio=3, gridNo=3, **kwargs):
+    from utils.XarrayUtils import coarsen
+    
+    ratios = [10, 6, 3, 1]
+    
+    mxLoop = kwargs['mxLoop'] if 'mxLoop' in kwargs else 5000
+    
+    loops  = [mxLoop*ratio/10 for ratio in ratios]
+    
+    if 'dims' not in kwargs:
+        raise Exception('kwarg dims= should be provided')
+    
+    dims = kwargs['dims']
+        
+    if 'BCs' in kwargs:
+        BCs = kwargs['BCs']
+    else:
+        BCs = ['fixed', 'fixed']
+    
+    periodics = [dim for dim, BC in zip(dims, BCs) if 'periodic' in BC]
+    
+    fs = [[coarsen(arg, kwargs['dims'], ratio=ratio,
+                   periodic=periodics) for arg in args] for ratio in ratios]
+    
+    o_guess = fs[0][0] - fs[0][0]
+    
+    o_guess = xr.where(np.isnan(o_guess), 0, o_guess) # maskout nan
+    os = []
+    
+    for i, (ratio, frs, loop) in enumerate(zip(ratios, fs, loops)):
+        kwargs['mxLoop'] = loop
+        
+        # iteration over coarse grid
+        o_guess = invert_func(*frs, **kwargs)
+        os.append(o_guess)
+        
+        print('finish grid of ratio =', ratio, ', loop =', loop)
+        
+        if ratio == 1:
+            break
+        
+        o_guess = o_guess.interp_like(frs[0])
+        o_guess = xr.where(np.isnan(o_guess), 0, o_guess) # maskout nan
+    
+    return o_guess, fs, os
 
 
 def invert_Poisson(force, dims, BCs=['fixed', 'fixed'], coords='latlon',
                    undef=np.nan, mxLoop=5000, tolerance=1e-6, optArg=None,
-                   cal_flow=False, printInfo=True, debug=False):
+                   cal_flow=False, printInfo=True, debug=False, out=None):
     """
     Inverting Poisson equation of the form \nabla^2 S = F:
     
@@ -71,7 +121,11 @@ def invert_Poisson(force, dims, BCs=['fixed', 'fixed'], coords='latlon',
         forcing = force.where(force!=undef, other=_undeftmp)
     
     zero = forcing - forcing
-    S    = zero.copy().load() # loaded because dask cannot be modified
+    
+    if out is None:
+        S = zero.copy().load() # loaded because dask cannot be modified
+    else:
+        S = xr.where(forcing==_undeftmp, out, 0) # applied boundary
     
     ######  calculating the coefficients  ######
     if coords == 'latlon':
@@ -96,7 +150,10 @@ def invert_Poisson(force, dims, BCs=['fixed', 'fixed'], coords='latlon',
                   mxLoop, tolerance, optArg, printInfo, debug)
     
     # properly de-masking
-    S = S.where(forcing!=_undeftmp, other=undef).rename('inverted')
+    if out is None:
+        S = S.where(forcing!=_undeftmp, other=undef).rename('inverted')
+    else:
+        S = S.rename('inverted')
     
     if cal_flow:
         u, v = __cal_flow(S, coords)
@@ -106,10 +163,10 @@ def invert_Poisson(force, dims, BCs=['fixed', 'fixed'], coords='latlon',
         return S
 
 
-def invert_Eliassen(force, um, bm, dims, BCs=['fixed', 'fixed'],
+def invert_Eliassen(force, Am, Bm, Cm, dims, BCs=['fixed', 'fixed'],
                     coords='latlon', f0=None, beta=None, optArg=None,
                     undef=np.nan, mxLoop=5000, tolerance=1e-6,
-                    cal_flow=False, printInfo=True, debug=False):
+                    cal_flow=False, printInfo=True, debug=False, out=None):
     """
     Inverting meridional overturning streamfunction of the form:
     
@@ -123,12 +180,15 @@ def invert_Eliassen(force, um, bm, dims, BCs=['fixed', 'fixed'],
     ----------
     force: xarray.DataArray
         Forcing function.
-    um: xarray.DataArray
+    Am: xarray.DataArray
+        Coefficient for the second direction (e.g., lev or lat).
+    Bm: xarray.DataArray
         Forcing function.
-    bm: xarray.DataArray
-        Forcing function.
+    Cm: xarray.DataArray
+        Coefficient for the first direction (e.g., lat or lon).
     dims: list
-        Dimension combination for the inversion e.g., ['lat', 'lev'].
+        Dimension combination for the inversion
+        e.g., ['lev', 'lat'] or ['lat','lon'].
     BCs: list
         Boundary conditions for each dimension in dims.
     undef: float
@@ -141,7 +201,7 @@ def invert_Eliassen(force, um, bm, dims, BCs=['fixed', 'fixed'],
         Flag for printing.
     debug: boolean
         Output debug info.
-        
+    
     Returns
     ----------
     S: xarray.DataArray
@@ -150,29 +210,33 @@ def invert_Eliassen(force, um, bm, dims, BCs=['fixed', 'fixed'],
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
     
-    zero = force - force
-    S    = zero.copy().load() # loaded because dask cannot be modified
+    # properly masking forcing
+    if np.isnan(undef):
+        forcing = force.fillna(_undeftmp)
+    else:
+        forcing = force.where(force!=undef, other=_undeftmp)
+    
+    zero = forcing - forcing
+    
+    if out is None:
+        S = zero.copy().load() # loaded because dask cannot be modified
+    else:
+        S = xr.where(forcing==_undeftmp, out, 0) # applied boundary
     
     ######  calculating the coefficients  ######
     if coords == 'latlon':
         lats = force[dims[0]]
-        const = _R_earth / 180. * np.pi
         
-        f = 2.0 * _omega * np.sin(lats)
-        
-        A = f * um.differentiate(dims[1]) / const
-        B =     bm.differentiate(dims[1])
-        C = -   bm.differentiate(dims[0])
-        F =(force * np.cos(lats)).where(force!=_undeftmp, _undeftmp)
+        A = Am
+        B = Bm
+        C = Cm
+        F =(forcing * np.cos(np.deg2rad(lats))).where(forcing!=_undeftmp,
+                                                      _undeftmp)
     elif coords == 'cartesian':
-        ydef = force[dims[0]]
-        
-        f = f0 + beta * ydef
-        
-        A = f * um.differentiate(dims[1])
-        B =     bm.differentiate(dims[1])
-        C = -   bm.differentiate(dims[0])
-        F = force.where(force!=_undeftmp, _undeftmp)
+        A = Am
+        B = Bm
+        C = Cm
+        F = forcing.where(forcing!=_undeftmp, _undeftmp)
     else:
         raise Exception('unsupported coords ' + coords +
                         ', should be [latlon, cartesian]')
@@ -182,7 +246,10 @@ def invert_Eliassen(force, um, bm, dims, BCs=['fixed', 'fixed'],
                    mxLoop, tolerance, optArg, printInfo, debug)
     
     # properly de-masking
-    S = S.where(force!=_undeftmp, other=undef).rename('inverted')
+    if out is None:
+        S = S.where(forcing!=_undeftmp, other=undef).rename('inverted')
+    else:
+        S = S.rename('inverted')
     
     if cal_flow:
         u, v = __cal_flow(S, coords)
@@ -627,6 +694,168 @@ def invert_geostreamfunction(lapPhi, dims, BCs=['fixed', 'fixed'],
     else:
         return S
 
+
+def invert_Omega_MG(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
+                    coords='latlon', f0=None, beta=None,
+                    undef=np.nan, mxLoop=5000, tolerance=1e-6,
+                    optArg=None, printInfo=True, debug=False,
+                    icbc=None, ratio=4, gridNo=3):
+    from utils.XarrayUtils import coarsen
+    
+    ratios = [10, 6, 3, 1]
+    loops  = [mxLoop*ratio/30 for ratio in ratios]
+    
+    fs = [coarsen(force, dims, ratio=ratio) for ratio in ratios]
+    Ss = [coarsen(S    , dims, ratio=ratio) for ratio in ratios]
+    
+    o_guess = fs[0] - fs[0]
+    o_guess = xr.where(np.isnan(o_guess), 0, o_guess) # maskout nan
+    os = []
+    
+    for i, (ratio, frc, stab, loop) in enumerate(zip(ratios, fs, Ss, loops)):
+        # iteration over coarse grid
+        o_guess = invert_OmegaEquation(frc, stab, dims=dims, BCs=BCs, f0=f0,
+                                       coords=coords, beta=beta, undef=undef,
+                                       mxLoop=loop, tolerance=tolerance,
+                                       optArg=optArg, debug=debug, icbc=o_guess,
+                                       printInfo=printInfo)
+        os.append(o_guess)
+        
+        print('finish grid of ratio =', ratio, ', loop =', loop)
+        
+        if ratio == 1:
+            break
+        
+        o_guess = o_guess.interp_like(fs[i+1])
+        o_guess = xr.where(np.isnan(o_guess), 0, o_guess) # maskout nan
+        
+        # # iteration over fine grid from the coarse initial guess
+        # o = invert_OmegaEquation(force, S, dims=dims, BCs=BCs, coords=coords,
+        #                          f0=f0, beta=beta, undef=undef, mxLoop=mxLoop/50,
+        #                          tolerance=tolerance, optArg=optArg, debug=debug,
+        #                          printInfo=printInfo, icbc=o_guess)
+    
+    return o_guess, fs, os
+
+
+
+def invert_OmegaEquation(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
+                         coords='latlon', f0=None, beta=None,
+                         undef=np.nan, mxLoop=5000, tolerance=1e-6,
+                         optArg=None, printInfo=True, debug=False,
+                         icbc=None):
+    """
+    Inverting Omega equation of the form:
+    
+               f^2 d ┌ dω ┐   d ┌ dω ┐   d ┌ dω ┐   F
+        L(ω) = --- --│(--)│ + --│(--)│ + --│(--)│ = -
+                S  dz└ dz ┘   dy└ dy ┘   dx└ dx ┘   S
+    
+    using SOR iteration.  It is slightly changed to:
+    
+                d ┌    dω ┐   d ┌  dω ┐   d ┌  dω ┐
+        L(ω) =  --│f^2(--)│ + --│S(--)│ + --│S(--)│ = F
+                dz└    dz ┘   dy└  dy ┘   dx└  dx ┘
+    
+    using SOR iteration.
+    
+    Parameters
+    ----------
+    force: xarray.DataArray
+        Forcing function.
+    S: xarray.DataArray
+        Stratification averaged over the domain.
+    dims: list
+        Dimension combination for the inversion e.g., ['lev', 'lat', 'lon'].
+    BCs: list
+        Boundary conditions for each dimension in dims.
+    coords: str
+        Coordinates in ['latlon', 'cartesian'] are supported.
+    undef: float
+        Undefined value.
+    mxLoop: int
+        Maximum loop number over which iteration stops.
+    tolerance: float
+        Tolerance smaller than which iteration stops.
+    optArg: float
+        Optimal argument for SOR.
+    printInfo: boolean
+        Flag for printing.
+    debug: boolean
+        Output debug info.
+    icbc: xarray.DataArray
+        Initial and boundary conditions for the result.
+        
+    Returns
+    ----------
+    S: xarray.DataArray
+        Results of the SOR inversion.
+    """
+    if len(dims) != 3:
+        raise Exception('3 dimensions are needed for inversion')
+    
+    if not np.isfinite(S[1:]).all():
+        raise Exception('inifinite stratification coefficient A')
+    
+    if np.isnan(S[1:]).any():
+        raise Exception('nan in coefficient A')
+    
+    if (S[1:]<=0).any():
+        raise Exception('unstable stratification in coefficient A')
+    
+    force, S = xr.broadcast(force, S)
+    
+    # properly masking forcing
+    if np.isnan(undef):
+        forcing = force.fillna(_undeftmp)
+    else:
+        forcing = force.where(force!=undef, other=_undeftmp)
+    
+    zero = forcing - forcing
+    
+    if icbc is None:
+        omega = zero.copy().load() # loaded because dask cannot be modified
+    else:
+        omega = icbc
+    
+    ######  calculating the coefficients  ######
+    if coords == 'latlon':
+        lats = force[dims[1]]
+        
+        latsH = np.deg2rad((lats+lats.shift({dims[1]:1}))/2.0)
+        latsG = np.deg2rad(lats)
+        f = 2.0 * _omega * np.sin(latsG)
+        
+        A = zero + f**2 * np.cos(latsG)
+        B = zero + S*np.cos(latsH)
+        C = zero + S/np.cos(latsG)
+        F =(forcing * np.cos(latsG)).where(forcing!=_undeftmp, _undeftmp)
+        
+    elif coords == 'cartesian':
+        ydef = force[dims[1]]
+        
+        f = f0 + beta * ydef
+        # dTHdz = np.abs((theta.shift({dims[0]:1}) - theta) / \
+        #                ( levs.shift({dims[0]:1}) - levs ))
+        
+        A = zero + f**2
+        B = zero + S
+        C = zero + S
+        F = forcing.where(forcing!=_undeftmp, _undeftmp)
+    else:
+        raise Exception('unsupported coords ' + coords +
+                        ', should be [latlon, cartesian]')
+    
+    # inversion
+    __inv_standard3D(A, B, C, F, omega, dims, BCs,
+                     mxLoop, tolerance, optArg, printInfo, debug)
+    
+    # properly de-masking
+    omega = omega.where(forcing!=_undeftmp, other=undef).rename('inverted')
+    
+    return omega
+
+
 def invert_Poisson_animated(force, BCs=['fixed', 'fixed'], undef=np.nan,
                             loop_per_frame=5, max_loop=100,
                             printInfo=True, debug=False):
@@ -760,6 +989,89 @@ def invert_Poisson_animated(force, BCs=['fixed', 'fixed'], undef=np.nan,
 """
 Below are the private helper methods
 """
+def __inv_standard3D(A, B, C, F, S, dims, BCs,
+                     mxLoop, tolerance, optArg, printInfo, debug):
+    """
+    Inverting a 3D volume of elliptic equation in standard form as:
+    
+        d ┌  dS ┐   d ┌  dS ┐   d ┌  dS ┐
+        --│A(--)│ + --│B(--)│ + --│C(--)│ = F
+        dz└  dz ┘   dy└  dy ┘   dx└  dx ┘
+    
+    using SOR iteration. If F = F['time', 'lev', 'lat', 'lon'] and we invert
+    for the 3D spatial distribution, then 3rd dim is 'lev', 2nd dim is 'lat'
+    and 1st dim is 'lon'.
+
+    Parameters
+    ----------
+    A: xr.DataArray
+        Coefficient A.
+    B: xr.DataArray
+        Coefficient B.
+    C: xr.DataArray
+        Coefficient C.
+    F: xr.DataArray
+        Forcing function F.
+    S: xr.DataArray
+        Initial guess of the solution (also the output).
+    dims: list
+        Dimension combination for the inversion e.g., ['lev', 'lat', 'lon'].
+        Order is important, should be consistent with the dimensions of F.
+    BCs: list
+        Boundary conditions for each dimension in dims.
+        Order is important, should be consistent with the dimensions of F.
+    mxLoop: int
+        Maximum loop number over which iteration stops.
+    tolerance: float
+        Tolerance smaller than which iteration stops.
+    optArg: float
+        Optimal argument for SOR.
+    printInfo: boolean
+        Flag for printing.
+    debug: boolean
+        Output debug info.
+
+    Returns
+    -------
+    S: xr.DataArray
+        Solution.
+    """
+    if len(dims) != 3:
+        raise Exception('3 dimensions are needed for inversion')
+    
+    params = __cal_params3D(F[dims[0]], F[dims[1]], F[dims[2]], debug=debug)
+    
+    if optArg == None:
+        optArg = params['optArg']
+        
+    for selDict in loop_noncore(F, dims):
+        invert_standard_3D(S.loc[selDict].values, A.loc[selDict].values,
+                           B.loc[selDict].values, C.loc[selDict].values,
+                           F.loc[selDict].values,
+                           params['gc3' ], params['gc2' ], params['gc1' ],
+                           params['del3'], params['del2'], params['del1'],
+                           BCs[0], BCs[1], BCs[2], params['del1Sqr'],
+                           params['ratio2Sqr'], params['ratio1Sqr'],
+                           optArg, _undeftmp, params['flags'],
+                           mxLoop=mxLoop, tolerance=tolerance)
+        
+        info = str(selDict).replace('numpy.datetime64(', '') \
+                           .replace('numpy.timedelta64(', '') \
+                           .replace(')', '') \
+                           .replace('\'', '') \
+                           .replace('.000000000', '')
+        
+        if printInfo:
+            if params['flags'][0]:
+                print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
+                      .format(params['flags'][2], params['flags'][1]))
+            else:
+                print(info + ' loops {0:4.0f} and tolerance is {1:e}'
+                      .format(params['flags'][2], params['flags'][1]))
+    
+    return S
+
+
 def __inv_standard(A, B, C, F, S, dims, BCs,
                   mxLoop, tolerance, optArg, printInfo, debug):
     """
@@ -809,31 +1121,12 @@ def __inv_standard(A, B, C, F, S, dims, BCs,
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
     
-    dimAll = F.dims
+    params = __cal_params(F[dims[0]], F[dims[1]], debug=debug)
     
-    dimInv = [] # ordered dims for inversion
-    dimLop = [] # ordered dims for loop
-    for dim in dimAll:
-        if dim in dims:
-            dimInv.append(dim)
-        else:
-            dimLop.append(dim)
+    if optArg == None:
+        optArg = params['optArg']
     
-    dimLopVars = []
-    for dim in dimLop:
-        dimLopVars.append(F[dim].values)
-    
-    params = __cal_params(F[dimInv[0]], F[dimInv[1]], debug=debug)
-    
-    from itertools import product
-    for idices in product(*dimLopVars):
-        selDict = {}
-        for d, i in zip(dimLop, idices):
-            selDict[d] = i
-        
-        if optArg == None:
-            optArg = params['optArg']
-        
+    for selDict in loop_noncore(F, dims):
         invert_standard_2D(S.loc[selDict].values, A.loc[selDict].values,
                            B.loc[selDict].values, C.loc[selDict].values,
                            F.loc[selDict].values,
@@ -911,31 +1204,12 @@ def __inv_general(A, B, C, D, E, F, G, S, dims, BCs,
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
     
-    dimAll = F.dims
+    params = __cal_params(F[dims[0]], F[dims[1]], debug=debug)
     
-    dimInv = [] # ordered dims for inversion
-    dimLop = [] # ordered dims for loop
-    for dim in dimAll:
-        if dim in dims:
-            dimInv.append(dim)
-        else:
-            dimLop.append(dim)
+    if optArg == None:
+        optArg = params['optArg']
     
-    dimLopVars = []
-    for dim in dimLop:
-        dimLopVars.append(F[dim].values)
-    
-    params = __cal_params(F[dimInv[0]], F[dimInv[1]], debug=debug)
-    
-    from itertools import product
-    for idices in product(*dimLopVars):
-        selDict = {}
-        for d, i in zip(dimLop, idices):
-            selDict[d] = i
-        
-        if optArg == None:
-            optArg = params['optArg']
-        
+    for selDict in loop_noncore(F, dims):
         invert_general_2D(S.loc[selDict].values, A.loc[selDict].values,
                           B.loc[selDict].values, C.loc[selDict].values,
                           D.loc[selDict].values, E.loc[selDict].values,
@@ -1022,31 +1296,12 @@ def __inv_general_bih(A, B, C, D, E, F, G, H, I, J, S, dims, BCs,
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
     
-    dimAll = F.dims
+    params = __cal_params(F[dims[0]], F[dims[1]], debug=debug)
     
-    dimInv = [] # ordered dims for inversion
-    dimLop = [] # ordered dims for loop
-    for dim in dimAll:
-        if dim in dims:
-            dimInv.append(dim)
-        else:
-            dimLop.append(dim)
+    if optArg == None:
+        optArg = 1 # params['optArg'],  1 seems to be safer for 4-order SOR
     
-    dimLopVars = []
-    for dim in dimLop:
-        dimLopVars.append(F[dim].values)
-    
-    params = __cal_params(F[dimInv[0]], F[dimInv[1]], debug=debug)
-    
-    from itertools import product
-    for idices in product(*dimLopVars):
-        selDict = {}
-        for d, i in zip(dimLop, idices):
-            selDict[d] = i
-        
-        if optArg == None:
-            optArg = 1 # params['optArg'],  1 seems to be safer for 4-order SOR
-        
+    for selDict in loop_noncore(F, dims):
         invert_general_bih_2D(S.loc[selDict].values, A.loc[selDict].values,
                               B.loc[selDict].values, C.loc[selDict].values,
                               D.loc[selDict].values, E.loc[selDict].values,
@@ -1111,6 +1366,80 @@ def __cal_flow(S, coords):
                         ', should be [latlon, cartesian]')
     
     return u, v
+
+
+def __cal_params3D(dim3_var, dim2_var, dim1_var, debug=False):
+    """
+    Pre-calculate some parameters needed in SOR for the 3D cases.
+
+    Parameters
+    ----------
+    dim3_var : xarray.DataArray
+        Dimension variable of third dimension (e.g., lev).
+    dim2_var : xarray.DataArray
+        Dimension variable of second dimension (e.g., lat).
+    dim1_var : xarray.DataArray
+        Dimension variable of first  dimension (e.g., lon).
+    debug : boolean
+        Print result for debugging. The default is False.
+
+    Returns
+    -------
+    re : dict
+        Pre-calculated parameters.
+    """
+    gc3  = len(dim3_var)
+    gc2  = len(dim2_var)
+    gc1  = len(dim1_var)
+    del3 = dim3_var.diff(dim3_var.name).values[0] # assumed uniform
+    del2 = dim2_var.diff(dim2_var.name).values[0] # assumed uniform
+    del1 = dim1_var.diff(dim1_var.name).values[0] # assumed uniform
+    
+    if dim2_var.name in _latlon:
+        del2 = np.deg2rad(del2) * _R_earth # convert lat/lon to m
+    if dim1_var.name in _latlon:
+        del1 = np.deg2rad(del1) * _R_earth # convert lat/lon to m
+    
+    ratio1    = del1 / del2
+    ratio2    = del1 / del3
+    ratio1Sqr = ratio1 ** 2.0
+    ratio2Sqr = ratio2 ** 2.0
+    del1Sqr   = del1 ** 2.0
+    epsilon   = (np.sin(np.pi/(2.0*gc1+2.0)) **2.0 +
+                 np.sin(np.pi/(2.0*gc2+2.0)) **2.0 +
+                 np.sin(np.pi/(2.0*gc3+3.0)) **2.0)
+    optArg    = 2.0 / (1.0 + np.sqrt((2.0 - epsilon) * epsilon))
+    flags     = np.array([0.0, 1.0, 0.0])
+    
+    if debug:
+        print('dim3_var: ', dim3_var)
+        print('dim2_var: ', dim2_var)
+        print('dim1_var: ', dim1_var)
+        print('dim grids:', gc3, gc2, gc1)
+        print('dim intervals: ', del3, del2, del1)
+        print('ratio1Sqr, 2Sqr: ', ratio1Sqr, ratio2Sqr)
+        print('del1Sqr: ', del1Sqr)
+        print('optArg: ' , optArg)
+    
+    # store all and return
+    re = {}
+    
+    re['gc3'      ] = gc3       # grid count in second dimension (e.g., lev)
+    re['gc2'      ] = gc2       # grid count in second dimension (e.g., lat)
+    re['gc1'      ] = gc1       # grid count in first  dimension (e.g., lon)
+    re['del3'     ] = del3      # distance in third  dimension (unit: m or Pa)
+    re['del2'     ] = del2      # distance in second dimension (unit: m)
+    re['del1'     ] = del1      # distance in first  dimension (unit: m)
+    re['ratio1Sqr'] = ratio1Sqr # distance ratio: del1 / del2
+    re['ratio2Sqr'] = ratio2Sqr # ratio ** 4
+    re['del1Sqr'  ] = del1Sqr   # del1 ** 2
+    re['optArg'   ] = optArg    # optimal argument for SOR
+    re['flags'    ] = flags     # outputs of the SOR iteration:
+                                #   [0] overflow or not
+                                #   [1] tolerance
+                                #   [2] loop count
+    
+    return re
 
 
 def __cal_params(dim2_var, dim1_var, debug=False):

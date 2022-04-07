@@ -136,6 +136,10 @@ dyn = Dynamics(dset, grid)
 
 tau_real = dyn.curl(dset.taux.where(dset.taux!=dset.undef),
                     dset.tauy.where(dset.taux!=dset.undef))[0].load()
+tau_div = dyn.divg(dset.taux.where(dset.taux!=dset.undef),
+                   dset.tauy.where(dset.tauy!=dset.undef))[0].load()
+
+tau_div *= np.cos(np.deg2rad(tau_div.lat))**8
 
 
 #%% invert
@@ -151,6 +155,7 @@ h1, u1, v1 = invert_StommelMunk(tau_real, dims=['lat','lon'],
                                 rho=rho0,
                                 AH=3e3,
                                 undef=np.nan,
+                                div=tau_div*5.5,
                                 debug=False)
 
 

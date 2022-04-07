@@ -130,3 +130,39 @@ ax.colorbar(p, loc='b', label='', ticks=5e4, length=0.987)
 #                     fontsize=fontsize)
 
 
+
+
+
+#%% test Zhanghua
+import xarray as xr
+from GeoApps.GridUtils import add_latlon_metrics
+from GeoApps.DiagnosticMethods import Dynamics
+from xinvert.xinvert import invert_Poisson
+
+
+ds = xr.open_dataset('D:/uv.nc')
+
+ds, grid = add_latlon_metrics(ds, dims={'lat':'lat', 'lon':'lon'},
+                              boundary={'lat':'extend','lon':'extend'})
+
+dyn = Dynamics(ds, grid, arakawa='A')
+
+vor = dyn.curl(ds.u, ds.v)
+
+sf = invert_Poisson(vor, dims=['lat','lon'])
+
+sf.to_netcdf('d:/sf.nc')
+
+
+#%% invert
+import numpy as np
+from xinvert.xinvert.core import invert_Poisson
+
+
+sf = invert_Poisson(vor, dims=['lat','lon'], BCs=['extend', 'periodic'])
+vp = invert_Poisson(div, dims=['lat','lon'], BCs=['extend', 'periodic'])
+
+sf = sf.drop_vars('time').rename('sf')
+sf['time'] = np.arange(len(sf.time))
+vp = vp.drop_vars('time').rename('vp')
+vp['time'] = np.arange(len(vp.time))
