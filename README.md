@@ -6,7 +6,7 @@
 ## 1. Introduction
 Researches on meteorology and oceanography usually encounter [inversion problems](https://doi.org/10.1017/CBO9780511629570) that need to be solved numerically.  One of the classical inversion problem is to solve for a streamfunction given the vertical component of vorticity and proper boundary conditions.
 
-<img src="https://latex.codecogs.com/svg.latex?\Large&space;x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}" title="\Large x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}" />
+<img src="https://latex.codecogs.com/svg.latex?\Large&space;\nabla^2\psi=\zeta" title="Poisson equation" />
 
 Nowadays [`xarray`](http://xarray.pydata.org/en/stable/) becomes a popular data structure commonly used in [Big Data Geoscience](https://pangeo.io/).  Since the whole 4D data, as well as the coordinate information, are all combined into [`xarray`](http://xarray.pydata.org/en/stable/), solving the inversion problem become quite straightforward and the only input would be just one [`xarray.DataArray`](http://xarray.pydata.org/en/stable/) of vorticity.  Inversion on the spherical earth, like some meteorological problems, could utilize the spherical harmonics like [windspharm](https://github.com/ajdawson/windspharm), which would be more efficient using FFT than SOR used here.  However, in the case of ocean, SOR method is definitely a better choice in the presence of land/sea mask.
 
@@ -14,7 +14,13 @@ More importantly, this could be generalized into a numerical solver for elliptic
 
 One problem with SOR is that the speed of iteration using **explicit loops in Python** will be **e-x-t-r-e-m-e-l-y ... s-l-o-w**!  A very suitable solution here is to use [`numba`](https://numba.pydata.org/).  We may try our best to speed things up using more hardwares (possibly GPU).
 
-Classical problems include [the Poisson equation](https://github.com/miniufo/xinvert/blob/master/notebooks/1.%20Invert%20Poisson%20equation.ipynb), [the Gill-Matsuno model](https://github.com/miniufo/xinvert/blob/master/notebooks/2.%20Invert%20Gill-Matsuno%20model.ipynb), [the Stommel-Munk model](https://github.com/miniufo/xinvert/blob/master/notebooks/3.%20Wind-driven%20ocean%20circulation.ipynb), the Eliassen balance vortex model, the potential vorticity inversion model...
+Classical problems include:
+- [Poisson equation](https://github.com/miniufo/xinvert/blob/master/notebooks/1.%20Invert%20Poisson%20equation.ipynb);
+- [Gill-Matsuno model](https://github.com/miniufo/xinvert/blob/master/notebooks/2.%20Invert%20Gill-Matsuno%20model.ipynb);
+- [Stommel-Munk model](https://github.com/miniufo/xinvert/blob/master/notebooks/3.%20Wind-driven%20ocean%20circulation.ipynb);
+- Omega equation;
+- Eliassen balance vortex model;
+- potential vorticity inversion...
 
 ---
 ## 2. How to install
@@ -93,7 +99,9 @@ More examples can be found at these notebooks:
 1. [Poisson equation for streamfunction/velocity potential](https://github.com/miniufo/xinvert/blob/master/notebooks/1.%20Invert%20Poisson%20equation.ipynb)
 2. [Matsuno-Gill model for heat-induced tropical circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/2.%20Invert%20Gill-Matsuno%20model.ipynb)
 3. [Stommel-Munk model for wind-driven ocean circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/3.%20Wind-driven%20ocean%20circulation.ipynb)
-4. Eliassen balance vortex model for Hadley circulation and cyclones
-5. PV inversion model for the balanced mass and flow 
-6. background state
+4. Omega equation for large-scale vertical velocity
+5. Eliassen balance vortex model for Hadley circulation and cyclones
+6. PV inversion model for the balanced mass and flow 
+7. background reference state
+
 more to be added...
