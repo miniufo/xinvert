@@ -18,7 +18,8 @@ Classical problems include:
 - [Poisson equation](https://github.com/miniufo/xinvert/blob/master/notebooks/1.%20Invert%20Poisson%20equation.ipynb);
 - [Gill-Matsuno model](https://github.com/miniufo/xinvert/blob/master/notebooks/2.%20Invert%20Gill-Matsuno%20model.ipynb);
 - [Stommel-Munk model](https://github.com/miniufo/xinvert/blob/master/notebooks/3.%20Wind-driven%20ocean%20circulation.ipynb);
-- Omega equation;
+- [Geopotential equation](https://github.com/miniufo/xinvert/blob/master/notebooks/4.%20Geopotential%20model.ipynb);
+- [Omega equation](https://github.com/miniufo/xinvert/blob/master/notebooks/5.%20Omega%20equation.ipynb);
 - Eliassen balance vortex model;
 - potential vorticity inversion...
 
@@ -99,9 +100,10 @@ More examples can be found at these notebooks:
 1. [Poisson equation for streamfunction/velocity potential](https://github.com/miniufo/xinvert/blob/master/notebooks/1.%20Invert%20Poisson%20equation.ipynb)
 2. [Matsuno-Gill model for heat-induced tropical circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/2.%20Invert%20Gill-Matsuno%20model.ipynb)
 3. [Stommel-Munk model for wind-driven ocean circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/3.%20Wind-driven%20ocean%20circulation.ipynb)
-4. Omega equation for large-scale vertical velocity
-5. Eliassen balance vortex model for Hadley circulation and cyclones
-6. PV inversion model for the balanced mass and flow 
-7. background reference state
+4. [Geopotential equation for balanced mass field](https://github.com/miniufo/xinvert/blob/master/notebooks/4.%20Geopotential%20model.ipynb);
+5. [Omega equation for quasi-geostrophic vertical motion](https://github.com/miniufo/xinvert/blob/master/notebooks/5.%20Omega%20equation.ipynb);
+6. Eliassen balance vortex model for Hadley circulation and cyclones
+7. PV inversion model for the balanced mass and flow 
+8. background reference state
 
 more to be added...

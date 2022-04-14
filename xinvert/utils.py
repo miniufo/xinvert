@@ -15,8 +15,13 @@ import numba as nb
 """
 Core classes are defined below
 """
-R_earth = 6371200.0 # consistent with GrADS
-omega_earth = 7.292e-5
+_R_earth = 6371200.0 # consistent with GrADS
+_omega = 7.292e-5 # angular speed of the earth rotation
+_g = 9.80665 # gravitational
+_undeftmp = -9.99e8
+
+_latlon = ['lat', 'LAT', 'latitude' , 'LATITUDE' , 'lats', 'LATS', 'YC',
+           'lon', 'LON', 'longitude', 'LONGITUDE', 'long', 'LONG', 'XC']
 
 
 
@@ -25,8 +30,8 @@ def cal_dydx(lat, lon, coords='latlon'):
         xdef = np.deg2rad(lon)
         ydef = np.deg2rad(lat)
         
-        dy = _centered_diff(ydef) * R_earth
-        dx = _centered_diff(xdef) * R_earth * np.cos(ydef)
+        dy = _centered_diff(ydef) * _R_earth
+        dx = _centered_diff(xdef) * _R_earth * np.cos(ydef)
         
         return xr.broadcast(dy, dx)
     elif coords == 'cartesian':

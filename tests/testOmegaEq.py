@@ -5,83 +5,17 @@ Created on 2020.12.10
 @author: MiniUFO
 Copyright 2018. All rights reserved. Use is subject to license terms.
 """
-#%% test global idealized
-import xarray as xr
-import numpy as np
-
-
-ds = xr.open_dataset('D:/Data/ERAInterim/BKGState/OriginalData/Prs/T.nc',
-                     chunks={'time':1, 'level':29})
-
-levnew = np.linspace(1000, 100, 37)
-
-T = ds.t[0,:, :121,:].interp(level=levnew)
-
-
-#%% invert
-import numpy as np
-from xinvert.xinvert.core import invert_OmegaEquation
-from GeoApps.ConstUtils import Rd, Cp, omega
-
-
-xdef = T.longitude
-ydef = T.latitude
-zdef = T.level
-
-zgrid, ygrid, xgrid = xr.broadcast(zdef, ydef, xdef)
-
-F = 0.05*np.exp( -(zdef-300)**2/10000 -((ydef-30)**2+(xdef-120)**2)/100.0)
-T = T - T + (5*np.exp(T.level/500)-35)
-th = (T+273.15) * (1000/T.level)**(Rd/Cp)
-
-dTHdz = np.log(th).differentiate('level') * Rd * T / th.level
-
-
-omega = invert_OmegaEquation(F, dTHdz, dims=['level', 'latitude','longitude'],
-                     BCs=['fixed', 'fixed', 'fixed'],
-                     printInfo=True, debug=False, tolerance=1e-8)
-
-
-#%% plot wind and streamfunction
-import proplot as pplt
-import xarray as xr
-import numpy as np
-
-
-fig, axes = pplt.subplots(nrows=2, ncols=1, figsize=(10, 8), sharex=3, sharey=3)
-
-fontsize = 16
-
-axes.format(abc='(a)')
-
-ax = axes[0]
-p = ax.contourf(F[:,40,:], cmap='seismic',
-                levels=np.linspace(-1e-4, 1e-4, 21))
-ax.set_title('Forcing', fontsize=fontsize)
-ax.colorbar(p, loc='b', label='', ticks=1e-5, length=0.895)
-
-ax = axes[1]
-p = ax.contourf(omega[:,40,:], levels=31, cmap='jet')
-ax.set_title('QG omega', fontsize=fontsize)
-ax.colorbar(p, loc='b', label='', length=0.895)
-# ax.set_xticklabels([0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360],
-#                     fontsize=fontsize)
-
-
-
 #%% test global data from Dr. Yuan Zhao
 import xarray as xr
 import numpy as np
 from GeoApps.GridUtils import add_latlon_metrics
 
 
-dset = xr.open_dataset('I:/Omega/var2.nc', decode_times=False,
-                       chunks={'time':1})
+dset = xr.open_dataset('xinvert/Data/atmos3D.nc', decode_times=False)
 
-ds, grid = add_latlon_metrics(dset, dims={'lat':'lat', 'lon':'lon'},
-                              boundary={'lat':'extend','lon':'periodic'})
+ds, grid = add_latlon_metrics(dset, dims={'lev':'LEV', 'lat':'lat', 'lon':'lon'})
 
-ds['lev'] = ds['lev'] * 100
+ds['LEV'] = ds['LEV'] * 100
 
 #%%
 from GeoApps.ConstUtils import Rd, Cp, omega
@@ -89,121 +23,142 @@ from GeoApps.DiagnosticMethods import Dynamics
 
 dyn = Dynamics(ds, grid, arakawa='A')
 
-p   = ds.lev
-# Psfc= ds.psfc
+p   = ds.LEV
+Psfc= ds.psfc
 f   = 2*omega*np.sin(np.deg2rad(ds.lat))
 cos = np.cos(np.deg2rad(ds.lat))
 
-T   = ds.T
-U   = ds.U
-V   = ds.V
+T = ds.T
+U = ds.U
+V = ds.V
+W = ds.Omega
+H = ds.hgt
 
 th   = T * (100000 / p)**(Rd/Cp)
 TH   = grid.average(th, ['Y','X'])
 vor  = dyn.curl(U,V)
-dTHdp= TH.differentiate('lev')
-a    = Rd * T / p
-S    = - (a/TH) * dTHdp
+dTHdp= TH.differentiate('LEV')
+RPiP = (Rd * T / p / TH)
+S    = - RPiP * dTHdp
+zeta = vor + f
 
-# vor3 = (V.differentiate('lon') - U.differentiate('lat')*cos)
-#           )/(np.pi/180*6371200*cos)
-# TH3 = (th2 * cos).mean(['lat','lon']) / cos.mean('lat')
+########## traditional form of forcings ##########
+grdthx, grdthy = dyn.grad(th)
+grdvrx, grdvry = dyn.grad(vor)
 
-Um   =   U.mean('lon');   Ua =   U - Um
-Vm   =   V.mean('lon');   Va =   V - Vm
-thm  =  th.mean('lon');  tha =  th - thm
-vorm = vor.mean('lon'); vora = vor - vorm
+F1 = dyn.Laplacian((U * grdthx + V * grdthy) * RPiP)
+F2 = ((U * grdvrx + V * grdvry) * f).differentiate('LEV')
 
-grdthx, grdthy = dyn.grad(tha)
-grdthmx,grdthmy= dyn.grad(th-th+thm)
-grdvax, grdvay = dyn.grad(vora)
-grdvmx, grdvmy = dyn.grad(vor-vor+vorm + f)
+FAll = (F1 + F2)
+
+########### Q-vector form of forcings ###########
+ux, uy = dyn.grad(U, ['X', 'Y'])
+vx, vy = dyn.grad(V, ['X', 'Y'])
+
+Qx = - RPiP * (ux * grdthx + vx * grdthy)
+Qy = - RPiP * (uy * grdthx + vy * grdthy)
+
+FQvec = -2 * dyn.divg((Qx, Qy), dims=['X', 'Y'])
 
 
-tmp1 = (Um * grdthx + Vm * grdthy + Va*grdthmy) / (-dTHdp)
-tmp2 = (Um * grdvax + Vm * grdvay) + (Ua * grdvmx + Va * grdvmy)
-
-term1 = dyn.Laplacian(tmp1)
-term2 = tmp2.differentiate('lev') * f / S
-
-F = (term1 + term2)
-
-#%%
+#%% prepare lower boundary for inversion
 p3D = T-T+p
 
-F2 = F.where(p<=Psfc)
-O2 = xr.where(p3D<=Psfc, 0, ds.Omega).load()
+FAll2 = FAll.where(p<=Psfc)
+FQvec2 = FQvec.where(p<=Psfc)
+WBC = xr.where(p3D<=Psfc, 0, W).load()
 
 #%% invert
-from xinvert.xinvert.core import invert_OmegaEquation
+from xinvert.xinvert.apps import invert_OmegaEquation
 
-omega = invert_OmegaEquation(F, S,
-                              dims=['lev', 'lat', 'lon'],
-                              BCs=['fixed', 'fixed', 'extend'],
-                              printInfo=True, debug=False, tolerance=1e-16)
 
-# omega2 = invert_OmegaEquation(F2, S,
-#                              dims=['lev', 'lat', 'lon'],
-#                              BCs=['fixed', 'fixed', 'extend'],
-#                              printInfo=True, debug=False, tolerance=1e-16,
-#                              icbc=O2)
-omega3 = ds.Omega - ds.Omega.mean('lon')
+WQG = invert_OmegaEquation(FAll, S, dims=['LEV', 'lat', 'lon'],
+                           BCs=['fixed', 'fixed', 'extend'],
+                           printInfo=True, debug=False, tolerance=1e-16)
 
-#%%
-dsRe = xr.merge([omega.rename('QGomega'), omega2.rename('QGomegaTopo'),
-                 omega3.rename('omegaAnom')])
+WQG2 = invert_OmegaEquation(FAll2, S, dims=['LEV', 'lat', 'lon'],
+                            BCs=['fixed', 'fixed', 'extend'],
+                            printInfo=True, debug=False, tolerance=1e-16,
+                            icbc=WBC)
 
-dsRe.to_netcdf('d:/QGOmega.nc')
+WQvec = invert_OmegaEquation(FQvec, S, dims=['LEV', 'lat', 'lon'],
+                             BCs=['fixed', 'fixed', 'extend'],
+                             printInfo=True, debug=False, tolerance=1e-16)
 
-#%%
+WQvec2 = invert_OmegaEquation(FQvec2, S, dims=['LEV', 'lat', 'lon'],
+                             BCs=['fixed', 'fixed', 'extend'],
+                             printInfo=True, debug=False, tolerance=1e-16,
+                             icbc=WBC)
+
+#%% plot cross section
 import proplot as pplt
 
 x = 80
 
 fontsize = 16
 
-fig, axes = pplt.subplots(nrows=3, ncols=1, figsize=(11, 10))
+fig, axes = pplt.subplots(nrows=3, ncols=2, figsize=(11, 11))
 
-ax = axes[0]
-m=ax.pcolormesh(omega[:, :, x], levels=np.linspace(-0.1, 0.1, 21))
-ax.set_title('inverted QG omega')
-ax.colorbar(m, loc='r', length=1)
+ax = axes[0, 0]
+m=ax.pcolormesh(WQG[:, :, x], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (traditional)')
 
-ax = axes[1]
-m=ax.pcolormesh(omega2[:, :, x], levels=np.linspace(-0.1, 0.1, 21))
-ax.set_title('inverted QG omega (with topo)')
-ax.colorbar(m, loc='r', length=1)
+ax = axes[1, 0]
+m=ax.pcolormesh(WQG2[:, :, x], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (trad. with topo)')
 
-ax = axes[2]
-m=ax.pcolormesh(omega3[:, :, x], levels=np.linspace(-0.1, 0.1, 21))
+ax = axes[2, 0]
+m=ax.pcolormesh(W[:, :, x], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
 ax.set_title('observed omega')
-ax.colorbar(m, loc='r', length=1)
+
+ax = axes[0, 1]
+m=ax.pcolormesh(WQvec[:, :, x], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (Q-vector)')
+
+ax = axes[1, 1]
+m=ax.pcolormesh(WQvec2[:, :, x], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (Q-vec. with topo)')
+
+ax = axes[2, 1]
+m=ax.pcolormesh(W[:, :, x], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
+ax.set_title('observed omega')
+fig.colorbar(m, loc='b', cols=(1,2), length=1)
 
 axes.format(abc='(a)', ylim=[100000, 10000])
 
 
-#%%
+#%% plot horizontal plane
 import proplot as pplt
 
 fontsize = 16
-z = 10
+z = 25
 
-fig, axes = pplt.subplots(nrows=3, ncols=1, figsize=(9, 10))
+fig, axes = pplt.subplots(nrows=3, ncols=2, figsize=(11, 11))
 
-ax = axes[0]
-m=ax.pcolormesh(omega[z], levels=np.linspace(-0.1, 0.1, 21))
-ax.set_title('inverted QG omega')
-ax.colorbar(m, loc='r', length=1)
+ax = axes[0,0]
+m=ax.pcolormesh(WQG[z], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (traditional)')
 
-ax = axes[1]
-m=ax.pcolormesh(omega2[z], levels=np.linspace(-0.1, 0.1, 21))
-ax.set_title('inverted QG omega (with topo)')
-ax.colorbar(m, loc='r', length=1)
+ax = axes[1,0]
+m=ax.pcolormesh(WQG2[z], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (trad. with topo)')
 
-ax = axes[2]
-m=ax.pcolormesh(omega3[z], levels=np.linspace(-0.1, 0.1, 21))
+ax = axes[2,0]
+m=ax.pcolormesh(W[z], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
 ax.set_title('observed omega')
-ax.colorbar(m, loc='r', length=1)
+
+ax = axes[0,1]
+m=ax.pcolormesh(WQvec[z], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (Q-vector)')
+
+ax = axes[1,1]
+m=ax.pcolormesh(WQvec2[z], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (Q-vec. with topo)')
+
+ax = axes[2,1]
+m=ax.pcolormesh(W[z], levels=np.linspace(-0.1, 0.1, 21), cmap='RdBu_r')
+ax.set_title('observed omega')
+fig.colorbar(m, loc='b', cols=(1,2), length=1, label='')
 
 axes.format(abc='(a)', ylim=[-90, 90])
 
@@ -241,8 +196,6 @@ N22 = N22.interpolate_na('lev', fill_value='extrapolate')
 QVec2, _ = xr.broadcast(QVec, s.lev)
 QVec2 = QVec2.interpolate_na('lev', fill_value='extrapolate')
 
-#%%
-
 ds = xr.merge([s.transpose('lev','lat','lon').astype('f4'),
                t.transpose('lev','lat','lon').astype('f4'),
                u.transpose('lev','lat','lon').astype('f4'),
@@ -257,53 +210,116 @@ zNew = np.linspace(2.5, 3002.5, 601)
 ds.interp(lev=zNew).astype('f4').to_netcdf('I:/Omega/OFES30_20011206_Qian/data.nc')
 
 
-#%% invert
+#%% load converted netcdf
 import numpy as np
 import xarray as xr
-from GeoApps.EOSMethods import EOSMethods
 from GeoApps.GridUtils import add_latlon_metrics
 from GeoApps.DiagnosticMethods import Dynamics
-from xinvert.xinvert.core import invert_OmegaEquation
+from xinvert.xinvert.apps import invert_OmegaEquation
 
 ds = xr.open_dataset('I:/Omega/OFES30_20011206_Qian/data.nc',
-                     chunks={'lev':5}).astype('f4')
+                     chunks={'lev':6}).astype('f4')
 
 # dset = ds.sel({'lon':slice(143.1, 150.9), 'lat':slice(31.1, 38.9)})
+ds['lev'] = -ds['lev'] # Reverse the z-coord. positive direction
+                       # This is important for taking vertical derivatives.
 
-#%% calculate Q vector forcing
-dset, grid = add_latlon_metrics(ds, dims={'lat':'lat', 'lon':'lon'},
-                                boundary={'Y':'fill', 'X':'fill'})
+#%% calculate QG forcings
+from GeoApps.ConstUtils import omega
+
+dset, grid = add_latlon_metrics(ds, dims={'lat':'lat', 'lon':'lon'})
 
 dyn = Dynamics(dset, grid=grid, arakawa='A')
-eos = EOSMethods(dset, grid=grid, arakawa='A')
 
-u = ds.u
-v = ds.v
+u = ds.u / 100 # change unit from cm/s to m/s
+v = ds.v / 100 # change unit from cm/s to m/s
+w = ds.w / 100 # change unit from cm/s to m/s
 
-b = eos.cal_linear_buoyancy(ds.rho, rhoRef=1023)
+dyn = Dynamics(ds, grid, arakawa='A')
 
+b  = ds.rho * (-9.81/1023)
+f  = 2*omega*np.sin(np.deg2rad(ds.lat))
+N2 = b.mean(['lat','lon']).load().differentiate('lev').load()
+
+########## traditional form of forcings ##########
+bx, by = dyn.grad(b)
+zx, zy = dyn.grad(dyn.curl(u, v))
+
+adv_b = u*bx + v*by
+adv_z = u*zx + v*zy
+
+Ftrad = dyn.Laplacian(-adv_b) + adv_z.load().differentiate('lev')*f
+Ftrad = (xr.where(np.isfinite(Ftrad), Ftrad, np.nan)).load()
+
+############ Q-vector form of forcings ############
 ux, uy = dyn.grad(u)
 vx, vy = dyn.grad(v)
-bx, by = dyn.grad(b)
 
 Qx = ux*bx + vx*by
 Qy = uy*bx + vy*by
 
-divQ = dyn.divg((Qx, Qy), ['X', 'Y'])
-force = (xr.where(np.isfinite(divQ), divQ, np.nan) * 2).load()
+divQ  = -2 * dyn.divg((Qx, Qy), ['X', 'Y'])
+FQvec = xr.where(np.isfinite(divQ), divQ, np.nan).load()
 
-N2 = b.mean(['lat','lon']).load().differentiate('lev')
+#%% maskout
+WBC1 = xr.where(np.isnan(Ftrad), 0, w)
+WBC2 = xr.where(np.isnan(FQvec), 0, w)
 
-#%%
+#%% invert
 import time
 
 start = time.time()
-omega = invert_OmegaEquation(force, N2,
-                              dims=['lev', 'lat', 'lon'],
-                              BCs=['fixed', 'fixed', 'extend'],
-                              printInfo=True, debug=False, tolerance=1e-16).load()
+W1 = invert_OmegaEquation(Ftrad, N2, dims=['lev', 'lat', 'lon'],
+                          BCs=['fixed', 'fixed', 'extend'], mxLoop=500,
+                          printInfo=True, debug=False, tolerance=1e-9).load()
+W2 = invert_OmegaEquation(FQvec, N2, dims=['lev', 'lat', 'lon'],
+                          BCs=['fixed', 'fixed', 'extend'], mxLoop=500,
+                          printInfo=True, debug=False, tolerance=1e-9).load()
+W1t= invert_OmegaEquation(Ftrad, N2, dims=['lev', 'lat', 'lon'], icbc=WBC1,
+                          BCs=['fixed', 'fixed', 'extend'], mxLoop=500,
+                          printInfo=True, debug=False, tolerance=1e-9).load()
+W2t= invert_OmegaEquation(FQvec, N2, dims=['lev', 'lat', 'lon'], icbc=WBC2,
+                          BCs=['fixed', 'fixed', 'extend'], mxLoop=500,
+                          printInfo=True, debug=False, tolerance=1e-9).load()
 elapsed = time.time() - start
 print('time used: ', elapsed)
+
+
+#%% plot and compare
+import proplot as pplt
+
+fontsize = 16
+z = 10
+
+fig, axes = pplt.subplots(nrows=3, ncols=2, figsize=(11, 11))
+
+ax = axes[0,0]
+m=ax.pcolormesh(W1[z]*1e4, levels=np.linspace(-2, 2, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (traditional)')
+
+ax = axes[1,0]
+m=ax.pcolormesh(W2[z]*1e4, levels=np.linspace(-2, 2, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (Q-vector)')
+
+ax = axes[2,0]
+m=ax.pcolormesh(w[z]*1e4, levels=np.linspace(-2, 2, 21), cmap='RdBu_r')
+ax.set_title('observed omega')
+
+ax = axes[0,1]
+m=ax.pcolormesh(W1t[z]*1e4, levels=np.linspace(-2, 2, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (traditional topo.)')
+
+ax = axes[1,1]
+m=ax.pcolormesh(W2t[z]*1e4, levels=np.linspace(-2, 2, 21), cmap='RdBu_r')
+ax.set_title('inverted QG omega (Q-vector topo.)')
+
+ax = axes[2,1]
+m=ax.pcolormesh(w[z]*1e4, levels=np.linspace(-2, 2, 21), cmap='RdBu_r')
+ax.set_title('observed omega')
+
+fig.colorbar(m, loc='b', cols=(1,2), length=1, label='')
+
+axes.format(abc='(a)')
 
 #%% multi-grids
 from xinvert.xinvert.core import invert_Omega_MG
