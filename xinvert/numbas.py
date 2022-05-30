@@ -411,7 +411,7 @@ def invert_standard_2D(S, A, B, C, F,
         flags[1] = abs(norm - normPrev) / normPrev
         flags[2] = loop
         
-        if flags[1] < tolerance or loop >= mxLoop:
+        if flags[1] < tolerance or loop >= mxLoop or norm == 0:
             break
         
         normPrev = norm

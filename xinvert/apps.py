@@ -7,7 +7,7 @@ Copyright 2018. All rights reserved. Use is subject to license terms.
 """
 import numpy as np
 import xarray as xr
-from .utils import _R_earth, _omega, _undeftmp
+from .utils import _R_earth, _omega, _undeftmp, _g
 from .core import inv_standard3D, inv_standard2D, inv_general2D,\
                   inv_general2D_bih
 
@@ -137,7 +137,7 @@ def invert_Poisson(force, dims, BCs=['fixed', 'fixed'], coords='latlon',
                         ', should be [latlon, cartesian]')
     
     # inversion
-    inv_standard2D(A, B, C, F, S, dims, BCs,
+    inv_standard2D(A, B, C, F, S, dims, BCs, coords,
                   mxLoop, tolerance, optArg, printInfo, debug)
     
     # properly de-masking
@@ -152,6 +152,104 @@ def invert_Poisson(force, dims, BCs=['fixed', 'fixed'], coords='latlon',
         return S, u, v
     else:
         return S
+
+
+def invert_Vortex_2D(Q, angM, Gamma, dims, BCs=['fixed', 'fixed'],
+                     coords='latlon', f0=1E-4,
+                     undef=np.nan, mxLoop=5000, tolerance=1e-6, optArg=None,
+                     cal_flow=False, printInfo=True, debug=False, out=None):
+    """
+    Inverting nonlinear balanced vortex equation of the form:
+    
+        d   2Λ dΛ    d  Γg dΛ
+        --(--- --) + --(-- --)  = 0
+        dθ r^3 dθ    dr Qr dr
+    
+    using SOR iteration.
+    
+    Parameters
+    ----------
+    Q: xarray.DataArray
+        2D distribution of PV.
+    angM: xarray.DataArray
+        Initial guess of the unknown angular momentum Λ as the known coefficient.
+    Gamma: xarray.DataArray
+        A vertical function defined as Γ = Rd/p * (p/p0)^κ = κ * Π/p.
+    dims: list
+        Dimension combination for the inversion e.g., ['lat', 'lon'].
+    BCs: list
+        Boundary conditions for each dimension in dims.
+    coords: str
+        Coordinates in ['latlon', 'cartesian'] are supported.
+    undef: float
+        Undefined value.
+    mxLoop: int
+        Maximum loop number over which iteration stops.
+    tolerance: float
+        Tolerance smaller than which iteration stops.
+    optArg: float
+        Optimal argument for SOR.
+    printInfo: boolean
+        Flag for printing.
+    debug: boolean
+        Output debug info.
+        
+    Returns
+    ----------
+    S: xarray.DataArray
+        Results of the SOR inversion.
+    """
+    if len(dims) != 2:
+        raise Exception('2 dimensions are needed for inversion')
+    
+    # properly masking forcing
+    if np.isnan(undef):
+        forcing = (Q-Q).fillna(_undeftmp)
+    else:
+        forcing = (Q-Q).where(Q!=undef, other=_undeftmp)
+    
+    zero = forcing - forcing
+    dim0 = forcing[dims[0]]
+    dim1 = forcing[dims[1]]
+    
+    if out is None:
+        S = zero.copy().load() # loaded because dask cannot be modified
+    else:
+        cond1 = forcing==_undeftmp
+        cond2 = dim0.isin([dim0[0], dim0[-1]])
+        cond3 = dim1.isin([dim1[0], dim1[-1]])
+        # applied boundary
+        mask = np.logical_or(cond1, np.logical_or(cond2, cond3))
+        S = xr.where(mask, out, 0)
+    
+    ######  calculating the coefficients  ######
+    if coords.lower() == 'latlon':
+        lats = dim1
+        
+        A = zero + np.sin(np.deg2rad(lats))
+        B = zero
+        C = zero + Gamma * _g / Q / dim1
+        F = zero.where(forcing!=_undeftmp, _undeftmp)
+    elif coords.lower() == 'cartesian':
+        A = zero + 2.0 * angM / dim1**3.0
+        B = zero
+        C = zero + Gamma * _g / Q / dim1
+        F = zero.where(forcing!=_undeftmp, _undeftmp)
+    else:
+        raise Exception('unsupported coords ' + coords +
+                        ', should be [latlon, cartesian]')
+    
+    # inversion
+    inv_standard2D(A, B, C, F, S, dims, BCs, coords,
+                  mxLoop, tolerance, optArg, printInfo, debug)
+    
+    # properly de-masking
+    if out is None:
+        S = S.where(forcing!=_undeftmp, other=undef).rename('inverted')
+    else:
+        S = S.rename('inverted')
+    
+    return S
 
 
 def invert_QGPV_2D(QGPV, N2, dims, BCs=['fixed', 'fixed'],
@@ -235,7 +333,7 @@ def invert_QGPV_2D(QGPV, N2, dims, BCs=['fixed', 'fixed'],
                         ', should be [latlon, cartesian]')
     
     # inversion
-    inv_standard2D(A, B, C, F, S, dims, BCs,
+    inv_standard2D(A, B, C, F, S, dims, BCs, coords,
                   mxLoop, tolerance, optArg, printInfo, debug)
     
     # properly de-masking
@@ -326,7 +424,7 @@ def invert_Eliassen(force, Am, Bm, Cm, dims, BCs=['fixed', 'fixed'],
                         ', should be [latlon, cartesian]')
     
     # inversion
-    inv_standard2D(A, B, C, F, S, dims, BCs,
+    inv_standard2D(A, B, C, F, S, dims, BCs, coords,
                    mxLoop, tolerance, optArg, printInfo, debug)
     
     # properly de-masking
@@ -451,7 +549,7 @@ def invert_GillMatsuno(Q, dims, BCs=['fixed', 'fixed'], coords='latlon',
                         ', should be [latlon, cartesian]')
     
     # inversion
-    inv_general2D(A, B, C, D, E, F, G, S, dims, BCs,
+    inv_general2D(A, B, C, D, E, F, G, S, dims, BCs, coords,
                   mxLoop, tolerance, optArg, printInfo, debug)
     
     # properly de-masking
@@ -565,7 +663,7 @@ def invert_Stommel(curl, dims, BCs=['fixed', 'fixed'], coords='latlon',
                         ', should be [latlon, cartesian]')
     
     # inversion
-    inv_general2D(A, B, C, D, E, F, G, S, dims, BCs,
+    inv_general2D(A, B, C, D, E, F, G, S, dims, BCs, coords,
                   mxLoop, tolerance, optArg, printInfo, debug)
     
     # properly de-masking
@@ -677,7 +775,7 @@ def invert_StommelMunk(curl, dims, BCs=['fixed', 'fixed'], coords='latlon',
                         ', should be [latlon, cartesian]')
     
     # inversion
-    inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, BCs,
+    inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, BCs, coords,
                       mxLoop, tolerance, optArg, printInfo, debug)
     
     # properly de-masking
@@ -765,7 +863,7 @@ def invert_geostreamfunction(lapPhi, dims, BCs=['fixed', 'fixed'],
                         ', should be [latlon, cartesian]')
     
     # inversion
-    inv_standard2D(A, B, C, F, S, dims, BCs,
+    inv_standard2D(A, B, C, F, S, dims, BCs, coords,
                    mxLoop, tolerance, optArg, printInfo, debug)
     
     # properly de-masking
@@ -929,7 +1027,7 @@ def invert_OmegaEquation(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
                         ', should be [latlon, cartesian]')
     
     # inversion
-    inv_standard3D(A, B, C, F, omega, dims, BCs,
+    inv_standard3D(A, B, C, F, omega, dims, BCs, coords,
                    mxLoop, tolerance, optArg, printInfo, debug)
     
     # properly de-masking
@@ -1103,3 +1201,16 @@ def __cal_flow(S, coords):
     
     return u, v
 
+def __mask_vars(forcing, out):
+    # properly mask forcing with _undeftmp
+    if np.isnan(undef):
+        forcing = force.fillna(_undeftmp)
+    else:
+        forcing = force.where(force!=undef, other=_undeftmp)
+    
+    zero = forcing - forcing
+    
+    if out is None:
+        S = zero.copy().load() # loaded because dask cannot be modified
+    else:
+        S = xr.where(forcing==_undeftmp, out, 0) # applied boundary

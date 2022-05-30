@@ -7,54 +7,16 @@ Copyright 2018. All rights reserved. Use is subject to license terms.
 """
 #%%
 import numpy as np
-import xarray as xr
-import numba as nb
-# from .numbas import invert_standard_2D, invert_general_2D
 
 
-"""
-Core classes are defined below
-"""
 _R_earth = 6371200.0 # consistent with GrADS
-_omega = 7.292e-5 # angular speed of the earth rotation
-_g = 9.80665 # gravitational
-_undeftmp = -9.99e8
+_omega = 7.292e-5    # angular speed of the earth rotation
+_g = 9.80665         # gravitational acceleration
+_undeftmp = -9.99e8  # default undefined value
+_deg2m = 2.0 * np.pi * _R_earth / 360.0
 
-_latlon = ['lat', 'LAT', 'latitude' , 'LATITUDE' , 'lats', 'LATS', 'YC',
-           'lon', 'LON', 'longitude', 'LONGITUDE', 'long', 'LONG', 'XC']
-
-
-
-def cal_dydx(lat, lon, coords='latlon'):
-    if coords == 'latlon':
-        xdef = np.deg2rad(lon)
-        ydef = np.deg2rad(lat)
-        
-        dy = _centered_diff(ydef) * _R_earth
-        dx = _centered_diff(xdef) * _R_earth * np.cos(ydef)
-        
-        return xr.broadcast(dy, dx)
-    elif coords == 'cartesian':
-        xdef = lon
-        ydef = lat
-        
-        dy = _centered_diff(ydef)
-        dx = _centered_diff(xdef)
-        
-        return xr.broadcast(dy, dx)
-    else:
-        raise Exception('unsupported coords, should be [\'lat/lon\', \'cartesian\']')
-    
-
-def Laplacian(v, dims, BCx, coords='latlon'):
-    dy, dx = cal_dydx(v[dims[0]], v[dims[1]], coords=coords)
-    
-    lp = xr.apply_ufunc(_laplacian_diff, v, dy, dx,
-                        dask='allowed',
-                        input_core_dims=[dims, dims, dims],
-                        output_core_dims=[dims,],
-                        vectorize=True)
-    return lp.rename('nabla')
+_latlon = ['lat', 'latitude' , 'lats', 'yc', 'y',
+           'lon', 'longitude', 'long', 'xc', 'x']
 
 
 def loop_noncore(data, dims=None):
@@ -99,50 +61,4 @@ def loop_noncore(data, dims=None):
     
     yield {}
 
-
-"""
-Core classes are defined below
-"""
-def _centered_diff(data):
-    re = data.copy()
-    _centered_difference(data.values, re.values)
-    return re
-    
-
-@nb.jit(nopython=True)
-def _laplacian_diff(v, dy, dx, BCx='fixed'):
-    J, I = v.shape
-    
-    re = np.zeros((J, I))
-    
-    for j in range(1, J-1):
-        if BCx == 'periodic':
-            # i == 0
-            re[j,0] = (((v[j+1,0]-v[j  , 0])-
-                        (v[j  ,0]-v[j-1, 0])) / (dy[j,0]*dy[j,0]) / 4. +
-                       ((v[j  ,1]-v[j  , 0])-
-                        (v[j  ,0]-v[j  ,-1])) / (dx[j,0]*dx[j,0]) / 4.)
-            # i == -1
-            re[j,-1] = (((v[j+1,-1]-v[j  ,-1])-
-                         (v[j  ,-1]-v[j-1,-1])) / (dy[j,-1]*dy[j,-1]) / 4. +
-                        ((v[j  , 0]-v[j  ,-1])-
-                         (v[j  ,-1]-v[j  ,-2])) / (dx[j,-1]*dx[j,-1]) / 4.)
-        
-        # inner loop
-        for i in range(1, I-1):
-            re[j,i] = (((v[j+1,i  ]-v[j  ,i  ])-
-                        (v[j  ,i  ]-v[j-1,i  ])) / (dy[j,i]*dy[j,i]) / 4. +
-                       ((v[j  ,i+1]-v[j  ,i  ])-
-                        (v[j  ,i  ]-v[j  ,i-1])) / (dx[j,i]*dx[j,i]) / 4.)
-    
-    return re
-
-@nb.jit(nopython=True)
-def _centered_difference(data, re):
-    I = len(data)
-    
-    for i in range(I-1):
-        re[i] = data[i+1] - data[i]
-    
-    re[I-1] = data[I-1] - data[I-2]
 

@@ -11,8 +11,10 @@ from .core import inv_standard3D, inv_standard2D, inv_general2D,\
 from .apps import invert_Poisson, invert_GillMatsuno,\
                   invert_geostreamfunction, invert_Stommel, \
                   invert_StommelMunk, invert_Eliassen, invert_Omega_MG, \
-                  invert_MultiGrid, invert_OmegaEquation
+                  invert_MultiGrid, invert_OmegaEquation, invert_Vortex_2D
                   
-from .utils import Laplacian, loop_noncore
+from .utils import loop_noncore
+
+from .finitediffs import FiniteDiff
 
 __version__ = "0.1.0"

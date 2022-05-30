@@ -34,12 +34,14 @@ V = ds.V
 W = ds.Omega
 H = ds.hgt
 
+lap = dyn.Laplacian(H)
+
 th   = T * (100000 / p)**(Rd/Cp)
 TH   = grid.average(th, ['Y','X'])
-vor  = dyn.curl(U,V)
 dTHdp= TH.differentiate('LEV')
 RPiP = (Rd * T / p / TH)
 S    = - RPiP * dTHdp
+vor  = dyn.curl(U,V)
 zeta = vor + f
 
 ########## traditional form of forcings ##########
@@ -60,6 +62,36 @@ Qy = - RPiP * (uy * grdthx + vy * grdthy)
 
 FQvec = -2 * dyn.divg((Qx, Qy), dims=['X', 'Y'])
 
+#%%
+from xinvert.xinvert import FiniteDiff
+
+fd = FiniteDiff({'X':'lon', 'Y':'lat', 'Z':'LEV'},
+                BCs={'X':('periodic','periodic'),
+                     'Y':('extend','extend'),
+                     'Z':('extend','extend')}, fill=0, coords='latlon')
+
+vor2  = fd.curl(U,V)
+zeta2 = vor2 + f
+
+lap2 = fd.Laplacian(H)
+
+########## traditional form of forcings ##########
+grdthx2, grdthy2 = fd.grad(th)
+grdvrx2, grdvry2 = fd.grad(vor)
+
+F12 = fd.Laplacian((U * grdthx2 + V * grdthy2) * RPiP)
+F22 = ((U * grdvrx2 + V * grdvry2) * f).differentiate('LEV')
+
+FAll2 = (F12 + F22)
+
+########### Q-vector form of forcings ###########
+ux2, uy2 = fd.grad(U)
+vx2, vy2 = fd.grad(V)
+
+Qx2 = - RPiP * (ux2 * grdthx2 + vx2 * grdthy2)
+Qy2 = - RPiP * (uy2 * grdthx2 + vy2 * grdthy2)
+
+FQvec2 = -2 * fd.divg((Qx2, Qy2), dims=['X', 'Y'])
 
 #%% prepare lower boundary for inversion
 p3D = T-T+p

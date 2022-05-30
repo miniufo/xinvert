@@ -13,7 +13,7 @@ from .utils import loop_noncore, _R_earth, _undeftmp, _latlon
 """
 Below are the core methods of xinvert
 """
-def inv_standard3D(A, B, C, F, S, dims, BCs,
+def inv_standard3D(A, B, C, F, S, dims, BCs, coords,
                    mxLoop, tolerance, optArg, printInfo, debug):
     """
     Inverting a 3D volume of elliptic equation in standard form as:
@@ -44,6 +44,8 @@ def inv_standard3D(A, B, C, F, S, dims, BCs,
     BCs: list
         Boundary conditions for each dimension in dims.
         Order is important, should be consistent with the dimensions of F.
+    coords: str
+        Type of coordinates as in ['latlon', 'cartesian'].
     mxLoop: int
         Maximum loop number over which iteration stops.
     tolerance: float
@@ -63,7 +65,7 @@ def inv_standard3D(A, B, C, F, S, dims, BCs,
     if len(dims) != 3:
         raise Exception('3 dimensions are needed for inversion')
     
-    params = __cal_params3D(F[dims[0]], F[dims[1]], F[dims[2]], debug=debug)
+    params = __cal_params3D(F[dims[0]], F[dims[1]], F[dims[2]], coords, debug=debug)
     
     if optArg == None:
         optArg = params['optArg']
@@ -96,7 +98,7 @@ def inv_standard3D(A, B, C, F, S, dims, BCs,
     return S
 
 
-def inv_standard2D(A, B, C, F, S, dims, BCs,
+def inv_standard2D(A, B, C, F, S, dims, BCs, coords,
                    mxLoop, tolerance, optArg, printInfo, debug):
     """
     A template for inverting equations in standard form as:
@@ -126,6 +128,8 @@ def inv_standard2D(A, B, C, F, S, dims, BCs,
     BCs: list
         Boundary conditions for each dimension in dims.
         Order is important, should be consistent with the order of F.
+    coords: str
+        Type of coordinates as in ['latlon', 'cartesian'].
     mxLoop: int
         Maximum loop number over which iteration stops.
     tolerance: float
@@ -145,13 +149,14 @@ def inv_standard2D(A, B, C, F, S, dims, BCs,
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
     
-    params = __cal_params(F[dims[0]], F[dims[1]], debug=debug)
+    params = __cal_params(F[dims[0]], F[dims[1]], coords, debug=debug)
     
     if optArg == None:
         optArg = params['optArg']
     
     for selDict in loop_noncore(F, dims):
-        invert_standard_2D(S.loc[selDict].values, A.loc[selDict].values,
+        invert_standard_2D(S.loc[selDict].values,
+                           A.loc[selDict].values,
                            B.loc[selDict].values, C.loc[selDict].values,
                            F.loc[selDict].values,
                            params['gc2' ], params['gc1' ],
@@ -178,7 +183,7 @@ def inv_standard2D(A, B, C, F, S, dims, BCs,
     return S
 
 
-def inv_general2D(A, B, C, D, E, F, G, S, dims, BCs,
+def inv_general2D(A, B, C, D, E, F, G, S, dims, BCs, coords,
                   mxLoop, tolerance, optArg, printInfo, debug):
     """
     A template for inverting a 2D slice of equation in general form as:
@@ -209,6 +214,8 @@ def inv_general2D(A, B, C, D, E, F, G, S, dims, BCs,
     BCs: list
         Boundary conditions for each dimension in dims.
         Order is important, should be consistent with the order of F.
+    coords: str
+        Type of coordinates as in ['latlon', 'cartesian'].
     mxLoop: int
         Maximum loop number over which iteration stops.
     tolerance: float
@@ -228,7 +235,7 @@ def inv_general2D(A, B, C, D, E, F, G, S, dims, BCs,
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
     
-    params = __cal_params(F[dims[0]], F[dims[1]], debug=debug)
+    params = __cal_params(F[dims[0]], F[dims[1]], coords, debug=debug)
     
     if optArg == None:
         optArg = params['optArg']
@@ -262,7 +269,7 @@ def inv_general2D(A, B, C, D, E, F, G, S, dims, BCs,
     return S
 
 
-def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, BCs,
+def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, BCs, coords,
                       mxLoop, tolerance, optArg, printInfo, debug):
     """
     A template for inverting a 2D slice of equation in general form as:
@@ -301,6 +308,8 @@ def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, BCs,
     BCs: list
         Boundary conditions for each dimension in dims.
         Order is important, should be consistent with the order of F.
+    coords: str
+        Type of coordinates as in ['latlon', 'cartesian'].
     mxLoop: int
         Maximum loop number over which iteration stops.
     tolerance: float
@@ -320,7 +329,7 @@ def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, BCs,
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
     
-    params = __cal_params(F[dims[0]], F[dims[1]], debug=debug)
+    params = __cal_params(F[dims[0]], F[dims[1]], coords, debug=debug)
     
     if optArg == None:
         optArg = 1 # params['optArg'],  1 seems to be safer for 4-order SOR
@@ -361,7 +370,7 @@ def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, BCs,
 """
 Below are the helper methods of xinvert
 """
-def __cal_params3D(dim3_var, dim2_var, dim1_var, debug=False):
+def __cal_params3D(dim3_var, dim2_var, dim1_var, coords, debug=False):
     """
     Pre-calculate some parameters needed in SOR for the 3D cases.
 
@@ -388,9 +397,9 @@ def __cal_params3D(dim3_var, dim2_var, dim1_var, debug=False):
     del2 = dim2_var.diff(dim2_var.name).values[0] # assumed uniform
     del1 = dim1_var.diff(dim1_var.name).values[0] # assumed uniform
     
-    if dim2_var.name in _latlon:
+    if coords == 'latlon' and dim2_var.name.lower() in _latlon:
         del2 = np.deg2rad(del2) * _R_earth # convert lat/lon to m
-    if dim1_var.name in _latlon:
+    if coords == 'latlon' and dim1_var.name.lower() in _latlon:
         del1 = np.deg2rad(del1) * _R_earth # convert lat/lon to m
     
     ratio1    = del1 / del2
@@ -435,7 +444,7 @@ def __cal_params3D(dim3_var, dim2_var, dim1_var, debug=False):
     return re
 
 
-def __cal_params(dim2_var, dim1_var, debug=False):
+def __cal_params(dim2_var, dim1_var, coords, debug=False):
     """
     Pre-calculate some parameters needed in SOR.
 
@@ -458,9 +467,9 @@ def __cal_params(dim2_var, dim1_var, debug=False):
     del2 = dim2_var.diff(dim2_var.name).values[0] # assumed uniform
     del1 = dim1_var.diff(dim1_var.name).values[0] # assumed uniform
     
-    if dim2_var.name in _latlon:
+    if coords == 'latlon' and dim2_var.name.lower() in _latlon:
         del2 = np.deg2rad(del2) * _R_earth # convert lat/lon to m
-    if dim1_var.name in _latlon:
+    if coords == 'latlon' and dim1_var.name.lower() in _latlon:
         del1 = np.deg2rad(del1) * _R_earth # convert lat/lon to m
     
     ratio    = del1 / del2
