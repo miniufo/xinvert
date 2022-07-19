@@ -11,13 +11,14 @@ import numpy as np
 from GeoApps.GridUtils import add_latlon_metrics
 
 
-dset = xr.open_dataset('xinvert/Data/atmos3D.nc', decode_times=False)
+dset = xr.open_dataset('./xinvert/Data/atmos3D.nc', decode_times=False)
 
-ds, grid = add_latlon_metrics(dset, dims={'lev':'LEV', 'lat':'lat', 'lon':'lon'})
+ds, grid = add_latlon_metrics(dset, dims={'Z':'LEV', 'Y':'lat', 'X':'lon'},
+                              boundary={'X':'periodic', 'Y':'extend', 'Z':'extend'})
 
 ds['LEV'] = ds['LEV'] * 100
 
-#%%
+#%% calculate forcings using Dynamics (depend on GeoApps)
 from GeoApps.ConstUtils import Rd, Cp, omega
 from GeoApps.DiagnosticMethods import Dynamics
 
@@ -52,6 +53,7 @@ F1 = dyn.Laplacian((U * grdthx + V * grdthy) * RPiP)
 F2 = ((U * grdvrx + V * grdvry) * f).differentiate('LEV')
 
 FAll = (F1 + F2)
+FAll = xr.where(np.isinf(FAll), np.nan, FAll)
 
 ########### Q-vector form of forcings ###########
 ux, uy = dyn.grad(U, ['X', 'Y'])
@@ -61,8 +63,9 @@ Qx = - RPiP * (ux * grdthx + vx * grdthy)
 Qy = - RPiP * (uy * grdthx + vy * grdthy)
 
 FQvec = -2 * dyn.divg((Qx, Qy), dims=['X', 'Y'])
+FQvec = xr.where(np.isinf(FQvec), np.nan, FQvec)
 
-#%%
+#%% calculate forcings using FiniteDiff (which is integrated in xinvert)
 from xinvert.xinvert import FiniteDiff
 
 fd = FiniteDiff({'X':'lon', 'Y':'lat', 'Z':'LEV'},
@@ -83,6 +86,7 @@ F12 = fd.Laplacian((U * grdthx2 + V * grdthy2) * RPiP)
 F22 = ((U * grdvrx2 + V * grdvry2) * f).differentiate('LEV')
 
 FAll2 = (F12 + F22)
+FAll2 = xr.where(np.isinf(FAll2), np.nan, FAll2)
 
 ########### Q-vector form of forcings ###########
 ux2, uy2 = fd.grad(U)
@@ -92,6 +96,7 @@ Qx2 = - RPiP * (ux2 * grdthx2 + vx2 * grdthy2)
 Qy2 = - RPiP * (uy2 * grdthx2 + vy2 * grdthy2)
 
 FQvec2 = -2 * fd.divg((Qx2, Qy2), dims=['X', 'Y'])
+FQvec2 = xr.where(np.isinf(FQvec2), np.nan, FQvec2)
 
 #%% prepare lower boundary for inversion
 p3D = T-T+p
