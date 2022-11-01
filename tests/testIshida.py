@@ -8,7 +8,6 @@ Copyright 2018. All rights reserved. Use is subject to license terms.
 #%% classical cases
 import numpy as np
 import xarray as xr
-from xgrads.xgrads import open_CtlDataset
 
 xnum = 251
 ynum = 151
@@ -40,29 +39,26 @@ curl_tau[:75, 130:134] = undef
 
 
 #%% invert
-from xinvert.xinvert.core import invert_StommelWBC,invert_MunkWBC
+from xinvert.xinvert import invert_Stommel, invert_StommelMunk
 
+iParams = {
+    'BCs'      : ['fixed', 'periodic'],
+    'mxLoop'   : 3000,
+    'tolerance': 1e-9,
+    'optArg'   : 1.4,
+    'undef'    : undef,
+}
 
-h1, u1, v1 = invert_MunkWBC(curl_tau, dims=['ydef','xdef'],
-                               BCs=['fixed', 'periodic'],
-                               optArg=1.9, mxLoop=400,
-                               cal_flow=True,
-                               coords='cartesian',
-                               beta=beta,
-                               R=R,
-                               depth=depth,
-                               undef=undef,
-                               debug=False)
-h2, u2, v2 = invert_MunkWBC(curl_tau, dims=['ydef','xdef'],
-                                BCs=['fixed', 'periodic'],
-                                optArg=1.9, mxLoop=1000, tolerance=1e-14,
-                                cal_flow=True,
-                                coords='cartesian',
-                                beta=beta,
-                                R=R*20.,
-                                depth=depth,
-                                undef=undef,
-                                debug=False)
+mParams1 = {'beta':beta, 'R':R   , 'D':depth, 'A':0}
+mParams2 = {'beta':beta, 'R':R*20, 'D':depth, 'A':0}
+mParams3 = {'beta':beta, 'R':R   , 'D':depth, 'A':0}
+
+h1 = invert_Stommel(curl_tau, dims=['ydef','xdef'], coords='cartesian',
+                    iParams=iParams, mParams=mParams1)
+h2 = invert_Stommel(curl_tau, dims=['ydef','xdef'], coords='cartesian',
+                    iParams=iParams, mParams=mParams2)
+h3 = invert_StommelMunk(curl_tau, dims=['ydef','xdef'], coords='cartesian',
+                    iParams=iParams, mParams=mParams3)
 
 
 #%% plot wind and streamfunction
@@ -72,13 +68,13 @@ import numpy as np
 from utils.PlotUtils import plot
 
 
-fig, axes = pplt.subplots(nrows=2, ncols=1, figsize=(12,11),
+fig, axes = pplt.subplots(nrows=2, ncols=1, figsize=(10,10),
                           sharex=3, sharey=3)
 
 skip = 2
 fontsize = 16
 
-axes.format(abc=True, abcloc='l', abcstyle='(a)', grid=False)
+axes.format(abc='(a)', grid=False)
 
 ax = axes[0]
 plot(h1.where(h1!=undef)/1e6*depth, ax=ax, ptype='both', cmap='greens',

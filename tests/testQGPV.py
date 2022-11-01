@@ -59,10 +59,20 @@ q = np.exp(-(zdef-(30000+np.exp(-ydef**2/1e11)*10000))**2/zscale) * amplit
 
 
 #%% invert
-from xinvert.xinvert.apps import invert_QGPV_2D
+from xinvert.xinvert import invert_PV2D
 
-Ha = invert_QGPV_2D(q, S, f0=f, dims=['LEV','Y'], BCs=['fixed', 'extend'],
-                    coords='Cartesian', tolerance=1e-12)
+iParams = {
+    'BCs'      : ['fixed', 'extend'],
+    'tolerance': 1e-12,
+}
+
+mParams = {
+    'f0': f,
+    'N2': S,
+}
+
+Ha = invert_PV2D(q, dims=['LEV','Y'], coords='cartesian',
+                 iParams=iParams, mParams=mParams)
 
 #%%
 Ua  = -Ha.differentiate('Y') / f
@@ -87,19 +97,23 @@ tmp['LEV'] = tmp['LEV'] / 100
 tmp['Y'] = tmp['Y'] / 1000
 m=ax.contourf(tmp.where(tmp>0.2), levels=np.linspace(0,2.4,13), cmap='gray_r')
 ax.colorbar(m, loc='b', label='')
+
 tmp = THo.copy()
 tmp['LEV'] = tmp['LEV'] / 100
 tmp['Y'] = tmp['Y'] / 1000
 ax.contour(tmp, levels=31, colors='k', lw=1)
+
 tmp = Ua.copy()
 tmp['LEV'] = tmp['LEV'] / 100
 tmp['Y'] = tmp['Y'] / 1000
 ax.contour(tmp, levels=15, cmap='RdYlBu_r', lw=2.6)
+
 tmp = To.rolling(Y=51, center=True, min_periods=1).mean()
 tmp = tmp.where(tmp.LEV>=(5000*np.exp(-(ydef)**2/1.5e11)+24000))
 tmp['LEV'] = tmp['LEV'] / 100
 tmp['Y'] = tmp['Y'] / 1000
 ax.contour(tmp, levels=[221.9], lw=5)
+
 ax.set_yscale('log')
 ax.set_yticks([1000, 900, 800, 700, 600, 500, 400, 300, 200, 100])
 ax.set_xticks(np.linspace(-750, 750, 9))
@@ -130,7 +144,7 @@ dsetInt.to_netcdf('D:/Data/ERAInterim/BKGState/OriginalData/theta.nc')
 import xarray as xr
 import numpy as np
 from xinvert.xinvert import FiniteDiff
-from GeoApps.ConstUtils import Rd, Cp, g
+from GeoApps.ConstUtils import Rd, Cp
 
 # path = 'D:/'
 path = 'D:/Data/ERAInterim/BKGState/OriginalData/'
@@ -162,9 +176,14 @@ from xinvert.xinvert.apps import invert_Vortex_2D
 
 AngM = q-q+f0*ydef**2.0/2.0
 
-Ang = invert_Vortex_2D(q, AngM, Gamma, f0=f0, dims=['lev','Y'],
-                       BCs=['fixed', 'fixed'], mxLoop=600,
-                       coords='Cartesian', tolerance=1e-19, out=AngM)
+params = {
+    'BCs'      : ['fixed', 'fixed'],
+    'tolerance': 1e-19,
+    'mxLoop'   : 600,
+}
+
+Ang = invert_Vortex_2D(q, AngM, Gamma, dims=['lev','Y'],
+                       coords='cartesian', params=params, out=AngM)
 
 u = (Ang-f0*ydef**2.0/2.0) / ydef
 

@@ -18,6 +18,14 @@ ds, grid = add_latlon_metrics(dset, dims={'Z':'LEV', 'Y':'lat', 'X':'lon'},
 
 ds['LEV'] = ds['LEV'] * 100
 
+#%% zonal running smooth of polar grid
+def smooth(v, gridpoint=13, lat=80):
+    rolled = v.pad({'lon':(gridpoint,gridpoint)},mode='wrap')\
+              .rolling(lon=gridpoint, center=True, min_periods=1).mean()\
+              .isel(lon=slice(gridpoint, -gridpoint))
+    return xr.where(np.abs(v-v+v.lat)>lat, rolled, v)
+
+
 #%% calculate forcings using Dynamics (depend on GeoApps)
 from GeoApps.ConstUtils import Rd, Cp, omega
 from GeoApps.DiagnosticMethods import Dynamics
@@ -29,11 +37,11 @@ Psfc= ds.psfc
 f   = 2*omega*np.sin(np.deg2rad(ds.lat))
 cos = np.cos(np.deg2rad(ds.lat))
 
-T = ds.T
-U = ds.U
-V = ds.V
-W = ds.Omega
-H = ds.hgt
+T = smooth(ds.T, lat=80)
+U = smooth(ds.U, lat=80)
+V = smooth(ds.V, lat=80)
+W = smooth(ds.Omega, lat=80)
+H = smooth(ds.hgt, lat=80)
 
 lap = dyn.Laplacian(H)
 
@@ -70,23 +78,26 @@ from xinvert.xinvert import FiniteDiff
 
 fd = FiniteDiff({'X':'lon', 'Y':'lat', 'Z':'LEV'},
                 BCs={'X':('periodic','periodic'),
-                     'Y':('extend','extend'),
-                     'Z':('extend','extend')}, fill=0, coords='latlon')
+                     'Y':('reflect','reflect'),
+                     'Z':('extend','extend')}, fill=0, coords='lat-lon')
 
-vor2  = fd.curl(U,V)
+vor2  = fd.curl(U,V).load()
+_, tmp = xr.broadcast(vor2, vor2.mean('lon'))
+vor2[:,0,:] = tmp[:,0,:]
+vor2[:,-1,:] = tmp[:,-1,:]
 zeta2 = vor2 + f
 
 lap2 = fd.Laplacian(H)
 
 ########## traditional form of forcings ##########
 grdthx2, grdthy2 = fd.grad(th)
-grdvrx2, grdvry2 = fd.grad(vor)
+grdvrx2, grdvry2 = fd.grad(vor2)
 
 F12 = fd.Laplacian((U * grdthx2 + V * grdthy2) * RPiP)
 F22 = ((U * grdvrx2 + V * grdvry2) * f).differentiate('LEV')
 
 FAll2 = (F12 + F22)
-FAll2 = xr.where(np.isinf(FAll2), np.nan, FAll2)
+FAll2 = smooth(xr.where(np.isinf(FAll2), np.nan, FAll2), lat=83)
 
 ########### Q-vector form of forcings ###########
 ux2, uy2 = fd.grad(U)
@@ -96,7 +107,7 @@ Qx2 = - RPiP * (ux2 * grdthx2 + vx2 * grdthy2)
 Qy2 = - RPiP * (uy2 * grdthx2 + vy2 * grdthy2)
 
 FQvec2 = -2 * fd.divg((Qx2, Qy2), dims=['X', 'Y'])
-FQvec2 = xr.where(np.isinf(FQvec2), np.nan, FQvec2)
+FQvec2 = smooth(xr.where(np.isinf(FQvec2), np.nan, FQvec2), gridpoint=17, lat=85)
 
 #%% prepare lower boundary for inversion
 p3D = T-T+p
@@ -106,26 +117,23 @@ FQvec2 = FQvec.where(p<=Psfc)
 WBC = xr.where(p3D<=Psfc, 0, W).load()
 
 #%% invert
-from xinvert.xinvert.apps import invert_OmegaEquation
+from xinvert.xinvert.apps import invert_omega
 
+iParams = {
+    'BCs'      : ['fixed', 'fixed', 'periodic'],
+    'tolerance': 1e-16,
+}
 
-WQG = invert_OmegaEquation(FAll, S, dims=['LEV', 'lat', 'lon'],
-                           BCs=['fixed', 'fixed', 'extend'],
-                           printInfo=True, debug=False, tolerance=1e-16)
+mParams = {'N2': S}
 
-WQG2 = invert_OmegaEquation(FAll2, S, dims=['LEV', 'lat', 'lon'],
-                            BCs=['fixed', 'fixed', 'extend'],
-                            printInfo=True, debug=False, tolerance=1e-16,
-                            icbc=WBC)
-
-WQvec = invert_OmegaEquation(FQvec, S, dims=['LEV', 'lat', 'lon'],
-                             BCs=['fixed', 'fixed', 'extend'],
-                             printInfo=True, debug=False, tolerance=1e-16)
-
-WQvec2 = invert_OmegaEquation(FQvec2, S, dims=['LEV', 'lat', 'lon'],
-                             BCs=['fixed', 'fixed', 'extend'],
-                             printInfo=True, debug=False, tolerance=1e-16,
-                             icbc=WBC)
+WQG  = invert_omega(FAll, dims=['LEV', 'lat', 'lon'],
+                    iParams=iParams, mParams=mParams)
+WQG2 = invert_omega(FAll2, dims=['LEV', 'lat', 'lon'],
+                    iParams=iParams, mParams=mParams, icbc=WBC)
+WQvec = invert_omega(FQvec, dims=['LEV', 'lat', 'lon'],
+                     iParams=iParams, mParams=mParams)
+WQvec2 = invert_omega(FQvec2, dims=['LEV', 'lat', 'lon'],
+                      iParams=iParams, mParams=mParams, icbc=WBC)
 
 #%% plot cross section
 import proplot as pplt
@@ -264,7 +272,7 @@ ds['lev'] = -ds['lev'] # Reverse the z-coord. positive direction
 #%% calculate QG forcings
 from GeoApps.ConstUtils import omega
 
-dset, grid = add_latlon_metrics(ds, dims={'lat':'lat', 'lon':'lon'})
+dset, grid = add_latlon_metrics(ds, dims={'Y':'lat', 'X':'lon'})
 
 dyn = Dynamics(dset, grid=grid, arakawa='A')
 
@@ -305,19 +313,19 @@ WBC2 = xr.where(np.isnan(FQvec), 0, w)
 #%% invert
 import time
 
+params = {
+    'BCs'      : ['fixed', 'fixed', 'extend'],
+    'tolerance': 1e-9,
+    'mxLoop'   : 500,
+}
+
 start = time.time()
-W1 = invert_OmegaEquation(Ftrad, N2, dims=['lev', 'lat', 'lon'],
-                          BCs=['fixed', 'fixed', 'extend'], mxLoop=500,
-                          printInfo=True, debug=False, tolerance=1e-9).load()
-W2 = invert_OmegaEquation(FQvec, N2, dims=['lev', 'lat', 'lon'],
-                          BCs=['fixed', 'fixed', 'extend'], mxLoop=500,
-                          printInfo=True, debug=False, tolerance=1e-9).load()
-W1t= invert_OmegaEquation(Ftrad, N2, dims=['lev', 'lat', 'lon'], icbc=WBC1,
-                          BCs=['fixed', 'fixed', 'extend'], mxLoop=500,
-                          printInfo=True, debug=False, tolerance=1e-9).load()
-W2t= invert_OmegaEquation(FQvec, N2, dims=['lev', 'lat', 'lon'], icbc=WBC2,
-                          BCs=['fixed', 'fixed', 'extend'], mxLoop=500,
-                          printInfo=True, debug=False, tolerance=1e-9).load()
+W1 = invert_OmegaEquation(Ftrad, N2, dims=['lev', 'lat', 'lon'], params=params).load()
+W2 = invert_OmegaEquation(FQvec, N2, dims=['lev', 'lat', 'lon'], params=params).load()
+W1t= invert_OmegaEquation(Ftrad, N2, dims=['lev', 'lat', 'lon'], out=WBC1,
+                          params=params).load()
+W2t= invert_OmegaEquation(FQvec, N2, dims=['lev', 'lat', 'lon'], out=WBC2,
+                          params=params).load()
 elapsed = time.time() - start
 print('time used: ', elapsed)
 
@@ -325,7 +333,7 @@ print('time used: ', elapsed)
 #%% plot and compare
 import proplot as pplt
 
-fontsize = 16
+fontsize = 13
 z = 10
 
 fig, axes = pplt.subplots(nrows=3, ncols=2, figsize=(11, 11))

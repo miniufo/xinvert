@@ -33,36 +33,27 @@ curl_tau  = xr.DataArray(-F * np.sin(np.pi * ygrid / Ly) * np.pi/Ly,
                          dims=['ydef','xdef'],
                          coords={'ydef':ydef, 'xdef':xdef})
 
-# finite difference for derivative
-# curl_tau2 = - tau_ideal.differentiate('ydef')
-
 
 #%% invert
-from xinvert.xinvert.core import invert_StommelMunk
+from xinvert.xinvert import invert_StommelMunk
 
+params = {
+    'BCs'      : ['fixed', 'fixed'],
+    'mxLoop'   : 4000,
+    'tolerance': 1e-14,
+    'optArg'   : 1.0,
+    'undef'    : np.nan,
+    'cal_flow' : True,
+}
 
 h1, u1, v1 = invert_StommelMunk(curl_tau, dims=['ydef','xdef'],
-                               BCs=['fixed', 'fixed'],
-                               optArg=1, mxLoop=4000,
-                               cal_flow=True,
                                coords='cartesian',
-                               AH=5e3,
-                               beta=0,
-                               R=0,
-                               depth=depth,
-                               undef=np.nan,
-                               debug=False)
+                               AH=5e3, beta=0, R=0, depth=depth,
+                               debug=False, params=params)
 h2, u2, v2 = invert_StommelMunk(curl_tau, dims=['ydef','xdef'],
-                               BCs=['fixed', 'fixed'],
-                               optArg=1, mxLoop=4000, tolerance=1e-14,
-                               cal_flow=True,
                                coords='cartesian',
-                               AH=5e3,
-                               beta=beta,
-                               R=0,
-                               depth=depth,
-                               undef=np.nan,
-                               debug=False)
+                               AH=5e3, beta=beta, R=0, depth=depth,
+                               debug=False, params=params)
 
 
 #%% plot wind and streamfunction
@@ -114,49 +105,33 @@ ax.set_xlim([0, Lx])
 ax.set_xlabel('x-coordinate (m)', fontsize=fontsize-2)
 ax.set_ylabel('y-coordinate (m)', fontsize=fontsize-2)
 
-axes.format(abc=True, abcloc='l', abcstyle='(a)', grid=False,
-            ylabel='y-coordinate (m)')
+axes.format(abc='(a)', grid=False, ylabel='y-coordinate (m)')
 
 #%% real cases
 import numpy as np
 import xarray as xr
-from xgrads.xgrads import open_CtlDataset
-from GeoApps.GridUtils import add_latlon_metrics
-from GeoApps.DiagnosticMethods import Dynamics
 
 depth = 100
 rho0 = 1027
 R = 1e-4
 
-ds = open_CtlDataset('D:/Data/SODA/2.2.6/SODA226Clim_1993_2003.ctl')
-
-dset, grid = add_latlon_metrics(ds)
-
-dyn = Dynamics(dset, grid)
-
-tau_real = dyn.curl(dset.taux.where(dset.taux!=dset.undef),
-                    dset.tauy.where(dset.taux!=dset.undef))[0].load()
-tau_div = dyn.divg(dset.taux.where(dset.taux!=dset.undef),
-                   dset.tauy.where(dset.tauy!=dset.undef))[0].load()
-
-tau_div *= np.cos(np.deg2rad(tau_div.lat))**8
-
+ds = xr.open_dataset('./xinvert/Data/SODA_curl.nc')
+curl = ds.curl
 
 #%% invert
-from xinvert.xinvert.core import invert_StommelMunk
+from xinvert.xinvert import invert_StommelMunk
 
+params = {
+    'BCs'      : ['fixed', 'periodic'],
+    'mxLoop'   : 4000,
+    'tolerance': 1e-14,
+    'optArg'   : 1.0,
+    'undef'    : np.nan,
+    'cal_flow' : True,
+}
 
-h1, u1, v1 = invert_StommelMunk(tau_real, dims=['lat','lon'],
-                                BCs=['fixed', 'periodic'],
-                                optArg=1, mxLoop=4000,
-                                cal_flow=True,
-                                depth=depth,
-                                R=R,
-                                rho=rho0,
-                                AH=3e3,
-                                undef=np.nan,
-                                div=tau_div*5.5,
-                                debug=False)
+h1, u1, v1 = invert_StommelMunk(curl, dims=['lat','lon'],
+                                depth=depth, R=R, rho=rho0, AH=3e3, params=params)
 
 
 #%% plot wind and streamfunction

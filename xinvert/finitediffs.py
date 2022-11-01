@@ -27,7 +27,7 @@ class FiniteDiff(object):
     are not flexible enough for our purpose.  So we implement each operator
     here using `DataArray.pad()` method to account for different BCs.
     """
-    def __init__(self, dim_mapping, BCs='extend', coords='latlon', fill=0):
+    def __init__(self, dim_mapping, BCs='extend', coords='lat-lon', fill=0):
         """
         Construct a FiniteDiff instance given dimension mapping
         
@@ -36,7 +36,7 @@ class FiniteDiff(object):
         dim_mapping: dict
             Mapping 4D coordinates into ['T', 'Z', 'Y', 'X']. A typical case is:
                 {'T':'time', 'Z':'lev', 'Y':'lat', 'X':'lon'}.
-            Note that if coords is 'latlon', 'X' will be treated as longitude
+            Note that if coords is 'lat-lon', 'X' will be treated as longitude
             and 'Y' as latitude.  Finite difference along these coordinates will
             be properly scaled and weighted.
         BCs: dict
@@ -51,7 +51,7 @@ class FiniteDiff(object):
                                 1st derivative equals the first inner point.
                                 2nd derivative is exactly zero.
         coords: str
-            Types of coords.  Should be one of ['latlon', 'cartesian'].
+            Types of coords.  Should be one of ['lat-lon', 'cartesian'].
         fills: float or dict
             Fill value if BCs are fixed.  A typical example can be:
                 {'Z':(1,2), 'Y':(0,0), 'X':(1,0)}
@@ -72,6 +72,8 @@ class FiniteDiff(object):
             for dim in dim_mapping:
                 if not dim in BCs:
                     BCs[dim] = ('extend', 'extend')
+                elif type(BCs[dim]) == str:
+                    BCs[dim] = (BCs[dim], BCs[dim])
                     
         # Align dims and fill with default one (0).
         if fill is None:
@@ -90,10 +92,14 @@ class FiniteDiff(object):
                 if not dim in fill:
                     fill[dim] = (0, 0)
         
-        self.dim_mapping = dim_mapping
-        self.BCs = BCs
-        self.fill = fill
+        self.dmap   = dim_mapping
+        self.BCs    = BCs
+        self.fill   = fill
         self.coords = coords
+        
+        if coords not in ['lat-lon', 'cartesian']:
+            raise Exception('unsupported coords: ' + coords +
+                            ', should be one of [\'lat-lon\', \'cartesian\']')
     
     
     def __repr__(self):
@@ -101,7 +107,7 @@ class FiniteDiff(object):
               .format(self.coords)
         out = ['{:>1s}: {:>6s}  {:>24s}  {:>8s}\n'.format(
                str(dim), str(name), str(self.BCs[dim]), str(self.fill[dim]))
-               for dim, name in self.dim_mapping.items()]
+               for dim, name in self.dmap.items()]
         
         return typ + ''.join(out)
 
@@ -129,27 +135,34 @@ class FiniteDiff(object):
         """
         BCs  = _overwriteBCs(BCs, self.BCs)
         fill = _overwriteFills(fill, self.fill)
+        llc  = self.coords == 'lat-lon'
         re   = []
-        llc  = self.coords == 'latlon'
         
         for dim in dims:
-            dimName = self.dim_mapping[dim]
+            dimName = self.dmap[dim]
             
             if dim == 'Y' and llc:
                 scale = _deg2m
-                grd = self._diff1st(v, dimName, BCs[dim], fill, scale)
-                
             elif dim == 'X' and llc:
-                scale = _deg2m * np.cos(np.deg2rad(v[self.dim_mapping['Y']]))
-                grd = self._diff1st(v, dimName, BCs[dim], fill, scale)
-                
+                if 'Y' in self.dmap and self.dmap['Y'] in v.dims:
+                    cos = np.cos(np.deg2rad(v[self.dmap['Y']]))
+                else:
+                    cos = 1
+                scale = _deg2m * cos
             else:
                 scale = 1
-                grd = self._diff1st(v, dimName, BCs[dim], fill, scale)
             
+            grd = deriv(v, dimName, BCs[dim], fill, scale)
+            
+            # if llc and dim == 'X' and 'Y' in self.dmap:
+            #     grd = grd.where(np.abs(grd[self.dmap['Y']])!=90, other=0)
+                
             re.append(grd)
         
-        return re
+        if len(re) == 1:
+            return re[0]
+        else:
+            return re
     
     def divg(self, vector, dims, BCs=None, fill=None):
         """
@@ -166,7 +179,7 @@ class FiniteDiff(object):
         
         Parameters
         ----------
-        vector: xarray.DataArray or list of xarray.DataArray
+        vector: xarray.DataArray or a list (tuple) of xarray.DataArray
             Component(s) of a vector.
         dims: list of str
             Dimensions for gradient.  Order of dims is the same as
@@ -179,7 +192,7 @@ class FiniteDiff(object):
         """
         BCs  = _overwriteBCs(BCs, self.BCs)
         fill = _overwriteFills(fill, self.fill)
-        llc  = self.coords == 'latlon'
+        llc  = self.coords == 'lat-lon'
         
         if type(dims) is str:
             dims = [dims]
@@ -190,23 +203,32 @@ class FiniteDiff(object):
         if len(vector) != len(dims):
             raise Exception('lengths of vector and dims are not equal')
         
-        if llc:
-            cos = np.cos(np.deg2rad(vector[0][self.dim_mapping['Y']]))
-            scale = _deg2m * cos
-        else:
-            scale = 1
-        
         re = []
         
         for comp, dim in zip(vector, dims):
-            dimName = self.dim_mapping[dim]
+            dimName = self.dmap[dim]
             
-            if dim == 'Y' and llc: # weighted by cos(lat)
+            if llc and dim == 'Y':
+                # weight cos(lat)
+                cos = np.cos(np.deg2rad(comp[self.dmap['Y']]))
+                scale = _deg2m * cos
                 tmp = comp * cos
+            elif llc and dim == 'X':
+                # weight cos(lat)
+                if 'Y' in self.dmap and self.dmap['Y'] in vector[0].dims:
+                    cos = np.cos(np.deg2rad(comp[self.dmap['Y']]))
+                else:
+                    cos = 1
+                scale = _deg2m * cos
+                tmp = comp
             else:
+                scale = 1
                 tmp = comp
             
-            div = self._diff1st(tmp, dimName, BCs[dim], fill, scale)
+            div = deriv(tmp, dimName, BCs[dim], fill, scale)
+            
+            # if llc and dim in ['X', 'Y'] and 'Y' in self.dmap:
+            #     div = div.where(np.abs(div[self.dmap['Y']])!=90, other=0)
             
             re.append(div)
         
@@ -244,8 +266,8 @@ class FiniteDiff(object):
         """
         BCs  = _overwriteBCs(BCs, self.BCs)
         fill = _overwriteFills(fill, self.fill)
-        llc  = self.coords == 'latlon'
-        dims = self.dim_mapping
+        llc  = self.coords == 'lat-lon'
+        dims = self.dmap
         
         if type(components) is str:
             components = [components]
@@ -257,7 +279,11 @@ class FiniteDiff(object):
                     tmp = a
                     break
             
-            cos = np.cos(np.deg2rad(tmp[dims['Y']]))
+            if dims['Y'] in tmp.dims:
+                cos = np.cos(np.deg2rad(tmp[dims['Y']]))
+            else:
+                cos = 1
+                
             scale = _deg2m * cos
         else:
             scale = 1.0
@@ -266,22 +292,25 @@ class FiniteDiff(object):
         for comp in components:
             if comp == 'i': # wy - vz
                 t  = w * cos if llc else w # weighted by cos(lat)
-                c1 = self._diff1st(t, dims['Y'], BCs['Y'], fill['Y'], scale)
-                c2 = self._diff1st(v, dims['Z'], BCs['Z'], fill['Z'], scale)
+                c1 = deriv(t, dims['Y'], BCs['Y'], fill['Y'], scale)
+                c2 = deriv(v, dims['Z'], BCs['Z'], fill['Z'], 1.0)
                 vor= c1 - c2
             elif comp == 'j': # uz - wx
-                c1 = self._diff1st(u, dims['Z'], BCs['Z'], fill['Z'], scale)
-                c2 = self._diff1st(w, dims['X'], BCs['X'], fill['X'], scale)
+                c1 = deriv(u, dims['Z'], BCs['Z'], fill['Z'], 1.0)
+                c2 = deriv(w, dims['X'], BCs['X'], fill['X'], scale)
                 vor= c1 - c2
             elif comp == 'k': # vx - uy
                 t  = u * cos if llc else u # weighted by cos(lat)
-                c1 = self._diff1st(v, dims['X'], BCs['X'], fill['X'], scale)
-                c2 = self._diff1st(u*cos, dims['Y'], BCs['Y'], fill['Y'], scale)
+                c1 = deriv(v, dims['X'], BCs['X'], fill['X'], scale)
+                c2 = deriv(t, dims['Y'], BCs['Y'], fill['Y'], scale)
                 vor= c1 - c2
             else:
                 raise Exception('invalid component ' + str(comp) +
                                 ', only in [i, j, k]')
             
+            # if llc and comp in ['i', 'k']:
+            #     vors.append(vor.where(np.abs(v[dims['Y']])!=90, other=0))
+            # else:
             vors.append(vor)
         
         return vors if len(vors) != 1 else vors[0]
@@ -322,30 +351,33 @@ class FiniteDiff(object):
         """
         BCs  = _overwriteBCs(BCs, self.BCs)
         fill = _overwriteFills(fill, self.fill)
-        llc  = self.coords == 'latlon'
-        dmap = self.dim_mapping
+        llc  = self.coords == 'lat-lon'
+        dmap = self.dmap
         
         re = []
         for dim in dims:
             if llc and dim in ['X', 'Y']:
-                dimN = dmap['Y']
-                latR = np.deg2rad(v[dimN])
-                cos = np.cos(latR)
-                scale = _deg2m * cos
+                dimN  = dmap['Y']
+                latR  = np.deg2rad(v[dimN])
+                cosL  = np.cos(latR)
                 
                 if dim == 'Y':
-                    metric = self._diff1st(v, dmap['Y'], BCs['Y'], fill['Y'],
-                                           scale) * np.tan(latR) / _R_earth
+                    scale  = _deg2m
+                    metric = -deriv(v, dmap['Y'], BCs['Y'], fill['Y'],
+                                    scale) * np.tan(latR) / _R_earth
                 else:
+                    scale = _deg2m * cosL
                     metric = 0
             else:
                 scale = 1.0
                 metric = 0
             
-            re.append(self._diff2nd(v, dmap[dim], BCs[dim], fill[dim], scale) +
-                      metric)
+            re.append(deriv2(v, dmap[dim], BCs[dim], fill[dim], scale) + metric)
         
-        return sum(re)
+        if llc and 'Y' in dims: # maskout poles with 0
+            return sum(re).where(np.abs(v[dmap['Y']])!=90, other=0)
+        else:
+            return sum(re)
     
     def tension_strain(self, u, v, dims=['X', 'Y'], BCs=None, fill=None):
         """
@@ -438,80 +470,156 @@ class FiniteDiff(object):
         curlZ  = self.vort(u=v, v=u, components='j', dims=dims, BCs=BCs, fill=fill)
         
         return deform**2.0 - curlZ**2.0
-    
-    
+
+
+
+def padBCs(v, dim, BCs, fill=(0,0)):
     """
-    helper methods.
-    """
-    def _padBCs(self, v, dim, BC, fill=(0,0)):
-        """
-        Pad original DataArray with BCs along a specific dimension.  Types
-        of boundary conditions are:
-            - 'fixed'       # pad with fixed value.
-            - 'extend'      # pad with edge value.
-            - 'reflect      # pad with first inner value.
-                              1st-order derivative is exactly zero.
-            - 'extrapolate' # pad with extrapolated value.
-                              1st-order derivative equals the first inner point.
-                              2nd-order derivative is exactly zero. (NOT implemented)
-            - 'periodic'    # pad with cyclic values.
-        
-        Parameters
-        ----------
-        v: xarray.DataArray
-            A scalar variable.
-        dim: list of str
-            Dimension along which it is padded.
-        BC: tuple or list of str
-            Boundary conditions for the two end points, e.g. ('fixed','fixed').
-        fill: tuple of floats
-            Fill values as BCs if BC is fixed at two end points.
-        
-        Returns
-        ----------
-        p: xarray.DataArray
-            Padded array.
-        """
-        p = v
-        
-        if 'periodic' in BC: # pad with periodic BC
-            if BC[0] != BC[1]:
-                raise Exception('\'periodic\' BC cannot be mixed with other type of BC')
-            
-            p = p.pad({dim:(1,1)}, mode='wrap')
-            
-        else: # pad with other mixed type of BCs
-            for B, shp in zip(BC, [(1,0), (0,1)]):
-                if   B == 'fixed':
-                    p = p.pad({dim:shp}, mode='constant', constant_values=fill)
-                elif B == 'extend':
-                    p = p.pad({dim:shp}, mode='edge')
-                elif B == 'reflect':
-                    p = p.pad({dim:shp}, mode='reflect')
-                else:
-                    raise Exception('unsupported BC: ' + str(BC))
-        
-        # deal with coordinate values
-        coord = p[dim].values
-        coord[ 0] = coord[ 1] * 2 - coord[ 2]
-        coord[-1] = coord[-2] * 2 - coord[-3]
-        
-        p[dim] = coord
-        
-        return p
+    Pad (add two extra endpoints) original DataArray with BCs along a
+    specific dimension.  Types of boundary conditions are:
+        - 'fixed'       # pad with fixed value.
+        - 'extend'      # pad with original edge value.
+        - 'reflect      # pad with first inner value.
+                          1st-order derivative is exactly zero.
+        - 'extrapolate' # pad with extrapolated value. (NOT implemented)
+                          1st-order derivative equals the first inner point.
+                          2nd-order derivative is exactly zero.
+        - 'periodic'    # pad with cyclic values.
     
-    def _diff1st(self, v, dim, BC, fill, scale):
-        pad = self._padBCs(v, dim, BC, fill)
-        grd = pad.differentiate(dim).isel({dim:slice(1,-2)}) / scale
+    Parameters
+    ----------
+    v: xarray.DataArray
+        A scalar variable.
+    dim: list of str
+        Dimension along which it is padded.
+    BCs: tuple or list of str
+        Boundary conditions for the two end points e.g., ('fixed','fixed').
+    fill: tuple or list of floats
+        Fill values as BCs if BC is fixed at two end points e.g., (0,0).
+    
+    Returns
+    ----------
+    p: xarray.DataArray
+        Padded array.
+    """
+    p = v
+    
+    if 'periodic' in BCs: # pad with periodic BC
+        if BCs[0] != BCs[1]:
+            raise Exception('\'periodic\' cannot be mixed with other BCs')
         
-        return grd
+        p = p.pad({dim:(1,1)}, mode='wrap')
         
-    def _diff2nd(self, v, dim, BC, fill, scale):
-        pad = self._padBCs(v, dim, BC, fill)
-        lap = pad.diff(dim, 2, 'lower') / pad[dim].diff(dim) ** 2 / scale ** 2
-        lap[dim] = v[dim]
+    else: # pad with other mixed type of BCs
+        for B, shp in zip(BCs, [(1,0), (0,1)]):
+            if   B == 'fixed':
+                p = p.pad({dim:shp}, mode='constant', constant_values=fill)
+            elif B == 'extend':
+                p = p.pad({dim:shp}, mode='edge')
+            elif B == 'reflect':
+                p = p.pad({dim:shp}, mode='reflect')
+            else:
+                raise Exception('unsupported BC: ' + str(BCs))
+    
+    # deal with extra (padded) coordinate values
+    coord = p[dim].values
+    coord[ 0] = coord[ 1] * 2 - coord[ 2]
+    coord[-1] = coord[-2] * 2 - coord[-3]
+    
+    p[dim] = coord
+    
+    return p
+
+
+def deriv(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1,
+          scheme='center'):
+    """First-order derivative along a given dimension, with proper
+    boundary conditions (BCs) and finite difference scheme.
+    
+    Parameters
+    ----------
+    v: xarray.DataArray
+        A scalar variable.
+    dim: str
+        Dimension along which difference is taken.
+    BCs: tuple or list of str
+        Boundary conditions for the two end points. Types of BCs are:
+        - 'fixed'       # pad with fixed value.
+        - 'extend'      # pad with original edge value.
+        - 'reflect      # pad with first inner value.
+                          1st-order derivative is exactly zero.
+        - 'extrapolate' # pad with extrapolated value. (NOT implemented)
+                          1st-order derivative equals the first inner point.
+                          2nd-order derivative is exactly zero.
+        - 'periodic'    # pad with cyclic values.
+    fill: tuple of floats
+        Fill values as BCs if BC is fixed at two end points.
+    scale: float or xarray.DataArray
+        Scale of the result, usually the metric of the dimension.
+    scheme: str
+        Finite difference scheme in ['center', 'forward', 'backward']
+    
+    Returns
+    ----------
+    grd: xarray.DataArray
+         gradient along the dimension
+    """
+    if   scheme == 'center':
+        pad = padBCs(v, dim, BCs, fill).chunk({dim:len(v[dim])+2})
+        grd = pad.differentiate(dim).isel({dim:slice(1,-1)})
         
-        return lap
+    elif scheme == 'forward':
+        grd = (v-v.shift({dim:-1})) / (v[dim]-v[dim].shift({dim:-1}))
+        
+    elif scheme == 'backward':
+        grd = (v.shift({dim: 1})-v) / (v[dim].shift({dim: 1})-v[dim])
+        
+    else:
+        raise Exception('unsupported scheme: ' + scheme +
+                        ', should be in [\'center\', \'forward\', \'backward\']')
+    
+    # trimming the original range and scaling
+    return grd / scale
+
+
+def deriv2(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1):
+    """Second-order derivative along a given dimension, with proper
+    boundary conditions (BCs) and centered finite-difference scheme.
+    
+    Parameters
+    ----------
+    v: xarray.DataArray
+        A scalar variable.
+    dim: str
+        Dimension along which difference is taken.
+    BCs: tuple or list of str
+        Boundary conditions for the two end points. Types of BCs are:
+        - 'fixed'       # pad with fixed value.
+        - 'extend'      # pad with original edge value.
+        - 'reflect      # pad with first inner value.
+                          1st-order derivative is exactly zero.
+        - 'extrapolate' # pad with extrapolated value. (NOT implemented)
+                          1st-order derivative equals the first inner point.
+                          2nd-order derivative is exactly zero.
+        - 'periodic'    # pad with cyclic values.
+    fill: tuple of floats
+        Fill values as BCs if BC is fixed at two end points.
+    scale: float or xarray.DataArray
+        Scale of the result, usually the metric of the dimension.
+    scheme: str
+        Finite difference scheme in ['center', 'forward', 'backward']
+    
+    Returns
+    ----------
+    grd: xarray.DataArray
+         gradient along the dimension
+    """
+    pad = padBCs(v, dim, BCs, fill)
+    lap = pad.diff(dim, 2, 'lower') / pad[dim].diff(dim) ** 2 / scale ** 2
+    lap[dim] = v[dim]
+    
+    return lap
+
 
 
 """
@@ -553,10 +661,14 @@ def _overwriteBCs(BCsNew, BCsOld):
         
         for B in BCsOld:
             BCs[B] = (BC, BC)
+    
     elif type(BCsNew) == dict:
         for B in BCsNew:
             if B in BCsOld:
-                BCs[B] = BCsNew[B]
+                if type(BCsNew[B]) == str:
+                    BCs[B] = (BCsNew[B], BCsNew[B])
+                else:
+                    BCs[B] = BCsNew[B]
     
     return BCs
 
@@ -571,6 +683,7 @@ def _overwriteFills(fillsNew, fillsOld):
         
         for f in fillsOld:
             fills[f] = (fill, fill)
+    
     elif type(fillsNew) == dict:
         for f in fillsNew:
             if f in fillsOld:

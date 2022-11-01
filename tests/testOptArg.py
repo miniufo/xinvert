@@ -31,8 +31,7 @@ fig, axes = pplt.subplots(nrows=1, ncols=2, figsize=(11, 5), sharex=3, sharey=3)
 
 fontsize = 16
 
-axes.format(abc=True, abcloc='l', abcstyle='(a)',
-            grid=False)
+axes.format(abc='(a)', grid=False)
 
 ax = axes[0]
 p = ax.contourf(epsilon, cmap='jet')

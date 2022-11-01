@@ -16,7 +16,7 @@ Below are the numba functions
 def invert_standard_3D(S, A, B, C, F,
                        zc, yc, xc, delz, dely, delx, BCz, BCy, BCx, delxSqr,
                        ratio2Sqr, ratio1Sqr, optArg, undef, flags,
-                       mxLoop=5000, tolerance=1e-7):
+                       mxLoop, tolerance):
     """
     Inverting a 3D volume of elliptic equation in standard form as:
     
@@ -220,7 +220,7 @@ def invert_standard_3D(S, A, B, C, F,
 def invert_standard_2D(S, A, B, C, F,
                        yc, xc, dely, delx, BCy, BCx, delxSqr,
                        ratioQtr, ratioSqr, optArg, undef, flags,
-                       mxLoop=5000, tolerance=1e-7):
+                       mxLoop, tolerance):
     """
     Inverting a 2D slice of elliptic equation in standard form as:
     
@@ -420,17 +420,229 @@ def invert_standard_2D(S, A, B, C, F,
     return S
 
 
+
 @nb.jit(nopython=True, cache=False)
-def invert_general_2D(S, A, B, C, D, E, F, G,
-                      yc, xc, dely, delx, BCy, BCx,
-                      delxSqr, ratio, ratioQtr, ratioSqr, optArg, undef, flags,
-                      mxLoop=5000, tolerance=1e-7):
+def invert_standard_2D_test(S, A, B, C, D, E, F,
+                       yc, xc, dely, delx, BCy, BCx, delxSqr,
+                       ratioQtr, ratioSqr, optArg, undef, flags,
+                       mxLoop, tolerance):
     """
-    Inverting a 2D slice of elliptic equation in general form as:
+    Inverting a 2D slice of elliptic equation in standard form as:
     
-          d^2S     d^2S     d^2S     dS     dS 
-        A ---- + B ---- + C ---- + D -- + E -- + F*S + G = 0
-          dy^2     dydx     dx^2     dy     dx 
+        d ┌  dS      dS ┐   d ┌  dS      dS ┐
+        --│A(--) + B(--)│ + --│C(--) + D(--)│ + ES = F
+        dy└  dy      dx ┘   dx└  dy      dx ┘
+    
+    using SOR iteration. If F = F['time', 'lat', 'lon'] and we invert
+    for the horizontal slice, then 2nd dim is 'lat' and 1st dim is 'lon'.
+    
+    Parameters
+    ----------
+    S: numpy.array (output)
+        Results of the SOR inversion.
+        
+    A: numpy.array
+        Coefficient for the first dimensional derivative.
+    B: numpy.array
+        Coefficient for the cross derivatives.
+    C: numpy.array
+        Coefficient for the cross derivatives.
+    D: numpy.array
+        Coefficient for the second dimensional derivative.
+    E: numpy.array
+        Coefficient for the linear term.
+    F: numpy.array
+        Forcing function.
+    yc: int
+        Number of grid point in y-dimension (e.g., Y or lat).
+    xc: int
+        Number of grid point in x-dimension (e.g., X or lon).
+    dely: float
+        Increment (interval) in dimension y (unit of m, not degree).
+    delx: float
+        Increment (interval) in dimension x (unit of m, not degree).
+    BCy: str
+        Boundary condition for dimension y in ['fixed', 'extend', 'periodic'].
+    BCx: str
+        Boundary condition for dimension x in ['fixed', 'extend', 'periodic'].
+    delxSqr: float
+        Squared increment (interval) in dimension x (unit of m^2).
+    ratioQtr: float
+        Ratio of delx to dely, divided by 4.
+    ratioSqr: float
+        Squared Ratio of delx to dely.
+    optArg: float
+        Optimal argument 'omega' (relaxation factor between 1 and 2) for SOR.
+    undef: float
+        Undefined value.
+    flags: numpy.array
+        Length of 3 array, [0] is flag for overflow, [1] for converge speed and
+        [2] for how many loops used for iteration.
+    mxLoop: int
+        Maximum loop count, larger than this will break the iteration.
+    tolerance: float
+        Tolerance for iteraction, smaller than this will break the iteraction.
+
+    Returns
+    ----------
+    S: numpy.array
+        Results of the SOR inversion.
+    """
+    loop = 0
+    temp = 0.0
+    normPrev = np.finfo(np.float64).max
+    
+    while(True):
+        # process boundaries
+        if BCy == 'extend':
+            if BCx == 'periodic':
+                for i in range(xc):
+                    if  S[ 1,i] != undef:
+                        S[ 0,i]  = S[ 1,i]
+                    if  S[-2,i] != undef:
+                        S[-1,i]  = S[-2,i]
+            else:
+                for i in range(1, xc-1):
+                    if  S[ 1,i] != undef:
+                        S[ 0,i]  = S[ 1,i]
+                    if  S[-2,i] != undef:
+                        S[-1,i]  = S[-2,i]
+                for i in range(1, yc-1):
+                    if  S[ 1,i] != undef:
+                        S[ 0,i]  = S[ 1,i]
+                    if  S[-2,i] != undef:
+                        S[-1,i]  = S[-2,i]
+                
+                if  S[ 1, 1] != undef:
+                    S[ 0, 0] = S[ 1, 1]
+                if  S[ 1,-2] != undef:
+                    S[ 0,-1] = S[ 1,-2]
+                if  S[-2, 1] != undef:
+                    S[-1, 0] = S[-2, 1]
+                if  S[-2,-2] != undef:
+                    S[-1,-1] = S[-2,-2]
+        
+        for j in range(1, yc-1):
+            # for the west boundary iteration (i==0)
+            if BCx == 'periodic':
+                cond = (F[j  ,0] != undef and
+                        A[j+1,0] != undef and A[j  , 0] != undef and
+                        B[j+1,0] != undef and B[j-1, 0] != undef and
+                        C[j  ,1] != undef and C[j  ,-1] != undef and
+                        D[j  ,1] != undef and D[j  , 0] != undef and
+                        E[j  ,0] != undef)
+                
+                if cond:
+                    temp = (
+                        (
+                            A[j+1,0] * (S[j+1,0] - S[j , 0])-
+                            A[j  ,0] * (S[j  ,0] - S[j-1,0])
+                        ) * ratioSqr + (
+                            B[j+1,1] * (S[j+1,1] - S[j+1,-1])-
+                            B[j-1,0] * (S[j-1,0] - S[j-1,-1])
+                        ) * ratioQtr + (
+                            C[j, 1] * (S[j+1, 1] - S[j-1, 1])-
+                            C[j,-1] * (S[j+1,-1] - S[j-1,-1])
+                        ) * ratioQtr + (
+                            D[j,1] * (S[j,1] - S[j, 0])-
+                            D[j,0] * (S[j,0] - S[j,-1])
+                        )
+                    ) + (E[j,0] * S[j,0] - F[j,0]) * delxSqr
+                    
+                    temp *= optArg / ((A[j+1,0] + A[j,0]) *ratioSqr +
+                                      (D[j  ,1] + D[j,0]))
+                    S[j,0] += temp
+            
+            # inner loop
+            for i in range(1, xc-1):
+                cond = (F[j  ,i  ] != undef and
+                        A[j+1,i  ] != undef and A[j  ,  i] != undef and
+                        B[j+1,i  ] != undef and B[j-1,  i] != undef and
+                        C[j  ,i+1] != undef and C[j  ,i-1] != undef and
+                        D[j  ,i+1] != undef and D[j  ,  i] != undef and
+                        E[j,  i  ] != undef)
+                
+                if cond:
+                    temp = (
+                        (
+                            A[j+1,i] * (S[j+1,i] - S[j  ,i])-
+                            A[j  ,i] * (S[j  ,i] - S[j-1,i])
+                        ) * ratioSqr + (
+                            B[j+1,i] * (S[j+1,i+1] - S[j+1,i-1])-
+                            B[j-1,i] * (S[j-1,i+1] - S[j-1,i-1])
+                        ) * ratioQtr + (
+                            C[j,i+1] * (S[j+1,i+1] - S[j-1,i+1])-
+                            C[j,i-1] * (S[j+1,i-1] - S[j-1,i-1])
+                        ) * ratioQtr + (
+                            D[j,i+1] * (S[j,i+1] - S[j,  i])-
+                            D[j,i  ] * (S[j,i  ] - S[j,i-1])
+                        )
+                    ) + (E[j,i] * S[j,i] - F[j,i]) * delxSqr
+                    
+                    temp *= optArg / ((A[j+1,i] + A[j,i]) *ratioSqr +
+                                      (D[j,i+1] + D[j,i]))
+                    S[j,i] += temp
+            
+            
+            # for the east boundary iteration (i==-1)
+            if BCx == 'periodic':
+                cond = (F[j  ,-1] != undef and
+                        A[j+1,-1] != undef and A[j  ,-1] != undef and
+                        B[j+1,-1] != undef and B[j-1,-1] != undef and
+                        C[j  , 0] != undef and C[j  ,-2] != undef and
+                        D[j  , 0] != undef and D[j  ,-1] != undef and
+                        E[j  ,-1] != undef)
+                
+                if cond:
+                    temp = (
+                        (
+                            A[j+1,-1] * (S[j+1,-1] - S[j , -1])-
+                            A[j  ,-1] * (S[j  ,-1] - S[j-1,-1])
+                        ) * ratioSqr + (
+                            B[j+1,-1] * (S[j+1,0] - S[j+1,-2])-
+                            B[j-1,-1] * (S[j-1,0] - S[j-1,-2])
+                        ) * ratioQtr + (
+                            C[j, 0] * (S[j+1, 0] - S[j-1, 0])-
+                            C[j,-2] * (S[j+1,-2] - S[j-1,-2])
+                        ) * ratioQtr + (
+                            D[j, 0] * (S[j, 0] - S[j,-1])-
+                            D[j,-1] * (S[j,-1] - S[j,-2])
+                        )
+                    ) + (E[j,-1] * S[j,-1] - F[j,-1]) * delxSqr
+                    
+                    temp *= optArg / ((A[j+1,-1] + A[j,-1]) *ratioSqr +
+                                      (D[j  , 0] + D[j,-1]))
+                    S[j,-1] += temp
+        
+        norm = absNorm2D(S, undef)
+        
+        if np.isnan(norm) or norm > 1e17:
+            flags[0] = True
+            break
+        
+        flags[1] = abs(norm - normPrev) / normPrev
+        flags[2] = loop
+        
+        if flags[1] < tolerance or loop >= mxLoop or norm == 0:
+            break
+        
+        normPrev = norm
+        loop += 1
+        
+    return S
+
+
+@nb.jit(nopython=True, cache=False)
+def invert_general_3D(S, A, B, C, D, E, F, G, H,
+                      zc, yc, xc, delz, dely, delx, BCz, BCy, BCx, delxSqr,
+                      ratio2, ratio1, ratio2Sqr, ratio1Sqr, optArg, undef, flags,
+                      mxLoop, tolerance):
+    """
+    Inverting a 3D volume of elliptic equation in general form as:
+    
+          d^2S     d^2S     d^2S     dS     dS     dS 
+        A ---- + B ---- + C ---- + D -- + E -- + F -- + G*S = H
+          dz^2     dy^2     dx^2     dz     dy     dx 
     
     Parameters
     ----------
@@ -451,6 +663,244 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
         Coefficient for the sixth term.
     G: numpy.array
         Coefficient for the seventh term.
+    H: numpy.array
+        A known forcing function.
+    zc: int
+        Number of grid point in the z-dimension (e.g., Z or lev).
+    yc: int
+        Number of grid point in the y-dimension (e.g., Y or lat).
+    xc: int
+        Number of grid point in the x-dimension (e.g., X or lon).
+    delz: float
+        Increment (interval) in dimension z (unit of m, not degree).
+    dely: float
+        Increment (interval) in dimension y (unit of m, not degree).
+    delx: float
+        Increment (interval) in dimension x (unit of m, not degree).
+    BCz: str
+        Boundary condition for dimension z in ['fixed', 'extend'].
+    BCy: str
+        Boundary condition for dimension y in ['fixed', 'extend'].
+    BCx: str
+        Boundary condition for dimension x in ['fixed', 'extend', 'periodic'].
+    delxSqr: float
+        Squared increment (interval) in dimension y (unit of m^2).
+    ratio2Sqr: float
+        Squared Ratio of delx to delz.
+    ratio1Sqr: float
+        Squared Ratio of delx to dely.
+    optArg: float
+        Optimal argument 'omega' (relaxation factor between 1 and 2) for SOR.
+    undef: float
+        Undefined value.
+    flags: numpy.array
+        Length of 3 array, [0] is flag for overflow, [1] for converge speed and
+        [2] for how many loops used for iteration.
+    mxLoop: int
+        Maximum loop count, larger than this will break the iteration.
+    tolerance: float
+        Tolerance for iteraction, smaller than this will break the iteraction.
+
+    Returns
+    ----------
+    S: numpy.array
+        Results of the SOR inversion.
+    """
+    loop = 0
+    temp = 0.0
+    normPrev = np.finfo(np.float64).max
+    
+    while(True):
+        # process boundaries
+        if BCy == 'extend':
+            if BCx == 'periodic':
+                for k in range(1, zc-1):
+                    for i in range(xc):
+                        if  S[k, 1,i] != undef:
+                            S[k, 0,i]  = S[k, 1,i]
+                        if  S[k,-2,i] != undef:
+                            S[k,-1,i]  = S[k,-2,i]
+            else:
+                for k in range(1, zc-1):
+                    for i in range(1, xc-1):
+                        if  S[k, 1,i] != undef:
+                            S[k, 0,i]  = S[k, 1,i]
+                        if  S[k,-2,i] != undef:
+                            S[k,-1,i]  = S[k,-2,i]
+                    for i in range(1, yc-1):
+                        if  S[k, 1,i] != undef:
+                            S[k, 0,i]  = S[k, 1,i]
+                        if  S[k,-2,i] != undef:
+                            S[k,-1,i]  = S[k,-2,i]
+                    
+                    if  S[k, 1, 1] != undef:
+                        S[k, 0, 0] = S[k, 1, 1]
+                    if  S[k, 1,-2] != undef:
+                        S[k, 0,-1] = S[k, 1,-2]
+                    if  S[k,-2, 1] != undef:
+                        S[k,-1, 0] = S[k,-2, 1]
+                    if  S[k,-2,-2] != undef:
+                        S[k,-1,-1] = S[k,-2,-2]
+        
+        for k in range(1, zc-1):
+            for j in range(1, yc-1):
+                # for the west boundary iteration (i==0)
+                if BCx == 'periodic':
+                    cond = (G[k,j,0] != undef and G[k,j,0] != undef and
+                            A[k,j,0] != undef and B[k,j,0] != undef and
+                            C[k,j,0] != undef and D[k,j,0] != undef and
+                            E[k,j,0] != undef and F[k,j,0] != undef)
+                    
+                    if cond:
+                        temp = (
+                            A[k,j,0] * (
+                                (S[k+1,j,0] - S[k,j,0])-(S[k,j,0] - S[k-1,j,0])
+                            ) * ratio2Sqr +
+                            B[k,j,0] * (
+                                (S[k,j+1,0] - S[k,j,0])-(S[k,j,0] - S[k,j-1,0])
+                            ) * ratio1Sqr +
+                            C[k,j,0] * (
+                                (S[k,j,1] - S[k,j,0])-(S[k,j,0] - S[k,j,-1])
+                            ) + (
+                            D[k,j,0] * (
+                                (S[k+1,j,0] - S[k-1,j,0])
+                            ) * ratio2 +
+                            E[k,j,0] * (
+                                (S[k,j+1,0] - S[k,j-1,0])
+                            ) * ratio1 +
+                            F[k,j,0] * (
+                                (S[k,j,1] - S[k,j,-1])
+                            )) * delx / 2.0 + (
+                            G[k,j,0] * S[k,j,0] - H[k,j,0]) * delxSqr
+                        )
+                        
+                        temp *= optArg / ((
+                            A[k,j,0]*ratio2Sqr + B[k,j,0]*ratio1Sqr + C[k,j,0]
+                        ) * 2.0 - G[k,j,0]*delxSqr)
+                        
+                        S[k,j,0] += temp
+                
+                # inner loop
+                for i in range(1, xc-1):
+                    cond = (H[k,j,i] != undef and G[k,j,i] != undef and
+                            A[k,j,i] != undef and B[k,j,i] != undef and
+                            C[k,j,i] != undef and D[k,j,i] != undef and
+                            E[k,j,i] != undef and F[k,j,i] != undef)
+                    
+                    if cond:
+                        temp = (
+                            A[k,j,i] * (
+                                (S[k+1,j,i] - S[k,j,i])-(S[k,j,i] - S[k-1,j,i])
+                            ) * ratio2Sqr +
+                            B[k,j,i] * (
+                                (S[k,j+1,i] - S[k,j,i])-(S[k,j,i] - S[k,j-1,i])
+                            ) * ratio1Sqr +
+                            C[k,j,i] * (
+                                (S[k,j,i+1] - S[k,j,i])-(S[k,j,i] - S[k,j,i-1])
+                            ) + (
+                            D[k,j,i] * (
+                                (S[k+1,j,i] - S[k-1,j,i])
+                            ) * ratio2 +
+                            E[k,j,i] * (
+                                (S[k,j+1,i] - S[k,j-1,i])
+                            ) * ratio1 +
+                            F[k,j,i] * (
+                                (S[k,j,i+1] - S[k,j,i-1])
+                            )) * delx / 2.0 + (
+                            G[k,j,i] * S[k,j,i] - H[k,j,i]) * delxSqr
+                        )
+                        
+                        temp *= optArg / ((
+                            A[k,j,i]*ratio2Sqr + B[k,j,i]*ratio1Sqr + C[k,j,i]
+                        ) * 2.0 - G[k,j,i]*delxSqr)
+                        
+                        S[k,j,i] += temp
+                
+                # for the east boundary iteration (i==-1)
+                if BCx == 'periodic':
+                    cond = (G[k,j,-1] != undef and H[k,j,-1] != undef and
+                            A[k,j,-1] != undef and B[k,j,-1] != undef and
+                            C[k,j,-1] != undef and D[k,j,-1] != undef and
+                            E[k,j,-1] != undef and F[k,j,-1] != undef)
+                    
+                    if cond:
+                        temp = (
+                            A[k,j,-1] * (
+                                (S[k+1,j,-1] - S[k,j,-1])-(S[k,j,-1] - S[k-1,j,-1])
+                            ) * ratio2Sqr +
+                            B[k,j,-1] * (
+                                (S[k,j+1,-1] - S[k,j,-1])-(S[k,j,-1] - S[k,j-1,-1])
+                            ) * ratio1Sqr +
+                            C[k,j,-1] * (
+                                (S[k,j,0] - S[k,j,-1])-(S[k,j,-1] - S[k,j,-2])
+                            ) + (
+                            D[k,j,-1] * (
+                                (S[k+1,j,-1] - S[k-1,j,-1])
+                            ) * ratio2 +
+                            E[k,j,-1] * (
+                                (S[k,j+1,-1] - S[k,j-1,-1])
+                            ) * ratio1 +
+                            F[k,j,-1] * (
+                                (S[k,j,0] - S[k,j,-2])
+                            )) * delx / 2.0 + (
+                            G[k,j,-1] * S[k,j,-1] - H[k,j,-1]) * delxSqr
+                        )
+                        
+                        temp *= optArg / ((
+                            A[k,j,-1]*ratio2Sqr + B[k,j,-1]*ratio1Sqr + C[k,j,-1]
+                        ) * 2.0 - G[k,j,-1]*delxSqr)
+                        
+                        S[k,j,-1] += temp
+        
+        norm = absNorm3D(S, undef)
+        
+        if np.isnan(norm) or norm > 1e17:
+            flags[0] = True
+            break
+        
+        flags[1] = abs(norm - normPrev) / normPrev
+        flags[2] = loop
+        
+        if flags[1] < tolerance or loop >= mxLoop:
+            break
+        
+        normPrev = norm
+        loop += 1
+        
+    return S
+
+
+@nb.jit(nopython=True, cache=False)
+def invert_general_2D(S, A, B, C, D, E, F, G,
+                      yc, xc, dely, delx, BCy, BCx,
+                      delxSqr, ratio, ratioQtr, ratioSqr, optArg, undef, flags,
+                      mxLoop, tolerance):
+    """
+    Inverting a 2D slice of elliptic equation in general form as:
+    
+          d^2S     d^2S     d^2S     dS     dS 
+        A ---- + B ---- + C ---- + D -- + E -- + F*S = G
+          dy^2     dydx     dx^2     dy     dx 
+    
+    Parameters
+    ----------
+    S: numpy.array (output)
+        Results of the SOR inversion.
+        
+    A: numpy.array
+        Coefficient for the first term.
+    B: numpy.array
+        Coefficient for the second term.
+    C: numpy.array
+        Coefficient for the third term.
+    D: numpy.array
+        Coefficient for the fourth term.
+    E: numpy.array
+        Coefficient for the fifth term.
+    F: numpy.array
+        Coefficient for the sixth term.
+    G: numpy.array
+        Known forcing function.
     yc: int
         Number of grid point in the y-dimension (e.g., Y or lat).
     xc: int
@@ -540,14 +990,14 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
                         ) * ratioQtr +
                         C[j,0] * (
                             (S[j,1] - S[j,0])-(S[j,0] - S[j,-1])
-                        ) +
+                        ) + (
                         D[j,0] * (
                             (S[j+1,0] - S[j-1,0])
-                        ) * delx / 2.0 * ratio +
+                        ) * ratio +
                         E[j,0] * (
                             (S[j,1] - S[j,-1])
-                        ) * delx / 2.0 + (
-                        F[j,0] * S[j,0] + G[j,0]) * delxSqr
+                        )) * delx / 2.0 + (
+                        F[j,0] * S[j,0] - G[j,0]) * delxSqr
                     )
                     
                     temp *= optArg / ((A[j,0]*ratioSqr + C[j,0]) * 2.0
@@ -571,14 +1021,14 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
                         ) * ratioQtr +
                         C[j,i] * (
                             (S[j,i+1] - S[j,i])-(S[j,i] - S[j,i-1])
-                        ) +
+                        ) + (
                         D[j,i] * (
                             (S[j+1,i] - S[j-1,i])
-                        ) * delx / 2.0 * ratio +
+                        ) * ratio +
                         E[j,i] * (
                             (S[j,i+1] - S[j,i-1])
-                        ) * delx / 2.0 + (
-                        F[j,i] * S[j,i] + G[j,i]) * delxSqr
+                        )) * delx / 2.0 + (
+                        F[j,i] * S[j,i] - G[j,i]) * delxSqr
                     )
                     
                     temp *= optArg / ((A[j,i]*ratioSqr + C[j,i]) * 2.0
@@ -602,14 +1052,14 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
                         ) * ratioQtr +
                         C[j,-1] * (
                             (S[j,0] - S[j,-1])-(S[j,-1] - S[j,-2])
-                        ) +
+                        ) + (
                         D[j,-1] * (
                             (S[j+1,-1] - S[j-1,-1])
-                        ) * delx / 2.0 * ratio +
+                        ) * ratio +
                         E[j,-1] * (
                             (S[j,0] - S[j,-2])
-                        ) * delx / 2.0+ (
-                        F[j,-1] * S[j,-1] + G[j,-1]) * delxSqr
+                        )) * delx / 2.0 + (
+                        F[j,-1] * S[j,-1] - G[j,-1]) * delxSqr
                     )
                     
                     temp *= optArg / ((A[j,-1]*ratioSqr + C[j,-1]) * 2.0
@@ -640,12 +1090,12 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
                           delxSSr, delxTr, delxSqr,
                           ratio, ratioSSr, ratioQtr, ratioSqr,
                           optArg, undef, flags,
-                          mxLoop=5000, tolerance=1e-7):
+                          mxLoop, tolerance):
     """
     Inverting a 2D slice of biharmonic equation in general form as:
     
       d^4S       d^4S       d^4S     d^2S     d^2S     d^2S     dS     dS 
-    A ---- + B -------- + C ---- + D ---- + E ---- + F ---- + G -- + H -- + I*S + J = 0
+    A ---- + B -------- + C ---- + D ---- + E ---- + F ---- + G -- + H -- + I*S = J
       dy^4     dy^2dx^2     dx^4     dy^2     dydx     dx^2     dy     dx 
     
     Parameters
@@ -672,7 +1122,7 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
     I: numpy.array
         Coefficient for the ninth term.
     J: numpy.array
-        Coefficient for the tenth term.
+        Known forcing function.
     yc: int
         Number of grid point in the y-dimension (e.g., Y or lat).
     xc: int
@@ -805,7 +1255,7 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
                         H[j,0] * (
                             (S[j,1] - S[j,-1])
                         ) * delxTr / 2.0 + (
-                        I[j,0] * S[j,0] + J[j,0]) * delxSSr
+                        I[j,0] * S[j,0] - J[j,0]) * delxSSr
                     )
                     
                     temp *= -optArg / ((A[j,0]*ratioSSr + C[j,0]) * 6.0 +
@@ -850,7 +1300,7 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
                         H[j,1] * (
                             (S[j,2] - S[j,0])
                         ) * delxTr / 2.0 + (
-                        I[j,1] * S[j,1] + J[j,1]) * delxSSr
+                        I[j,1] * S[j,1] - J[j,1]) * delxSSr
                     )
                     
                     temp *= -optArg / ((A[j,1]*ratioSSr + C[j,1]) * 6.0 +
@@ -895,7 +1345,7 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
                         H[j,i] * (
                             (S[j,i+1] - S[j,i-1])
                         ) * delxTr / 2.0 + (
-                        I[j,i] * S[j,i] + J[j,i]) * delxSSr
+                        I[j,i] * S[j,i] - J[j,i]) * delxSSr
                     )
                     
                     temp *= -optArg / ((A[j,i]*ratioSSr + C[j,i]) * 6.0 +
@@ -940,7 +1390,7 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
                         H[j,-2] * (
                             (S[j,-1] - S[j,-3])
                         ) * delxTr / 2.0 + (
-                        I[j,-2] * S[j,-2] + J[j,-2]) * delxSSr
+                        I[j,-2] * S[j,-2] - J[j,-2]) * delxSSr
                     )
                     
                     temp *= -optArg / ((A[j,-2]*ratioSSr + C[j,-2]) * 6.0 +
@@ -985,7 +1435,7 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
                         H[j,-1] * (
                             (S[j,0] - S[j,-2])
                         ) * delxTr / 2.0 + (
-                        I[j,-1] * S[j,-1] + J[j,-1]) * delxSSr
+                        I[j,-1] * S[j,-1] - J[j,-1]) * delxSSr
                     )
                     
                     temp *= -optArg / ((A[j,-1]*ratioSSr + C[j,-1]) * 6.0 +

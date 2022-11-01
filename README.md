@@ -14,14 +14,16 @@ More importantly, this could be generalized into a numerical solver for elliptic
 
 One problem with SOR is that the speed of iteration using **explicit loops in Python** will be **e-x-t-r-e-m-e-l-y ... s-l-o-w**!  A very suitable solution here is to use [`numba`](https://numba.pydata.org/).  We may try our best to speed things up using more hardwares (possibly GPU).
 
-Classical problems include:
-- [Poisson equation](https://github.com/miniufo/xinvert/blob/master/notebooks/1.%20Invert%20Poisson%20equation.ipynb);
-- [Gill-Matsuno model](https://github.com/miniufo/xinvert/blob/master/notebooks/2.%20Invert%20Gill-Matsuno%20model.ipynb);
-- [Stommel-Munk model](https://github.com/miniufo/xinvert/blob/master/notebooks/3.%20Wind-driven%20ocean%20circulation.ipynb);
-- [Geopotential equation](https://github.com/miniufo/xinvert/blob/master/notebooks/4.%20Geopotential%20model.ipynb);
-- [Omega equation](https://github.com/miniufo/xinvert/blob/master/notebooks/5.%20Omega%20equation.ipynb);
-- Eliassen balance vortex model;
-- potential vorticity inversion...
+Classical problems include Gill-Matsuno model, Stommel-Munk model, QG omega model, PV inversion model, Swayer-Eliassen balance model...  A complete list of the classical inversion problems can be found at [this notebook](https://github.com/miniufo/xinvert/blob/master/notebooks/01.%20Introduction%20to%20xinvert.ipynb).
+
+Why `xinvert`?
+
+- **Thinking and coding in equations:** User APIs are very close to the equations: unknowns are on the LHS of `=`, whereas the known forcings are on its RHS;
+- **Genearlize all the steady-state problems:** All the known steady-state problems in geophysical fluid dynamics can be easily adapted to fit the solvers;
+- **Very short parameter list:** Passing a single `xarray` forcing is enough for the inversion.  Coordinates information is already encapsulated.
+- **Flexible model parameters:** Model paramters can be either a constant, or varying with a specific dimension (like Coriolis $f$), or fully varying with space and time, due to the use of `xarray`'s broadcasting capability;
+- **Parallel inverting:** The use of `xarray`, and thus `dask` allow parallel inverting, which is almost transparent to the user;
+- **Pure Python code for C-code speed:** The use of `numba` allow pure python code in this package but native speed;
 
 ---
 ## 2. How to install
@@ -43,13 +45,8 @@ python setup.py install
 
 ---
 ## 3. Example: Helmholtz decomposition
-This is a classical problem in both meteorology and oceanography that a vector flow field can be deomposed into rotational and divergent parts, where rotational and divergent parts are represented by the streamfunction and velocity potential.  Given vorticity (vor) and divergence (div) as the forcing functions, one can invert the streamfunction and velocity potential as:
-```python
-from xinvert import invert_Poisson
+This is a classical problem in both meteorology and oceanography that a vector flow field can be deomposed into rotational and divergent parts, where rotational and divergent parts are represented by the streamfunction and velocity potential.  Given vorticity (vor) and divergence (div) as the forcing functions, one can invert the streamfunction and velocity potential directly.
 
-psi = invert_Poisson(vor, dims=['lat','lon'], BCs=['extend', 'periodic'])
-chi = invert_Poisson(div, dims=['lat','lon'], BCs=['extend', 'periodic'])
-```
 ### 3.1 Atmospheric demonstration
 Here is an atmospheric demonstration with no lateral boundaries:
 ```python
@@ -60,9 +57,13 @@ dset = xr.open_dataset('data.nc')
 
 vor = dset.vor
 
+# specify boundary conditions in invert parameters
+# 'extend' for lat, 'periodic' for lon
+iParams = {'BCs': ['extend', 'periodic']}
+
 # Invert within lat/lon plane, with extend and periodic boundary
 # conditions in lat and lon respectively
-psi = invert_Poisson(vor, dims=['lat','lon'], BCs=['extend', 'periodic'])
+psi = invert_Poisson(vor, dims=['lat','lon'], iParams=iParams)
 ```
 ![atmospheric plot](https://raw.githubusercontent.com/miniufo/xinvert/master/pics/atmosExample.png)
 
@@ -77,9 +78,13 @@ dset = xr.open_dataset('mitgcm.nc')
 
 vor = dset.vor
 
+# specify boundary conditions in invert parameters
+# 'fixed' for lat, 'periodic' for lon; undefined value is 0
+iParams = {'BCs':['fixed', 'periodic'], 'undef':0}
+
 # Invert within YG/XGplane, with fixed and periodic boundary respectively.
 # Kwarg undef is used as a mask for land value.
-psi = invert_Poisson(vor, dims=['YG','XG'], BCs=['fixed', 'periodic'], undef=0)
+psi = invert_Poisson(vor, dims=['YG','XG'], iParams=iParams)
 ```
 ![oceanic plot](https://raw.githubusercontent.com/miniufo/xinvert/master/pics/oceanExample.png)
 
@@ -91,19 +96,21 @@ from xinvert import invert_Poisson_animated
 # input of vor need to be two dimensional only;
 # psi has one more dimension than vor as iteration, which could be animated over.
 # Here psi has 40 frames and loop 1 per frame (final state is after 40 iterations)
-psi = invert_Poisson_animated(vor[0,0] BCs=['extend', 'periodic'],
-                              loop_per_frame=1, max_loop=40)
+psi = animate_iteration(invert_Poisson, vor, iParams=iParams,
+                              loop_per_frame=1, max_frames=40)
 ```
 ![animate plot](https://raw.githubusercontent.com/miniufo/xinvert/master/pics/animateConverge.gif)
 
-More examples can be found at these notebooks:
-1. [Poisson equation for streamfunction/velocity potential](https://github.com/miniufo/xinvert/blob/master/notebooks/1.%20Invert%20Poisson%20equation.ipynb)
-2. [Matsuno-Gill model for heat-induced tropical circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/2.%20Invert%20Gill-Matsuno%20model.ipynb)
-3. [Stommel-Munk model for wind-driven ocean circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/3.%20Wind-driven%20ocean%20circulation.ipynb)
-4. [Geopotential equation for balanced mass field](https://github.com/miniufo/xinvert/blob/master/notebooks/4.%20Geopotential%20model.ipynb);
-5. [Omega equation for quasi-geostrophic vertical motion](https://github.com/miniufo/xinvert/blob/master/notebooks/5.%20Omega%20equation.ipynb);
-6. Eliassen balance vortex model for Hadley circulation and cyclones
-7. PV inversion model for the balanced mass and flow 
-8. background reference state
+More examples can be found in these notebooks:
+01. [Poisson equation for streamfunction/velocity potential](https://github.com/miniufo/xinvert/blob/master/notebooks/02.%20Poisson%20equation%20(horizontal%20case).ipynb);
+02. [Poisson equation for meridional overturning and zonal Walker circulations](https://github.com/miniufo/xinvert/blob/master/notebooks/03.%20Poisson%20equation%20(meridional%20and%20zonal%20cases).ipynb);
+03. [Geopotential model for balanced mass field](https://github.com/miniufo/xinvert/blob/master/notebooks/04.%20Balanced%20mass%20and%20flow%20fields.ipynb);
+04. [Eliassen model for the meridional overturning circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/05.%20Eliassen%20model.ipynb);
+05. PV inversion for 2D reference state (TODO);
+06. PV inversion for 2D QGPV (TODO);
+07. [Matsuno-Gill model for heat-induced tropical circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/08.%20Gill-Matsuno%20model.ipynb)
+08. [Stommel-Munk model for wind-driven ocean circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/09.%20Stommel-Munk%20model.ipynb)
+09. [Omega equation for quasi-geostrophic vertical motion](https://github.com/miniufo/xinvert/blob/master/notebooks/10.%20Omega%20equation.ipynb);
+10. [3D oceanic flow](https://github.com/miniufo/xinvert/blob/master/notebooks/11.%203D%20Ocean%20flow.ipynb);
 
 more to be added...

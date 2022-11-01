@@ -51,14 +51,14 @@ def loop_noncore(data, dims=None):
     for dim in dimNonC:
         dimLopVars.append(data[dim].values)
     
-    from itertools import product
-    for idices in product(*dimLopVars):
-        selDict = {}
-        for d, i in zip(dimNonC, idices):
-            selDict[d] = i
-            
-            yield selDict
-    
-    yield {}
-
+    if len(dimNonC) >= 1:
+        from itertools import product
+        for idices in product(*dimLopVars):
+            selDict = {}
+            for d, i in zip(dimNonC, idices):
+                selDict[d] = i
+                
+                yield selDict
+    else:
+        yield {}
 

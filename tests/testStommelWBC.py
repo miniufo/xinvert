@@ -8,7 +8,7 @@ Copyright 2018. All rights reserved. Use is subject to license terms.
 #%% classical cases
 import numpy as np
 import xarray as xr
-from xgrads.xgrads import open_CtlDataset
+
 
 xnum = 201
 ynum = 151
@@ -33,8 +33,6 @@ curl_tau  = xr.DataArray(-F * np.sin(np.pi * ygrid / Ly) * np.pi/Ly,
                          dims=['ydef','xdef'],
                          coords={'ydef':ydef, 'xdef':xdef})
 
-# finite difference for derivative
-# curl_tau2 = - tau_ideal.differentiate('ydef')
 
 #%% analytical solution for non-rotating case
 gamma = F * np.pi / R / Ly
@@ -47,29 +45,32 @@ h_a = gamma * (Ly / np.pi)**2 * np.sin(np.pi * ydef / Ly) * (
 
 
 #%% invert
-from xinvert.xinvert.core import invert_Stommel
+from xinvert.xinvert import invert_Stommel, invert_StommelMunk, cal_flow
+
+iParams = {
+    'BCs'      : ['fixed', 'fixed'],
+    'mxLoop'   : 5000,
+    'optArg'   : 1.9,
+    'tolerance': 1e-12,
+}
+
+mParams1 = {'beta': 0   , 'R': R, 'D': depth, 'A':0}
+mParams2 = {'beta': beta, 'R': R, 'D': depth, 'A':0}
 
 
-h1, u1, v1 = invert_Stommel(curl_tau, dims=['ydef','xdef'],
-                               BCs=['fixed', 'fixed'],
-                               optArg=1.9, mxLoop=3000,
-                               cal_flow=True,
-                               coords='cartesian',
-                               beta=0,
-                               R=R,
-                               depth=depth,
-                               undef=np.nan,
-                               debug=False)
-h2, u2, v2 = invert_Stommel(curl_tau, dims=['ydef','xdef'],
-                               BCs=['fixed', 'fixed'],
-                               optArg=1.9, mxLoop=3000, tolerance=1e-14,
-                               cal_flow=True,
-                               coords='cartesian',
-                               beta=beta,
-                               R=R,
-                               depth=depth,
-                               undef=np.nan,
-                               debug=False)
+S1 = invert_Stommel(curl_tau, dims=['ydef','xdef'], coords='cartesian',
+                    iParams=iParams, mParams=mParams1)
+S2 = invert_Stommel(curl_tau, dims=['ydef','xdef'], coords='cartesian',
+                    iParams=iParams, mParams=mParams2)
+
+
+S11 = invert_StommelMunk(curl_tau, dims=['ydef','xdef'], coords='cartesian',
+                          iParams=iParams, mParams=mParams1)
+S22 = invert_StommelMunk(curl_tau, dims=['ydef','xdef'], coords='cartesian',
+                          iParams=iParams, mParams=mParams2)
+
+u1, v1 = cal_flow(S1, dims=['ydef','xdef'], coords='cartesian')
+u2, v2 = cal_flow(S2, dims=['ydef','xdef'], coords='cartesian')
 
 
 #%% plot wind and streamfunction
@@ -82,11 +83,11 @@ array = [
     [1, 2, 2, 3, 3,],
     ]
 
-fig, axes = pplt.subplots(array, figsize=(13,6),
+fig, axes = pplt.subplots(array, figsize=(11,5),
                           sharex=0, sharey=3)
 
 skip = 3
-fontsize = 16
+fontsize = 14
 
 ax = axes[0]
 ax.plot(tau_ideal[:,0], tau_ideal.ydef)
@@ -95,7 +96,7 @@ ax.set_ylabel('y-coordinate (m)', fontsize=fontsize-2)
 ax.set_title('wind stress', fontsize=fontsize)
 
 ax = axes[1]
-m=ax.contourf(h1/1e6*depth, cmap='rainbow', levels=np.linspace(0, 140, 15))
+m=ax.contourf(S1/1e6*depth, cmap='rainbow', levels=np.linspace(0, 140, 15))
 ax.set_title('$f$-plane Stommel solution', fontsize=fontsize)
 p=ax.quiver(xgrid.values[::skip+1,::skip], ygrid.values[::skip+1,::skip],
               u1.values[::skip+1,::skip], v1.values[::skip+1,::skip],
@@ -107,7 +108,7 @@ ax.set_xlabel('x-coordinate (m)', fontsize=fontsize-2)
 ax.set_ylabel('y-coordinate (m)', fontsize=fontsize-2)
 
 ax = axes[2]
-m=ax.contourf(h2/1e6*depth, cmap='rainbow', levels=np.linspace(0, 60, 13))
+m=ax.contourf(S2/1e6*depth, cmap='rainbow', levels=np.linspace(0, 90, 19))
 ax.set_title('$\\beta$-plane Stommel solution', fontsize=fontsize)
 ax.quiver(xgrid.values[::skip+1,::skip], ygrid.values[::skip+1,::skip],
               u2.values[::skip+1,::skip], v2.values[::skip+1,::skip],
@@ -120,58 +121,47 @@ ax.set_xlabel('x-coordinate (m)', fontsize=fontsize-2)
 ax.set_ylabel('y-coordinate (m)', fontsize=fontsize-2)
 
 
-axes.format(abc=True, abcloc='l', abcstyle='(a)', grid=False,
-            ylabel='y-coordinate (m)')
+axes.format(abc='(a)', grid=False, ylabel='y-coordinate (m)')
 
 #%% real case
 import numpy as np
 import xarray as xr
-from xgrads.xgrads import open_CtlDataset
-from GeoApps.GridUtils import add_latlon_metrics
-from GeoApps.DiagnosticMethods import Dynamics
 
 
-ds = open_CtlDataset('D:/Data/SODA/2.2.6/SODA226Clim_1993_2003.ctl')
+ds = xr.open_dataset('./xinvert/Data/SODA_curl.nc')
 
-dset, grid = add_latlon_metrics(ds)
+curl_Jan = ds.curl[0]
+curl_Jul = ds.curl[6]
 
-dyn = Dynamics(dset, grid)
-
-tauxJan = dset.taux.where(dset.taux!=dset.undef)[0]
-tauyJan = dset.tauy.where(dset.tauy!=dset.undef)[0]
-
-curl_Jan = dyn.curl(tauxJan, tauyJan).load()
-
-tauxJul = dset.taux.where(dset.taux!=dset.undef)[6]
-tauyJul = dset.tauy.where(dset.tauy!=dset.undef)[6]
-
-curl_Jul = dyn.curl(tauxJul, tauyJul).load()
-
-lat, lon = xr.broadcast(ds.lat, ds.lon)
-R = 2e-4 * (2 - 1*np.cos(np.deg2rad(lat)))
+R = 2e-4
 depth = 100
 
 
 #%% invert
-from xinvert.xinvert.core import invert_Stommel
+from xinvert.xinvert import invert_Stommel, invert_StommelMunk, cal_flow
 
+iParams = {
+    'BCs'      : ['extend', 'periodic'],
+    'mxLoop'   : 5000,
+    'optArg'   : 1,
+    'tolerance': 1e-12,
+    'undef'    : np.nan,
+}
 
-h1, u1, v1 = invert_Stommel(curl_Jan, dims=['lat','lon'],
-                               BCs=['fixed', 'periodic'],
-                               optArg=1.6, mxLoop=5000,
-                               cal_flow=True,
-                               R=R,
-                               depth=depth,
-                               undef=np.nan,
-                               debug=False)
-h2, u2, v2 = invert_Stommel(curl_Jul, dims=['lat','lon'],
-                               BCs=['fixed', 'periodic'],
-                               optArg=1.6, mxLoop=5000,
-                               cal_flow=True,
-                               R=R,
-                               depth=depth,
-                               undef=np.nan,
-                               debug=False)
+mParams1 = {'R': R, 'D': depth, 'A':5e3}
+
+h1 = invert_Stommel(curl_Jan, dims=['lat','lon'],
+                    iParams=iParams, mParams=mParams1)
+h2 = invert_Stommel(curl_Jul, dims=['lat','lon'],
+                    iParams=iParams, mParams=mParams1)
+
+h11 = invert_StommelMunk(curl_Jan, dims=['lat','lon'],
+                    iParams=iParams, mParams=mParams1)
+h22 = invert_StommelMunk(curl_Jul, dims=['lat','lon'],
+                    iParams=iParams, mParams=mParams1)
+
+u1, v1 = cal_flow(h1, dims=['lat','lon'], BCs=['extend', 'periodic'])
+u2, v2 = cal_flow(h2, dims=['lat','lon'], BCs=['extend', 'periodic'])
 
 
 #%% plot wind and streamfunction
@@ -182,13 +172,13 @@ import numpy as np
 
 lat, lon = xr.broadcast(u1.lat, u1.lon)
 
-fig, axes = pplt.subplots(nrows=2, ncols=2, figsize=(16,9), sharex=3, sharey=3,
+fig, axes = pplt.subplots(nrows=2, ncols=2, figsize=(11,6.8), sharex=3, sharey=3,
                           proj=pplt.Proj('cyl', lon_0=180))
 
 skip = 3
 fontsize = 16
 
-axes.format(abc=True, abcloc='l', abcstyle='(a)', coast=True,
+axes.format(abc='(a)', coast=True,
             lonlines=40, latlines=15, lonlabels='b', latlabels='l',
             grid=False, labels=False)
 
@@ -196,15 +186,12 @@ ax = axes[0,0]
 p=ax.contourf(curl_Jan, cmap='jet',levels=np.linspace(-7e-7,7e-7,29))
 ax.set_title('wind stress curl (January)',
              fontsize=fontsize)
-ax.quiver(lon.values[::skip,::skip+1], lat.values[::skip,::skip+1],
-              tauxJan.values[::skip,::skip+1], tauyJan.values[::skip,::skip+1],
-              width=0.001, headwidth=10., headlength=12., scale=20)
 ax.set_ylim([-80, 80])
 ax.set_xlim([-180, 180])
 ax.colorbar(p, loc='b', label='', length=0.93)
 
 ax = axes[0,1]
-p=ax.contourf(h1/1e6*depth, cmap='bwr', levels=np.linspace(-40,40,17))
+p=ax.contourf(h1/1e6*depth, cmap='bwr', levels=np.linspace(-80,80,17))
 ax.set_title('Stommel response (January)',
              fontsize=fontsize)
 ax.quiver(lon.values[::skip,::skip+2], lat.values[::skip,::skip+2],
@@ -214,21 +201,18 @@ ax.quiver(lon.values[::skip,::skip+2], lat.values[::skip,::skip+2],
 ax.set_ylim([-80, 80])
 ax.set_xlim([-180, 180])
 
-ax.colorbar(p, loc='b', label='', ticks=5, length=0.93)
+ax.colorbar(p, loc='b', label='', ticks=20, length=0.93)
 
 ax = axes[1,0]
 p=ax.contourf(curl_Jul, cmap='jet',levels=np.linspace(-7e-7,7e-7,29))
 ax.set_title('wind stress curl (July)',
              fontsize=fontsize)
-ax.quiver(lon.values[::skip,::skip+1], lat.values[::skip,::skip+1],
-              tauxJul.values[::skip,::skip+1], tauyJul.values[::skip,::skip+1],
-              width=0.001, headwidth=10., headlength=12., scale=20)
 ax.set_ylim([-80, 80])
 ax.set_xlim([-180, 180])
 ax.colorbar(p, loc='b', label='', length=0.93)
 
 ax = axes[1,1]
-p=ax.contourf(h2/1e6*depth, cmap='bwr', levels=np.linspace(-60,60,13))
+p=ax.contourf(h2/1e6*depth, cmap='bwr', levels=np.linspace(-100,100,21))
 ax.set_title('Stommel response to curl (July)',
              fontsize=fontsize)
 ax.quiver(lon.values[::skip,::skip+2], lat.values[::skip,::skip+2],
@@ -237,6 +221,6 @@ ax.quiver(lon.values[::skip,::skip+2], lat.values[::skip,::skip+2],
               # headwidth=1, headlength=3, width=0.002)
 ax.set_ylim([-80, 80])
 ax.set_xlim([-180, 180])
-ax.colorbar(p, loc='b', label='', ticks=5, length=0.93)
+ax.colorbar(p, loc='b', label='', ticks=20, length=0.93)
 
 

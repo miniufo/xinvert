@@ -6,26 +6,25 @@ Created on 2020.12.19
 Copyright 2018. All rights reserved. Use is subject to license terms.
 """
 #%%
-from xgrads.xgrads import open_CtlDataset
+import xarray as xr
+import numpy as np
+from xinvert.xinvert import animate_iteration
 
-ds = open_CtlDataset('D:/SOR.ctl')
+ds = xr.open_dataset('./xinvert/Data/Helmholtz_atmos.nc')
 
 vor = ds.vor[0].rename('vorticity')
-div = ds.div[0].rename('divergence')
-
-#%%
-import numpy as np
-from xinvert.xinvert import invert_Poisson_animated
 
 
-sf = invert_Poisson_animated(vor, BCs=['extend', 'periodic'],
-                             loop_per_frame=1, max_loop=40)
+iParams = {
+    'BCs': ['fixed','periodic']
+}
+
+sf = animate_iteration('Poisson', vor, dims=['lat','lon'], iParams=iParams,
+                       loop_per_frame=1, max_frames=40)
 
 
 #%% plot vector
 import proplot as pplt
-import xarray as xr
-import numpy as np
 
 u = ds.u.where(ds.u!=0)[0].load()
 v = ds.v.where(ds.v!=0)[0].load()
