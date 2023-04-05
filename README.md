@@ -1,5 +1,8 @@
 # xinvert
 
+[![DOI](https://zenodo.org/badge/323045845.svg)](https://zenodo.org/badge/latestdoi/323045845)
+![GitHub](https://img.shields.io/github/license/miniufo/xinvert)
+
 ![animate plot](https://raw.githubusercontent.com/miniufo/xinvert/master/pics/animateConverge.gif)
 
 
