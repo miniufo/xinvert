@@ -260,7 +260,7 @@ import numpy as np
 import xarray as xr
 from GeoApps.GridUtils import add_latlon_metrics
 from GeoApps.DiagnosticMethods import Dynamics
-from xinvert.xinvert.apps import invert_OmegaEquation
+from xinvert.xinvert.apps import invert_omega
 
 ds = xr.open_dataset('I:/Omega/OFES30_20011206_Qian/data.nc',
                      chunks={'lev':6}).astype('f4')
@@ -313,19 +313,23 @@ WBC2 = xr.where(np.isnan(FQvec), 0, w)
 #%% invert
 import time
 
-params = {
+iParams = {
     'BCs'      : ['fixed', 'fixed', 'extend'],
     'tolerance': 1e-9,
     'mxLoop'   : 500,
 }
 
+mParams = {'N2': N2}
+
 start = time.time()
-W1 = invert_OmegaEquation(Ftrad, N2, dims=['lev', 'lat', 'lon'], params=params).load()
-W2 = invert_OmegaEquation(FQvec, N2, dims=['lev', 'lat', 'lon'], params=params).load()
-W1t= invert_OmegaEquation(Ftrad, N2, dims=['lev', 'lat', 'lon'], out=WBC1,
-                          params=params).load()
-W2t= invert_OmegaEquation(FQvec, N2, dims=['lev', 'lat', 'lon'], out=WBC2,
-                          params=params).load()
+W1 = invert_omega(Ftrad, dims=['lev', 'lat', 'lon'],
+                  iParams=iParams, mParams=mParams).load()
+W2 = invert_omega(FQvec, dims=['lev', 'lat', 'lon'],
+                  iParams=iParams, mParams=mParams).load()
+W1t= invert_omega(Ftrad, dims=['lev', 'lat', 'lon'],
+                  iParams=iParams, mParams=mParams, icbc=WBC1).load()
+W2t= invert_omega(FQvec, dims=['lev', 'lat', 'lon'],
+                  iParams=iParams, mParams=mParams, icbc=WBC2).load()
 elapsed = time.time() - start
 print('time used: ', elapsed)
 
