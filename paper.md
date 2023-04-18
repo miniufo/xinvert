@@ -48,7 +48,7 @@ Once $\zeta$ is given as a known, one may want to get the unknown $\psi$, which 
 
 This package, `xinvert`, is designed to invert or solve the following PDE in an abstract form:
 
-$$L\left(\psi \right) = F  \label{eq:1}$$
+$$L\left(\psi \right) = F  \label{eq:1} \tag{1}$$
 
 where $L$ is a second-order partial differential operator, $\psi$ is the unknown to be inverted for, and $F$ a prescribed forcing function.  There could be also some coefficients or parameters in the definition of $L$, which should be specified before inverting $\psi$.
 
@@ -56,7 +56,7 @@ For the **2D case**, the **general form** of Eq. (\autoref{eq:1}) is:
 
 $$L\left(\psi\right) \equiv A\frac{\partial^2 \psi}{\partial y^2}+B\frac{\partial^2 \psi}{\partial y \partial x}+C\frac{\partial^2 \psi}{\partial x^2}+D\frac{\partial \psi}{\partial y}+E\frac{\partial \psi}{\partial x}+F\psi = G \label{eq:2}$$
 
-where coefficients $A-G$ are all known variables.  When the condition $4AC-B^2>0$ is met everywhere in the domain, the above equation is an elliptic-type equation.  In this case, one can invert $\psi$ using the [successive over relaxation (SOR)](https://mathworld.wolfram.com/SuccessiveOverrelaxationMethod.html) iteration method.  When $4AC-B^2=0$ or $4AC-B^2<0$, it is a parabolic or hyperbolic equation.  In either case, SOR would *fail* to converge to the solution.
+where coefficients $A-G$ are all known variables.  When the condition $4AC-B^2>0$ is met everywhere in the domain, the above equation is an elliptic-type equation.  In this case, one can invert $\psi$ using the **successive over relaxation (SOR)** iteration method.  When $4AC-B^2=0$ or $4AC-B^2<0$, it is a parabolic or hyperbolic equation.  In either case, SOR would *fail* to converge to the solution.
 
 Sometimes the **general form** of Eq. (\autoref{eq:2}) can be transformed into the **standard form** (i.e., standarization):
 
@@ -68,11 +68,11 @@ Many problems in meteorology and oceanography can be cast into the forms of eith
 
 $$L\left(\psi\right) \equiv \frac{\partial}{\partial z}\left(A\frac{\partial \psi}{\partial z}\right) +\frac{\partial}{\partial y}\left(B\frac{\partial \psi}{\partial y}\right) +\frac{\partial}{\partial x}\left(C\frac{\partial \psi}{\partial x}\right) =F \label{eq:4}$$
 
-or in **fourth-order** case (Munk model):
+or in **fourth-order** case (the Munk model):
 
 $$L\left(\psi\right) \equiv A\frac{\partial^4 \psi}{\partial y^4}+B\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+C\frac{\partial^4 \psi}{\partial x^4}+D\frac{\partial^2 \psi}{\partial y^2}+E\frac{\partial^2 \psi}{\partial y \partial x}+F\frac{\partial^2 \psi}{\partial x^2}+G\frac{\partial \psi}{\partial y}+H\frac{\partial \psi}{\partial x}+I\psi = J \label{eq:5}$$
 
-So we implements four basic solvers to take into account the above four Eqs. (\autoref{eq:2}-\autoref{eq:5}) or cases.  If a problem do not fit into one of these four types, we are going to add one solver for this type of problem.  We hope *NOT* so because we want to keep the solvers as minimum and general as possible.  It is also *NOT* clear which form, the genral form \autoref{eq:2} or the standard form \autoref{eq:3}, is preferred for the inversion if a problem can be cast into either form.
+So we implements four basic solvers to take into account the above four Eqs. (\autoref{eq:2}-\autoref{eq:5}) or cases.  If a problem do not fit into one of these four types, we are going to add one solver for this type of problem.  We hope **NOT** so because we want to keep the solvers as minimum and general as possible.  It is also **NOT** clear which form, the genral form \autoref{eq:2} or the standard form \autoref{eq:3}, is preferred for the inversion if a problem can be cast into either form.
 
 
 # Summary
@@ -92,8 +92,8 @@ Here we summarize the inversion problems in meteorology and oceanography into th
 | balanced mass field [@Yuan:2008] \newline $\displaystyle{\nabla^2\Phi=\frac{\partial^2 \Phi}{\partial y^2}+\frac{\partial^2 \Phi}{\partial x^2}=F}$ | `sf = invert_Poisson(F,`\newline`dims=['Y','X'],`\newline`mParams=None)` \newline|
 | Geostrophic streamfunction \newline $\displaystyle{\frac{\partial}{\partial y}\left(f\frac{\partial \psi}{\partial y}\right)+\frac{\partial}{\partial x}\left(f\frac{\partial \psi}{\partial x}\right)=\nabla^2 \Phi}$ | `sf = invert_geostrophic(LapPhi,`\newline`dims=['Y','X'],`\newline`mParams={f})` \newline|
 | Eliassen model [@Eliassen:1952] \newline $\displaystyle{\frac{\partial}{\partial p}\left(A\frac{\partial \psi}{\partial p}+B\frac{\partial \psi}{\partial y}\right)+\frac{\partial}{\partial y}\left(B\frac{\partial \psi}{\partial p}+C\frac{\partial \psi}{\partial y}\right)=F}$ | `sf = invert_Eliassen(F,`\newline`dims=['Z','Y'],`\newline`mParams={Angm, Thm})` \newline|
-| PV inversion for circular vortex [@Hoskins:1985] \newline $\displaystyle{\frac{\partial}{\partial \theta}\left(\frac{2\Lambda_0}{r^2}\frac{\partial\Lambda}{\partial \theta}\right)+\frac{\partial}{\partial r}\left(\frac{\Gamma g}{Qr}\frac{\partial\Lambda}{\partial r}\right)=0}$ | `angM = invert_RefState(PV,`\newline`dims=['Z','Y'],`\newline`mParams={ang0, Gamma})` \newline|
-| PV inversion QG flow \newline $\displaystyle{\frac{\partial}{\partial p}\left(\frac{f^2}{N^2}\frac{\partial \psi}{\partial p}\right)+\frac{\partial^2 \psi}{\partial y^2}=q}$ | `sf = invert_PV2D(PV,`\newline`dims=['Z','Y'],`\newline`mParams={f, N2})` \newline|
+| PV inversion for vortex [@Hoskins:1985] \newline $\displaystyle{\frac{\partial}{\partial \theta}\left(\frac{2\Lambda_0}{r^2}\frac{\partial\Lambda}{\partial \theta}\right)+\frac{\partial}{\partial r}\left(\frac{\Gamma g}{Qr}\frac{\partial\Lambda}{\partial r}\right)=0}$ | `angM = invert_RefState(PV,`\newline`dims=['Z','Y'],`\newline`mParams={ang0, Gamma})` \newline|
+| PV inversion for QG flow \newline $\displaystyle{\frac{\partial}{\partial p}\left(\frac{f^2}{N^2}\frac{\partial \psi}{\partial p}\right)+\frac{\partial^2 \psi}{\partial y^2}=q}$ | `sf = invert_PV2D(PV,`\newline`dims=['Z','Y'],`\newline`mParams={f, N2})` \newline|
 | Gill-Matsuno model [@Matsuno:1966; @Gill:1980] \newline $\displaystyle{A\frac{\partial^2 \phi}{\partial y^2}+B\frac{\partial^2 \phi}{\partial x^2}+C\frac{\partial \phi}{\partial y}+D\frac{\partial \phi}{\partial x}+E\phi=Q}$ | `h = invert_GillMatsuno(Q,`\newline`dims=['Y','X'],`\newline`mParams={f, epsilon, Phi})` \newline|
 | Stommel-Munk model [@Stommel:1948; @Munk:1950] \newline $\displaystyle{A\nabla^4\psi-\frac{R}{D}\nabla^2\psi-\beta\frac{\partial \psi}{\partial x}=-\frac{\mathbf k\cdot\nabla\times\mathbf{\tau}}{\rho_0 D}}$ | `sf = invert_StommelMunk(curl,`\newline`dims=['Y','X'],`\newline`mParams={A, R, D, beta, rho})` \newline|
 | QG-Omega equation [@Hoskins:1978] \newline $\displaystyle{\frac{\partial}{\partial p}\left(f^2\frac{\partial \omega}{\partial p}\right)+\nabla\cdot\left(S\nabla\omega\right)=F}$ | `w = invert_Omega(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, S})` \newline|
