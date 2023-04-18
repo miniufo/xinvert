@@ -98,7 +98,7 @@ Here we summarize the inversion problems in meteorology and oceanography into th
 | Stommel-Munk model [@Stommel:1948; @Munk:1950] | $\displaystyle{A\nabla^4\psi-\frac{R}{D}\nabla^2\psi-\beta\frac{\partial \psi}{\partial x}=-\frac{\mathbf k\cdot\nabla\times\mathbf{\tau}}{\rho_0 D}}$ | `sf = invert_StommelMunk(curl,`<br>`dims=['Y','X'], mParams={A, R, D, beta, rho})` |
 | QG-Omega equation [@Hoskins:1978] | $\displaystyle{\frac{\partial}{\partial p}\left(f^2\frac{\partial \omega}{\partial p}\right)+\nabla\cdot\left(S\nabla\omega\right)=F}$ | `w = invert_Omega(F,`<br>`dims=['Z','Y','X'], mParams={f, S})` |
 | 3D ocean flow | $\displaystyle{\frac{\partial}{\partial p}\left(c_3\frac{\partial \phi}{\partial p}\right)+\nabla\cdot\left(c_1\nabla\phi-c_2\hat\nabla\phi\right)=F}$ | `w = invert_3DFlow(F,`<br>`dims=['Z','Y','X'], mParams={f, N2, epsilon})` |
-|  |  | **...** more problems **...** |  |
+|  | **...** more problems **...** |  |
 
   : Classical inversion problems in GFD.  The model names, references, equations and APIs are listed here \label{table:1}
 
