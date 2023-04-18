@@ -38,7 +38,7 @@ Once $\zeta$ is given as a known, one may want to get the unknown $\psi$, which 
 - **A unified numerical solver:** It can solve all the classical balanced GFD models, even in a domain with irregular boundaries like the ocean.  New models can also be easily adapted to fit the solver;
 - **Thinking and coding in equations:** Users focus naturally on the key inputs and outputs of the GFD models, just like thinking of the knowns and unknowns of the PDEs;
 - **Flexible parameter specification:** Coefficients of the models can be either constant, 1D vector, or ND array.  This allows an easy reproduce of early simplified results and also an extension to more general/realistic results;
-- **Fast and efficient:** The algorithm should be fast and efficient.  Also, the codes can be compiled first and then executed as fast as C or FORTRAN, instead of executed in the slow pure-Python interpreter.  In addition, it can utilize multi-core and out-of-core computations capabilities of modern computers;
+- **Fast and efficient:** The algorithm should be fast and efficient.  Also, the codes can be compiled first and then executed as fast as `C` or `FORTRAN`, instead of executed in the slow pure-Python interpreter.  In addition, it can utilize multi-core and out-of-core computations capabilities of modern computers;
 
 `xinvert` is then designed to satisfy all the above needs, based on the ecosystem of Python.
 

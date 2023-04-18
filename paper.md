@@ -31,13 +31,14 @@ bibliography: paper.bib
 
 Many problems in meteorology and oceanography can be cast into balanced models in the form of partial differential equations (PDEs).  The most classical one is the relation between the streamfunction $\psi$ and the vertical vorticity $\zeta$ (also known as Poisson equation):
 
+>$$\begin{equation}\nabla^2 \psi = \frac{\partial^2 \psi}{\partial y^2}+\frac{\partial^2 \psi}{\partial y^2} = \zeta\end{equation}$$
 
 Once $\zeta$ is given as a known, one may want to get the unknown $\psi$, which is essentially an inversion problem (\autoref{fig:1}).  These geophysical fluid dynamical (GFD) models are generally of second (or fourth) order in spatial derivatives and do not depend explicitly on time, which are therefore balanced models or steady-state models [@Wunsch:1996].  Early scientists tried to find analytical solutions by simplified the parameters of these models (e.g., assuming constant coefficients).  Nowadays, with the new developments in linear algrebra algorithms and parallel-computing programming, one may need a modern solver, written in the popular programming language `Python`, to invert all these models in a numerical fashion.  More specifically, the following needs should be satisfied:
 
 - **A unified numerical solver:** It can solve all the classical balanced GFD models, even in a domain with irregular boundaries like the ocean.  New models can also be easily adapted to fit the solver;
 - **Thinking and coding in equations:** Users focus naturally on the key inputs and outputs of the GFD models, just like thinking of the knowns and unknowns of the PDEs;
 - **Flexible parameter specification:** Coefficients of the models can be either constant, 1D vector, or ND array.  This allows an easy reproduce of early simplified results and also an extension to more general/realistic results;
-- **Fast and efficient:** The algorithm should be fast and efficient.  Also, the codes can be compiled first and then executed as fast as C or FORTRAN, instead of executed in the slow pure-Python interpreter.  In addition, it can utilize multi-core and out-of-core computations capabilities of modern computers;
+- **Fast and efficient:** The algorithm should be fast and efficient.  Also, the codes can be compiled first and then executed as fast as `C` or `FORTRAN`, instead of executed in the slow pure-Python interpreter.  In addition, it can utilize multi-core and out-of-core computations capabilities of modern computers;
 
 `xinvert` is then designed to satisfy all the above needs, based on the ecosystem of Python.
 
