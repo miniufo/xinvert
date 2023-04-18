@@ -72,7 +72,7 @@ or in **fourth-order** case (Munk model):
 
 $$L\left(\psi\right) \equiv A\frac{\partial^4 \psi}{\partial y^4}+B\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+C\frac{\partial^4 \psi}{\partial x^4}+D\frac{\partial^2 \psi}{\partial y^2}+E\frac{\partial^2 \psi}{\partial y \partial x}+F\frac{\partial^2 \psi}{\partial x^2}+G\frac{\partial \psi}{\partial y}+H\frac{\partial \psi}{\partial x}+I\psi = J \label{eq:5}$$
 
-So we implements four basic solvers to take into account the above four Eqs. (\autoref{eq:2}-\autoref{eq:5}) or cases.  If a problem do not fit into one of these four types, we are going to add one solver for this type of problem.  We hope *NOT* so because we want to keep the solvers as minimum and general as possible.  It is also *NOT* clear which form, the genral form Eq. (\autoref{eq:2}) or the standard form Eq. (\autoref{eq:3}), is preferred for the inversion if a problem can be cast into either form.
+So we implements four basic solvers to take into account the above four Eqs. (\autoref{eq:2}-\autoref{eq:5}) or cases.  If a problem do not fit into one of these four types, we are going to add one solver for this type of problem.  We hope *NOT* so because we want to keep the solvers as minimum and general as possible.  It is also *NOT* clear which form, the genral form \autoref{eq:2} or the standard form \autoref{eq:3}, is preferred for the inversion if a problem can be cast into either form.
 
 
 # Summary
@@ -82,22 +82,22 @@ So we implements four basic solvers to take into account the above four Eqs. (\a
 - Passing a single `xarray.DataArray` is usually enough for the inversion. Coordinates information is already encapsulated and thus reducing the length of the parameter list.  In addition, paramters in `mParams` can be either a constant, or varying with a specific dimension (like Coriolis parameter $f$), or fully varying with space and time, due to the use of `xarray`'s [@Hoyer:2017] broadcasting capability;
 - This package leverages `numba` [@Lam:2015], `xarray` [@Hoyer:2017], and `dask` [@Rocklin:2015] to support Just-In-Time (JIT) compilation, multi-core, and out-of-core computations, and therefore greatly increases the speed and efficiency of the inversion.
 
-Here we summarize the inversion problems in meteorology and oceanography into the following Table (\ref{table1}).  The table can be extended further if one finds more problems that fit the abstract form of Eq. \autoref{eq:1}.
+Here we summarize the inversion problems in meteorology and oceanography into the following \autoref{table1}.  The table can be extended further if one finds more problems that fit the abstract form of Eq. \autoref{eq:1}.
 
 | Problem names and equations | Function calls |
-| :--------- | :--------- |
-| Horizontal streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial y^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_k}$ | `sf = invert_Poisson(vork,`\newline`dims=['Y','X'],`\newline`mParams=None)` |
-| MOC streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial y^2}=\zeta_i}$ | `sf = invert_Poisson(vori,`\newline`dims=['Z','Y'],`\newline`mParams=None)` |
-| Walker streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_j}$ | `sf = invert_Poisson(vorj,`\newline`dims=['Z','X'],`\newline`mParams=None)` |
-| balanced mass field \newline [@Yuan:2008] \newline $\displaystyle{\nabla^2\Phi=\frac{\partial^2 \Phi}{\partial y^2}+\frac{\partial^2 \Phi}{\partial x^2}=F}$ | `sf = invert_Poisson(F,`\newline`dims=['Y','X'],`\newline`mParams=None)` |
-| Geostrophic flow \newline $\displaystyle{\frac{\partial}{\partial y}\left(f\frac{\partial \psi}{\partial y}\right)+\frac{\partial}{\partial x}\left(f\frac{\partial \psi}{\partial x}\right)=\nabla^2 \Phi}$ | `sf = invert_geostrophic(LapPhi,`\newline`dims=['Y','X'],`\newline`mParams={f})` |
-| Eliassen model \newline [@Eliassen:1952] \newline $\displaystyle{\frac{\partial}{\partial p}\left(A\frac{\partial \psi}{\partial p}+B\frac{\partial \psi}{\partial y}\right)+\frac{\partial}{\partial y}\left(B\frac{\partial \psi}{\partial p}+C\frac{\partial \psi}{\partial y}\right)=F}$ | `sf = invert_Eliassen(F,`\newline`dims=['Z','Y'],`\newline`mParams={Angm, Thm})` |
-| PV inversion for symmetric vortex \newline [@Hoskins:1985] \newline $\displaystyle{\frac{\partial}{\partial \theta}\left(\frac{2\Lambda_0}{r^2}\frac{\partial\Lambda}{\partial \theta}\right)+\frac{\partial}{\partial r}\left(\frac{\Gamma g}{Qr}\frac{\partial\Lambda}{\partial r}\right)=0}$ | `angM = invert_RefState(PV,`\newline`dims=['Z','Y'],`\newline`mParams={ang0, Gamma})` |
-| PV inversion QG flow \newline $\displaystyle{\frac{\partial}{\partial p}\left(\frac{f^2}{N^2}\frac{\partial \psi}{\partial p}\right)+\frac{\partial^2 \psi}{\partial y^2}=q}$ | `sf = invert_PV2D(PV,`\newline`dims=['Z','Y'],`\newline`mParams={f, N2})` |
-| Gill-Matsuno model \newline [@Matsuno:1966; @Gill:1980] \newline $\displaystyle{A\frac{\partial^2 \phi}{\partial y^2}+B\frac{\partial^2 \phi}{\partial x^2}+C\frac{\partial \phi}{\partial y}+D\frac{\partial \phi}{\partial x}+E\phi=Q}$ | `h = invert_GillMatsuno(Q,`\newline`dims=['Y','X'],`\newline`mParams={f, epsilon, Phi})` |
-| Stommel-Munk model \newline [@Stommel:1948; @Munk:1950] \newline $\displaystyle{A\nabla^4\psi-\frac{R}{D}\nabla^2\psi-\beta\frac{\partial \psi}{\partial x}=-\frac{\mathbf k\cdot\nabla\times\mathbf{\tau}}{\rho_0 D}}$ | `sf = invert_StommelMunk(curl,`\newline`dims=['Y','X'],`\newline`mParams={A, R, D, beta, rho})` |
-| QG-Omega equation \newline [@Hoskins:1978] \newline $\displaystyle{\frac{\partial}{\partial p}\left(f^2\frac{\partial \omega}{\partial p}\right)+\nabla\cdot\left(S\nabla\omega\right)=F}$ | `w = invert_Omega(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, S})` |
-| 3D ocean flow \newline $\displaystyle{\frac{\partial}{\partial p}\left(c_3\frac{\partial \phi}{\partial p}\right)+\nabla\cdot\left(c_1\nabla\phi-c_2\hat\nabla\phi\right)=F}$ | `w = invert_3DFlow(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, N2, epsilon})` |
+| :--------- | ---------: |
+| Horizontal streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial y^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_k}$ | `sf = invert_Poisson(vork,`\newline`dims=['Y','X'],`\newline`mParams=None)` \newline|
+| MOC streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial y^2}=\zeta_i}$ | `sf = invert_Poisson(vori,`\newline`dims=['Z','Y'],`\newline`mParams=None)` \newline|
+| Walker streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_j}$ | `sf = invert_Poisson(vorj,`\newline`dims=['Z','X'],`\newline`mParams=None)` \newline|
+| balanced mass field [@Yuan:2008] \newline $\displaystyle{\nabla^2\Phi=\frac{\partial^2 \Phi}{\partial y^2}+\frac{\partial^2 \Phi}{\partial x^2}=F}$ | `sf = invert_Poisson(F,`\newline`dims=['Y','X'],`\newline`mParams=None)` \newline|
+| Geostrophic streamfunction \newline $\displaystyle{\frac{\partial}{\partial y}\left(f\frac{\partial \psi}{\partial y}\right)+\frac{\partial}{\partial x}\left(f\frac{\partial \psi}{\partial x}\right)=\nabla^2 \Phi}$ | `sf = invert_geostrophic(LapPhi,`\newline`dims=['Y','X'],`\newline`mParams={f})` \newline|
+| Eliassen model [@Eliassen:1952] \newline $\displaystyle{\frac{\partial}{\partial p}\left(A\frac{\partial \psi}{\partial p}+B\frac{\partial \psi}{\partial y}\right)+\frac{\partial}{\partial y}\left(B\frac{\partial \psi}{\partial p}+C\frac{\partial \psi}{\partial y}\right)=F}$ | `sf = invert_Eliassen(F,`\newline`dims=['Z','Y'],`\newline`mParams={Angm, Thm})` \newline|
+| PV inversion for circular vortex [@Hoskins:1985] \newline $\displaystyle{\frac{\partial}{\partial \theta}\left(\frac{2\Lambda_0}{r^2}\frac{\partial\Lambda}{\partial \theta}\right)+\frac{\partial}{\partial r}\left(\frac{\Gamma g}{Qr}\frac{\partial\Lambda}{\partial r}\right)=0}$ | `angM = invert_RefState(PV,`\newline`dims=['Z','Y'],`\newline`mParams={ang0, Gamma})` \newline|
+| PV inversion QG flow \newline $\displaystyle{\frac{\partial}{\partial p}\left(\frac{f^2}{N^2}\frac{\partial \psi}{\partial p}\right)+\frac{\partial^2 \psi}{\partial y^2}=q}$ | `sf = invert_PV2D(PV,`\newline`dims=['Z','Y'],`\newline`mParams={f, N2})` \newline|
+| Gill-Matsuno model [@Matsuno:1966; @Gill:1980] \newline $\displaystyle{A\frac{\partial^2 \phi}{\partial y^2}+B\frac{\partial^2 \phi}{\partial x^2}+C\frac{\partial \phi}{\partial y}+D\frac{\partial \phi}{\partial x}+E\phi=Q}$ | `h = invert_GillMatsuno(Q,`\newline`dims=['Y','X'],`\newline`mParams={f, epsilon, Phi})` \newline|
+| Stommel-Munk model [@Stommel:1948; @Munk:1950] \newline $\displaystyle{A\nabla^4\psi-\frac{R}{D}\nabla^2\psi-\beta\frac{\partial \psi}{\partial x}=-\frac{\mathbf k\cdot\nabla\times\mathbf{\tau}}{\rho_0 D}}$ | `sf = invert_StommelMunk(curl,`\newline`dims=['Y','X'],`\newline`mParams={A, R, D, beta, rho})` \newline|
+| QG-Omega equation [@Hoskins:1978] \newline $\displaystyle{\frac{\partial}{\partial p}\left(f^2\frac{\partial \omega}{\partial p}\right)+\nabla\cdot\left(S\nabla\omega\right)=F}$ | `w = invert_Omega(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, S})` \newline|
+| 3D ocean flow \newline $\displaystyle{\frac{\partial}{\partial p}\left(c_3\frac{\partial \phi}{\partial p}\right)+\nabla\cdot\left(c_1\nabla\phi-c_2\hat\nabla\phi\right)=F}$ | `w = invert_3DFlow(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, N2, epsilon})` \newline|
 | **...** more problems **...** |  |
 
   : Classical inversion problems in GFD.  The model names, references, equations and APIs are listed here \label{table:1}
@@ -105,7 +105,7 @@ Here we summarize the inversion problems in meteorology and oceanography into th
 
 # Usage
 
-`xinvert` is programmed in a functional style.  Users only need to import the core function they are interested in and call it to get the inverted results (Table \autoref{table:1}).  Note that several keyward arguments need to be specified:
+`xinvert` is programmed in a functional style.  Users only need to import the core function they are interested in and call it to get the inverted results (\autoref{table:1}).  Note that several keyward arguments need to be specified:
 
 - `dims`: Some `xarray.DataArray` has different dimension names like [`latitude`, `longitude`] or [`lat`, `lon`].  One needs to specify the right dimension names;
 - `coords`: For Poisson Equation (\autoref{eq:1}), it can be inverted in the horizontal plane (`lat-lon`), or the vertical plane (`z-lat`).  One need to specify coordinate-combination in `coords` in accordance to the dimension names.  Note that `lat-lon` is for the horizontal plane on the spherical coordinate whereas `cartesian` is for the same plane on the Cartesian coordinate;
