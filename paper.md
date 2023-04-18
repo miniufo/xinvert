@@ -70,7 +70,7 @@ $$L\left(\psi\right) \equiv \frac{\partial}{\partial z}\left(A\frac{\partial \ps
 
 or in **fourth-order** case (the Munk model):
 
-$$L\left(\psi\right) \equiv A\frac{\partial^4 \psi}{\partial y^4}+B\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+C\frac{\partial^4 \psi}{\partial x^4}+D\frac{\partial^2 \psi}{\partial y^2}+E\frac{\partial^2 \psi}{\partial y \partial x}+F\frac{\partial^2 \psi}{\partial x^2}+G\frac{\partial \psi}{\partial y}+H\frac{\partial \psi}{\partial x}+I\psi = J \label{eq:5} \tag{5}$$
+$$L\left(\psi\right) \equiv A\frac{\partial^4 \psi}{\partial y^4}+B\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+C\frac{\partial^4 \psi}{\partial x^4}\\+D\frac{\partial^2 \psi}{\partial y^2}+E\frac{\partial^2 \psi}{\partial y \partial x}+F\frac{\partial^2 \psi}{\partial x^2}+G\frac{\partial \psi}{\partial y}+H\frac{\partial \psi}{\partial x}+I\psi = J \label{eq:5} \tag{5}$$
 
 So we implements four basic solvers to take into account the above four Eqs. \eqref{eq:2}-\eqref{eq:5} or cases.  If a problem do not fit into one of these four types, we are going to add one solver for this type of problem.  We hope **NOT** so because we want to keep the solvers as minimum and general as possible.  It is also **NOT** clear which form, the genral form Eq. \eqref{eq:2} or the standard form Eq. \eqref{eq:3}, is preferred for the inversion if a problem can be cast into either form.
 
@@ -78,7 +78,7 @@ So we implements four basic solvers to take into account the above four Eqs. \eq
 # Summary
 
 `xinvert` is an open-source and uesr-friendly Python package that enables GFD scientists or interested amateurs to solve all possible GFD problems in a numerical fashion.  With the ecosystem of open-source python packages, in particular `xarray` [@Hoyer:2017], `dask` [@Rocklin:2015], and `numba` [@Lam:2015], it is able to satisfy the above requirements:
-- User APIs (Table 1) are very close to the equations: unknowns are on the left-hand side of the equal sign `=`, whereas the known forcing functions are on its right-hand side (other known coefficients are also on the left-hand side and are passed in through `mParams`);
+- User APIs \autoref{table:1} are very close to the equations: unknowns are on the left-hand side of the equal sign `=`, whereas the known forcing functions are on its right-hand side (other known coefficients are also on the left-hand side and are passed in through `mParams`);
 - Passing a single `xarray.DataArray` is usually enough for the inversion. Coordinates information is already encapsulated and thus reducing the length of the parameter list.  In addition, paramters in `mParams` can be either a constant, or varying with a specific dimension (like Coriolis parameter $f$), or fully varying with space and time, due to the use of `xarray`'s [@Hoyer:2017] broadcasting capability;
 - This package leverages `numba` [@Lam:2015], `xarray` [@Hoyer:2017], and `dask` [@Rocklin:2015] to support Just-In-Time (JIT) compilation, multi-core, and out-of-core computations, and therefore greatly increases the speed and efficiency of the inversion.
 
@@ -95,12 +95,12 @@ Here we summarize the inversion problems in meteorology and oceanography into th
 | PV inversion for vortex [@Hoskins:1985] \newline $\displaystyle{\frac{\partial}{\partial \theta}\left(\frac{2\Lambda_0}{r^2}\frac{\partial\Lambda}{\partial \theta}\right)+\frac{\partial}{\partial r}\left(\frac{\Gamma g}{Qr}\frac{\partial\Lambda}{\partial r}\right)=0}$ | `angM = invert_RefState(PV,`\newline`dims=['Z','Y'],`\newline`mParams={ang0, Gamma})` \newline|
 | PV inversion for QG flow \newline $\displaystyle{\frac{\partial}{\partial p}\left(\frac{f^2}{N^2}\frac{\partial \psi}{\partial p}\right)+\frac{\partial^2 \psi}{\partial y^2}=q}$ | `psi = invert_PV2D(PV,`\newline`dims=['Z','Y'],`\newline`mParams={f, N2})` \newline|
 | Gill-Matsuno model [@Matsuno:1966; @Gill:1980] \newline $\displaystyle{A\frac{\partial^2 \phi}{\partial y^2}+B\frac{\partial^2 \phi}{\partial x^2}+C\frac{\partial \phi}{\partial y}+D\frac{\partial \phi}{\partial x}+E\phi=Q}$ | `phi = invert_GillMatsuno(Q,`\newline`dims=['Y','X'],`\newline`mParams={f, epsilon, Phi})` \newline|
-| Stommel-Munk model [@Stommel:1948; @Munk:1950] \newline $\displaystyle{A\nabla^4\psi-\frac{R}{D}\nabla^2\psi-\beta\frac{\partial \psi}{\partial x}=-\frac{\mathbf k\cdot\nabla\times\mathbf{\tau}}{\rho_0 D}}$ | `psi = invert_StommelMunk(curl,`\newline`dims=['Y','X'],`\newline`mParams={A, R, D, beta, rho})` \newline|
+| Stommel-Munk model [@Stommel:1948; @Munk:1950] \newline $\displaystyle{A\nabla^4\psi-\frac{R}{D}\nabla^2\psi-\beta\frac{\partial \psi}{\partial x}=-\frac{\mathbf k\cdot \nabla \times \mathbf{ \tau } }{\rho_0 D} }$ | `psi = invert_StommelMunk(curl,`\newline`dims=['Y','X'],`\newline`mParams={A, R, D, beta, rho})` \newline|
 | QG-Omega equation [@Hoskins:1978] \newline $\displaystyle{\frac{\partial}{\partial p}\left(f^2\frac{\partial \omega}{\partial p}\right)+\nabla\cdot\left(S\nabla\omega\right)=F}$ | `w = invert_Omega(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, S})` \newline|
 | 3D ocean flow \newline $\displaystyle{\frac{\partial}{\partial p}\left(c_3\frac{\partial \psi}{\partial p}\right)+\nabla\cdot\left(c_1\nabla\psi-c_2\hat\nabla\psi\right)=F}$ | `psi = invert_3DFlow(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, N2, epsilon})` \newline|
 | **...** more problems **...** |  |
 
-  : Classical inversion problems in GFD.  The model names, references, equations and APIs are listed here \label{table:1}
+  : Classical inversion problems in GFD.  The model names, equations, typical references and function calls are listed \label{table:1}
 
 
 # Usage
