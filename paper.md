@@ -52,19 +52,19 @@ $$L\left(\psi \right) = F  \label{eq:1} \tag{1}$$
 
 where $L$ is a second-order partial differential operator, $\psi$ is the unknown to be inverted for, and $F$ a prescribed forcing function.  There could be also some coefficients or parameters in the definition of $L$, which should be specified before inverting $\psi$.
 
-For the **2D case**, the **general form** of Eq. (\autoref{eq:1}) is:
+For the **2D case**, the **general form** of Eq. \eqref{eq:1} is:
 
 $$L\left(\psi\right) \equiv A\frac{\partial^2 \psi}{\partial y^2}+B\frac{\partial^2 \psi}{\partial y \partial x}+C\frac{\partial^2 \psi}{\partial x^2}+D\frac{\partial \psi}{\partial y}+E\frac{\partial \psi}{\partial x}+F\psi = G \label{eq:2} \tag{2}$$
 
 where coefficients $A-G$ are all known variables.  When the condition $4AC-B^2>0$ is met everywhere in the domain, the above equation is an elliptic-type equation.  In this case, one can invert $\psi$ using the **successive over relaxation (SOR)** iteration method.  When $4AC-B^2=0$ or $4AC-B^2<0$, it is a parabolic or hyperbolic equation.  In either case, SOR would *fail* to converge to the solution.
 
-Sometimes the **general form** of Eq. (\autoref{eq:2}) can be transformed into the **standard form** (i.e., standarization):
+Sometimes the **general form** of Eq. \eqref{eq:2} can be transformed into the **standard form** (i.e., standarization):
 
 $$L\left(\psi\right) \equiv \frac{\partial}{\partial y}\left(A\frac{\partial \psi}{\partial y}+B\frac{\partial \psi}{\partial x}\right)+\frac{\partial}{\partial x}\left(C\frac{\partial \psi}{\partial y}+D\frac{\partial \psi}{\partial x}\right) + E\psi =F \label{eq:3} \tag{3}$$
 
 In this case, $AD-BC>0$ should be met to insure its ellipticity.  The elliptic condition has its own physical meaning in the problems of interest.  That is, the system is in steady (or balanced) states that are stable to any small perturbation.
 
-Many problems in meteorology and oceanography can be cast into the forms of either Eq. (\autoref{eq:2}) or Eq. (\autoref{eq:3}).  However, some of them are formulated in **3D case** (like the QG-omega equation):
+Many problems in meteorology and oceanography can be cast into the forms of either Eq. \eqref{eq:2} or Eq. \eqref{eq:3}.  However, some of them are formulated in **3D case** (like the QG-omega equation):
 
 $$L\left(\psi\right) \equiv \frac{\partial}{\partial z}\left(A\frac{\partial \psi}{\partial z}\right) +\frac{\partial}{\partial y}\left(B\frac{\partial \psi}{\partial y}\right) +\frac{\partial}{\partial x}\left(C\frac{\partial \psi}{\partial x}\right) =F \label{eq:4} \tag{4}$$
 
@@ -72,17 +72,17 @@ or in **fourth-order** case (the Munk model):
 
 $$L\left(\psi\right) \equiv A\frac{\partial^4 \psi}{\partial y^4}+B\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+C\frac{\partial^4 \psi}{\partial x^4}+D\frac{\partial^2 \psi}{\partial y^2}+E\frac{\partial^2 \psi}{\partial y \partial x}+F\frac{\partial^2 \psi}{\partial x^2}+G\frac{\partial \psi}{\partial y}+H\frac{\partial \psi}{\partial x}+I\psi = J \label{eq:5} \tag{5}$$
 
-So we implements four basic solvers to take into account the above four Eqs. (\eqref{eq:2}-\eqref{eq:5}) or cases.  If a problem do not fit into one of these four types, we are going to add one solver for this type of problem.  We hope **NOT** so because we want to keep the solvers as minimum and general as possible.  It is also **NOT** clear which form, the genral form \eqref{eq:2} or the standard form \eqref{eq:3}, is preferred for the inversion if a problem can be cast into either form.
+So we implements four basic solvers to take into account the above four Eqs. \eqref{eq:2}-\eqref{eq:5} or cases.  If a problem do not fit into one of these four types, we are going to add one solver for this type of problem.  We hope **NOT** so because we want to keep the solvers as minimum and general as possible.  It is also **NOT** clear which form, the genral form Eq. \eqref{eq:2} or the standard form Eq. \eqref{eq:3}, is preferred for the inversion if a problem can be cast into either form.
 
 
 # Summary
 
 `xinvert` is an open-source and uesr-friendly Python package that enables GFD scientists or interested amateurs to solve all possible GFD problems in a numerical fashion.  With the ecosystem of open-source python packages, in particular `xarray` [@Hoyer:2017], `dask` [@Rocklin:2015], and `numba` [@Lam:2015], it is able to satisfy the above requirements:
-- Top user APIs (\ref{table1}) are very close to the equations: unknowns are on the left-hand side of the equal sign `=`, whereas the known forcing functions are on its right-hand side (other known coefficients are also on the left-hand side and are passed in through `mParams`);
+- User APIs (Table 1) are very close to the equations: unknowns are on the left-hand side of the equal sign `=`, whereas the known forcing functions are on its right-hand side (other known coefficients are also on the left-hand side and are passed in through `mParams`);
 - Passing a single `xarray.DataArray` is usually enough for the inversion. Coordinates information is already encapsulated and thus reducing the length of the parameter list.  In addition, paramters in `mParams` can be either a constant, or varying with a specific dimension (like Coriolis parameter $f$), or fully varying with space and time, due to the use of `xarray`'s [@Hoyer:2017] broadcasting capability;
 - This package leverages `numba` [@Lam:2015], `xarray` [@Hoyer:2017], and `dask` [@Rocklin:2015] to support Just-In-Time (JIT) compilation, multi-core, and out-of-core computations, and therefore greatly increases the speed and efficiency of the inversion.
 
-Here we summarize the inversion problems in meteorology and oceanography into the following \autoref{table1}.  The table can be extended further if one finds more problems that fit the abstract form of Eq. \autoref{eq:1}.
+Here we summarize the inversion problems in meteorology and oceanography into the following \autoref{table:1}.  The table can be extended further if one finds more problems that fit the abstract form of Eq. \eqref{eq:1}.
 
 | Problem names and equations | Function calls |
 | :--------- | ---------: |
@@ -108,7 +108,7 @@ Here we summarize the inversion problems in meteorology and oceanography into th
 `xinvert` is programmed in a functional style.  Users only need to import the core function they are interested in and call it to get the inverted results (\autoref{table:1}).  Note that several keyward arguments need to be specified:
 
 - `dims`: Some `xarray.DataArray` has different dimension names like [`latitude`, `longitude`] or [`lat`, `lon`].  One needs to specify the right dimension names;
-- `coords`: For Poisson Equation (\autoref{eq:1}), it can be inverted in the horizontal plane (`lat-lon`), or the vertical plane (`z-lat`).  One need to specify coordinate-combination in `coords` in accordance to the dimension names.  Note that `lat-lon` is for the horizontal plane on the spherical coordinate whereas `cartesian` is for the same plane on the Cartesian coordinate;
+- `coords`: For Poisson Equation \eqref{eq:1}, it can be inverted in the horizontal plane (`lat-lon`), or the vertical plane (`z-lat`).  One need to specify coordinate-combination in `coords` in accordance to the dimension names.  Note that `lat-lon` is for the horizontal plane on the spherical coordinate whereas `cartesian` is for the same plane on the Cartesian coordinate;
 - `iParams`: This contains all the parameters for the iteration control like maximum loop and tolerance for the iteration to stop;
 - `mParams`: This contains all the parameters for the models themselves like the Coriolis parameter $f$ or stratification $N^2$.
 
