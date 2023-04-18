@@ -70,7 +70,7 @@ Many problems in meteorology and oceanography can be cast into the forms of eith
 
 or in **fourth-order** case (Munk model):
 
->$$\begin{align}L\left(\psi\right) &\equiv A\frac{\partial^4 \psi}{\partial y^4}+B\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+C\frac{\partial^4 \psi}{\partial x^4}\notag\\&+D\frac{\partial^2 \psi}{\partial y^2}+E\frac{\partial^2 \psi}{\partial y \partial x}+F\frac{\partial^2 \psi}{\partial x^2}+G\frac{\partial \psi}{\partial y}+H\frac{\partial \psi}{\partial x}+I\psi = J \label{eq:5} \tag{5}\end{align}\end{equation}$$
+>$$\begin{align}L\left(\psi\right) &\equiv A\frac{\partial^4 \psi}{\partial y^4}+B\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+C\frac{\partial^4 \psi}{\partial x^4}\notag\\&+D\frac{\partial^2 \psi}{\partial y^2}+E\frac{\partial^2 \psi}{\partial y \partial x}+F\frac{\partial^2 \psi}{\partial x^2}+G\frac{\partial \psi}{\partial y}+H\frac{\partial \psi}{\partial x}+I\psi = J \label{eq:5} \tag{5}\end{align}$$
 
 So we implements four basic solvers to take into account the above four Eqs. (\autoref{eq:2}-\autoref{eq:5}) or cases.  If a problem do not fit into one of these four types, we are going to add one solver for this type of problem.  We hope *NOT* so because we want to keep the solvers as minimum and general as possible.  It is also *NOT* clear which form, the genral form Eq. (\autoref{eq:2}) or the standard form Eq. (\autoref{eq:3}), is preferred for the inversion if a problem can be cast into either form.
 
