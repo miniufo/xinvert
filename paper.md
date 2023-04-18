@@ -84,12 +84,12 @@ So we implements four basic solvers to take into account the above four Eqs. (\a
 
 Here we summarize the inversion problems in meteorology and oceanography into the following Table (\ref{table1}).  The table can be extended further if one finds more problems that fit the abstract form of Eq. \autoref{eq:1}.
 
-| Names | Equations |
+| Problem names | Equations and function calls |
 | ---------: | :--------- |
-| Horizontal streamfunction | $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial y^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_k}$ \newline `sf = invert_Poisson(vork,`<br>`dims=['Y','X'], mParams=None)` |
-| MOC streamfunction | $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial y^2}=\zeta_i}$ \newline `sf = invert_Poisson(vori,`<br>`dims=['Z','Y'], mParams=None)` |
-| Walker streamfunction | $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_j}$ \newline `sf = invert_Poisson(vorj,`<br>`dims=['Z','X'], mParams=None)` |
-| balanced mass field [@Yuan:2008] | $\displaystyle{\nabla^2\Phi=\frac{\partial^2 \Phi}{\partial y^2}+\frac{\partial^2 \Phi}{\partial x^2}=F}$ \newline `sf = invert_Poisson(F,`<br>`dims=['Y','X'], mParams=None)` |
+| Horizontal streamfunction | $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial y^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_k}$ \newline `sf = invert_Poisson(vork, dims=['Y','X'], mParams=None)` |
+| MOC streamfunction | $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial y^2}=\zeta_i}$ \newline `sf = invert_Poisson(vori, dims=['Z','Y'], mParams=None)` |
+| Walker streamfunction | $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_j}$ \newline `sf = invert_Poisson(vorj, dims=['Z','X'], mParams=None)` |
+| balanced mass field [@Yuan:2008] | $\displaystyle{\nabla^2\Phi=\frac{\partial^2 \Phi}{\partial y^2}+\frac{\partial^2 \Phi}{\partial x^2}=F}$ \newline `sf = invert_Poisson(F, dims=['Y','X'], mParams=None)` |
 | Geostrophic flow | $\displaystyle{\frac{\partial}{\partial y}\left(f\frac{\partial \psi}{\partial y}\right)+\frac{\partial}{\partial x}\left(f\frac{\partial \psi}{\partial x}\right)=\nabla^2 \Phi}$ \newline `sf = invert_geostrophic(LapPhi, dims=['Y','X'], mParams={f})` |
 | Eliassen model [@Eliassen:1952] | $\displaystyle{\frac{\partial}{\partial p}\left(A\frac{\partial \psi}{\partial p}+B\frac{\partial \psi}{\partial y}\right)+\frac{\partial}{\partial y}\left(B\frac{\partial \psi}{\partial p}+C\frac{\partial \psi}{\partial y}\right)=F}$ \newline `sf = invert_Eliassen(F, dims=['Z','Y'], mParams={Angm, Thm})` |
 | PV inversion for symmetric vortex [@Hoskins:1985] | $\displaystyle{\frac{\partial}{\partial \theta}\left(\frac{2\Lambda_0}{r^2}\frac{\partial\Lambda}{\partial \theta}\right)+\frac{\partial}{\partial r}\left(\frac{\Gamma g}{Qr}\frac{\partial\Lambda}{\partial r}\right)=0}$ \newline `angM = invert_RefState(PV, dims=['Z','Y'], mParams={ang0, Gamma})` |
