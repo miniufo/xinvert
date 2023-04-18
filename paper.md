@@ -48,29 +48,29 @@ Once $\zeta$ is given as a known, one may want to get the unknown $\psi$, which 
 
 This package, `xinvert`, is designed to invert or solve the following PDE in an abstract form:
 
-$$L\left(\psi \right) = F  \label{eq:1} \tag{1}$$
+$$L\left(\psi \right) = F  \label{eq:1}$$
 
 where $L$ is a second-order partial differential operator, $\psi$ is the unknown to be inverted for, and $F$ a prescribed forcing function.  There could be also some coefficients or parameters in the definition of $L$, which should be specified before inverting $\psi$.
 
 For the **2D case**, the **general form** of Eq. (\autoref{eq:1}) is:
 
-$$L\left(\psi\right) \equiv A\frac{\partial^2 \psi}{\partial y^2}+B\frac{\partial^2 \psi}{\partial y \partial x}+C\frac{\partial^2 \psi}{\partial x^2}+D\frac{\partial \psi}{\partial y}+E\frac{\partial \psi}{\partial x}+F\psi = G \label{eq:2} \tag{2}$$
+$$L\left(\psi\right) \equiv A\frac{\partial^2 \psi}{\partial y^2}+B\frac{\partial^2 \psi}{\partial y \partial x}+C\frac{\partial^2 \psi}{\partial x^2}+D\frac{\partial \psi}{\partial y}+E\frac{\partial \psi}{\partial x}+F\psi = G \label{eq:2}$$
 
 where coefficients $A-G$ are all known variables.  When the condition $4AC-B^2>0$ is met everywhere in the domain, the above equation is an elliptic-type equation.  In this case, one can invert $\psi$ using the [successive over relaxation (SOR)](https://mathworld.wolfram.com/SuccessiveOverrelaxationMethod.html) iteration method.  When $4AC-B^2=0$ or $4AC-B^2<0$, it is a parabolic or hyperbolic equation.  In either case, SOR would *fail* to converge to the solution.
 
 Sometimes the **general form** of Eq. (\autoref{eq:2}) can be transformed into the **standard form** (i.e., standarization):
 
-$$L\left(\psi\right) \equiv \frac{\partial}{\partial y}\left(A\frac{\partial \psi}{\partial y}+B\frac{\partial \psi}{\partial x}\right)+\frac{\partial}{\partial x}\left(C\frac{\partial \psi}{\partial y}+D\frac{\partial \psi}{\partial x}\right) + E\psi =F \label{eq:3} \tag{3}$$
+$$L\left(\psi\right) \equiv \frac{\partial}{\partial y}\left(A\frac{\partial \psi}{\partial y}+B\frac{\partial \psi}{\partial x}\right)+\frac{\partial}{\partial x}\left(C\frac{\partial \psi}{\partial y}+D\frac{\partial \psi}{\partial x}\right) + E\psi =F \label{eq:3}$$
 
 In this case, $AD-BC>0$ should be met to insure its ellipticity.  The elliptic condition has its own physical meaning in the problems of interest.  That is, the system is in steady (or balanced) states that are stable to any small perturbation.
 
 Many problems in meteorology and oceanography can be cast into the forms of either Eq. (\autoref{eq:2}) or Eq. (\autoref{eq:3}).  However, some of them are formulated in **3D case** (like the QG-omega equation):
 
-$$L\left(\psi\right) \equiv \frac{\partial}{\partial z}\left(A\frac{\partial \psi}{\partial z}\right) +\frac{\partial}{\partial y}\left(B\frac{\partial \psi}{\partial y}\right) +\frac{\partial}{\partial x}\left(C\frac{\partial \psi}{\partial x}\right) =F \label{eq:4} \tag{4}$$
+$$L\left(\psi\right) \equiv \frac{\partial}{\partial z}\left(A\frac{\partial \psi}{\partial z}\right) +\frac{\partial}{\partial y}\left(B\frac{\partial \psi}{\partial y}\right) +\frac{\partial}{\partial x}\left(C\frac{\partial \psi}{\partial x}\right) =F \label{eq:4}$$
 
 or in **fourth-order** case (Munk model):
 
-$$L\left(\psi\right) &\equiv A\frac{\partial^4 \psi}{\partial y^4}+B\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+C\frac{\partial^4 \psi}{\partial x^4}\notag\\&+D\frac{\partial^2 \psi}{\partial y^2}+E\frac{\partial^2 \psi}{\partial y \partial x}+F\frac{\partial^2 \psi}{\partial x^2}+G\frac{\partial \psi}{\partial y}+H\frac{\partial \psi}{\partial x}+I\psi = J \label{eq:5} \tag{5}\end{align}$$
+$$L\left(\psi\right) \equiv A\frac{\partial^4 \psi}{\partial y^4}+B\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+C\frac{\partial^4 \psi}{\partial x^4}\notag\\&+D\frac{\partial^2 \psi}{\partial y^2}+E\frac{\partial^2 \psi}{\partial y \partial x}+F\frac{\partial^2 \psi}{\partial x^2}+G\frac{\partial \psi}{\partial y}+H\frac{\partial \psi}{\partial x}+I\psi = J \label{eq:5}$$
 
 So we implements four basic solvers to take into account the above four Eqs. (\autoref{eq:2}-\autoref{eq:5}) or cases.  If a problem do not fit into one of these four types, we are going to add one solver for this type of problem.  We hope *NOT* so because we want to keep the solvers as minimum and general as possible.  It is also *NOT* clear which form, the genral form Eq. (\autoref{eq:2}) or the standard form Eq. (\autoref{eq:3}), is preferred for the inversion if a problem can be cast into either form.
 
