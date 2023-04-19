@@ -69,8 +69,8 @@ or in **fourth-order** case (the Munk model):
 $$
 \begin{aligned}
 L\left(\psi\right) &\equiv A_1\frac{\partial^4 \psi}{\partial y^4}+A_2\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+A_3\frac{\partial^4 \psi}{\partial x^4} \notag\\
-&+A_4\frac{\partial^2 \psi}{\partial y^2}+A_5\frac{\partial^2 \psi}{\partial y \partial x}+A_6\frac{\partial^2 \psi}{\partial x^2}+A_7\frac{\partial \psi}{\partial y}+A_8\frac{\partial \psi}{\partial x}+A_9\psi = F \label{eq:5} \tag{5}
-\end{aligned}
+&+A_4\frac{\partial^2 \psi}{\partial y^2}+A_5\frac{\partial^2 \psi}{\partial y \partial x}+A_6\frac{\partial^2 \psi}{\partial x^2}+A_7\frac{\partial \psi}{\partial y}+A_8\frac{\partial \psi}{\partial x}+A_9\psi = F \label{eq:5}
+\end{aligned} \tag{5}
 $$
 
 So we implements four basic solvers to take into account the above four Eqs. \eqref{eq:2}-\eqref{eq:5} cases.  Most of the problems fit one of these four types of solver.  However, it is **NOT** clear which form, the genral form Eq. \eqref{eq:2} or the standard form Eq. \eqref{eq:3}, is preferred for the inversion if a problem can be cast into either one.
