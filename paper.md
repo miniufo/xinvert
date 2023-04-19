@@ -52,13 +52,13 @@ For the 2D case, the **general form** of Eq. \eqref{eq:1} is:
 
 $$L\left(\psi\right) \equiv A_1\frac{\partial^2 \psi}{\partial y^2}+A_2\frac{\partial^2 \psi}{\partial y \partial x}+A_3\frac{\partial^2 \psi}{\partial x^2}+A_4\frac{\partial \psi}{\partial y}+A_5\frac{\partial \psi}{\partial x}+A_6\psi = F \label{eq:2} \tag{2}$$
 
-where coefficients $A_1-A_6$ are all known variables.  When the condition $4A_1A_3_-A_2^2>0$ is met everywhere in the domain, the above equation is an elliptic-type equation.  In this case, one can invert $\psi$ using the **successive over relaxation (SOR)** iteration method.  When $4AC-B^2=0$ or $4A_1A_3_-A_2^2<0$, it is a parabolic or hyperbolic equation.  In either case, SOR would *fail* to converge to the solution.
+where coefficients $A_1-A_6$ are all known variables.  When the condition $4A_1 A_3-A_2^2>0$ is met everywhere in the domain, the above equation is an elliptic-type equation.  In this case, one can invert $\psi$ using the **successive over relaxation (SOR)** iteration method.  When $4A_1 A_3-A_2^2=0$ or $4A_1 A_3-A_2^2<0$, it is a parabolic or hyperbolic equation.  In either case, SOR would *fail* to converge to the solution.
 
 Sometimes the **general form** of Eq. \eqref{eq:2} can be transformed into the **standard form** (i.e., standarization):
 
 $$L\left(\psi\right) \equiv \frac{\partial}{\partial y}\left(A_1\frac{\partial \psi}{\partial y}+A_2\frac{\partial \psi}{\partial x}\right)+\frac{\partial}{\partial x}\left(A_3\frac{\partial \psi}{\partial y}+A_4\frac{\partial \psi}{\partial x}\right) + A_5\psi = F \label{eq:3} \tag{3}$$
 
-In this case, $A1_A4-A_2A_3>0$ should be met to insure its ellipticity.  The elliptic condition has its own physical meaning in the problems of interest.  That is, the system is in steady (or balanced) states that are stable to any small perturbation.
+In this case, $A_1 A_4-A_2 A_3>0$ should be met to insure its ellipticity.  The elliptic condition has its own physical meaning in the problems of interest.  That is, the system is in steady (or balanced) states that are stable to any small perturbation.
 
 Many problems in meteorology and oceanography can be cast into the forms of either Eq. \eqref{eq:2} or Eq. \eqref{eq:3}.  However, some of them are formulated in 3D case (like the QG-omega equation):
 
