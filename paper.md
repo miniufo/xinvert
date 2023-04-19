@@ -34,7 +34,7 @@ Once $\zeta$ is given as a known, one need to get the unknown $\psi$ with proper
 - **A unified numerical solver:** It can solve all the classical balanced GFD models, even in a domain with irregular boundaries like the ocean.  New models can also be adapted straightforwardly to fit the solver;
 - **Thinking and coding in equations:** Users focus naturally on the key inputs and outputs of the GFD models, just like thinking of the knowns and unknowns of the PDEs;
 - **Flexible parameter specification:** Coefficients of the models can be either constant, 1D vector, or ND array.  This allows an easy reproduce of early simplified results and also an extension to more general/realistic results;
-- **Fast and efficient:** The algorithm should be fast and efficient.  Also, the codes can be compiled first and then executed as fast as `C` or `FORTRAN`, instead of executed in the slow pure `Python` interpreter.  In addition, it can utilize multi-core and out-of-core computations capabilities of modern computers;
+- **Fast and efficient:** The algorithm should be fast and efficient.  Also, the codes can be compiled first and then executed as fast as `C` or `FORTRAN`, instead of executed in the slow pure `Python` interpreter.  In addition, it can leverage the multi-core and out-of-core computational capabilities of modern computers;
 
 `xinvert` is then designed to satisfy all the above needs, based on the ecosystem of `Python`.
 
@@ -66,17 +66,22 @@ $$L\left(\psi\right) \equiv \frac{\partial}{\partial z}\left(A_1\frac{\partial \
 
 or in **fourth-order** case (the Munk model):
 
-$$L\left(\psi\right) \equiv A_1\frac{\partial^4 \psi}{\partial y^4}+A_2\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+A_3\frac{\partial^4 \psi}{\partial x^4}\\+A_4\frac{\partial^2 \psi}{\partial y^2}+A_5\frac{\partial^2 \psi}{\partial y \partial x}+A_6\frac{\partial^2 \psi}{\partial x^2}+A_7\frac{\partial \psi}{\partial y}+A_8\frac{\partial \psi}{\partial x}+A_9\psi = F \label{eq:5} \tag{5}$$
+$$
+\begin{aligned}
+L\left(\psi\right) &\equiv A_1\frac{\partial^4 \psi}{\partial y^4}+A_2\frac{\partial^4 \psi}{\partial y^2 \partial x^2}+A_3\frac{\partial^4 \psi}{\partial x^4} \notag\\
+&+A_4\frac{\partial^2 \psi}{\partial y^2}+A_5\frac{\partial^2 \psi}{\partial y \partial x}+A_6\frac{\partial^2 \psi}{\partial x^2}+A_7\frac{\partial \psi}{\partial y}+A_8\frac{\partial \psi}{\partial x}+A_9\psi = F \label{eq:5} \tag{5}
+\end{aligned}
+$$
 
-So we implements four basic solvers to take into account the above four Eqs. \eqref{eq:2}-\eqref{eq:5} or cases.  If a problem do not fit into one of these four types, we are going to add one solver for this type of problem.  We hope **NOT** so because we want to keep the solvers as minimum and general as possible.  It is also **NOT** clear which form, the genral form Eq. \eqref{eq:2} or the standard form Eq. \eqref{eq:3}, is preferred for the inversion if a problem can be cast into either one.
+So we implements four basic solvers to take into account the above four Eqs. \eqref{eq:2}-\eqref{eq:5} cases.  Most of the problems fit one of these four types of solver.  However, it is **NOT** clear which form, the genral form Eq. \eqref{eq:2} or the standard form Eq. \eqref{eq:3}, is preferred for the inversion if a problem can be cast into either one.
 
 
 # Summary
 
-`xinvert` is an open-source and uesr-friendly Python package that enables GFD scientists or interested amateurs to solve all possible GFD problems in a numerical fashion.  With the ecosystem of open-source ``Python` packages, in particular `xarray` [@Hoyer:2017], `dask` [@Rocklin:2015], and `numba` [@Lam:2015], it is able to satisfy the above requirements:
+`xinvert` is an open-source and uesr-friendly `Python` package that enables GFD scientists or interested amateurs to solve all possible GFD problems in a numerical fashion.  With the ecosystem of open-source `Python` packages, in particular `xarray` [@Hoyer:2017], `dask` [@Rocklin:2015], and `numba` [@Lam:2015], it is able to satisfy the above requirements:
 
 - All the classical balanced GFD models can be inverted by this unified numerical solver;
-- User APIs \autoref{table:1} are very close to the equations: unknowns are on the left-hand side of the equal sign `=`, whereas the known forcing functions are on its right-hand side (other known coefficients are also on the left-hand side but are passed in through `mParams`);
+- User APIs (\autoref{table:1}) are very close to the equations: unknowns are on the left-hand side of the equal sign `=`, whereas the known forcing functions are on its right-hand side (other known coefficients are also on the left-hand side but are passed in through `mParams`);
 - Passing a single `xarray.DataArray` is usually enough for the inversion. Coordinates information is already encapsulated and thus reducing the length of the parameter list.  In addition, paramters in `mParams` can be either a constant, or varying with a specific dimension (like Coriolis parameter $f$), or fully varying with space and time, due to the use of `xarray`'s [@Hoyer:2017] broadcasting capability;
 - This package leverages `numba` [@Lam:2015] and `dask` [@Rocklin:2015] to support Just-In-Time (JIT) compilation, multi-core, and out-of-core computations, and therefore greatly increases the speed and efficiency of the inversion.
 
@@ -103,7 +108,7 @@ Here we summarize the inversion problems in meteorology and oceanography into \a
 
 # Usage
 
-`xinvert` is designed in a functional-programming (FP) style.  Users only need to import the core function they are interested in and call it to get the inverted results (\autoref{table:1}).  Note that the calculation of the forcing function $F$ (e.g., calculating the vorticity using velocity vector) on the right-hand side of the equation is **NOT** the core part of this package.  But there is a `FiniteDiff` utility module with which finite difference calculus can be readily performed.
+`xinvert` is designed in a functional-programming (FP) style.  Users only need to import the function they are interested in and call it to get the inverted results (\autoref{table:1}).  Note that the calculation of the forcing function $F$ (e.g., calculating the vorticity using velocity vector) on the right-hand side of the equation is **NOT** the core part of this package.  But there is a `FiniteDiff` utility module with which finite difference calculus can be readily performed.
 
 
 # Acknowledgements
