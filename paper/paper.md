@@ -90,7 +90,7 @@ Here we summarize the inversion problems in meteorology and oceanography into \a
 | Problem names and equations | Function calls |
 | :--------- | ---------: |
 | Horizontal streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial y^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_k}$ | `psi = invert_Poisson(vork,`\newline`dims=['Y','X'],`\newline`mParams=None)` \newline|
-| MOC streamfunction [@Han:2020] \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial y^2}=\zeta_i}$ | `psi = invert_Poisson(vori,`\newline`dims=['Z','Y'],`\newline`mParams=None)` \newline|
+| MOC streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial y^2}=\zeta_i}$ | `psi = invert_Poisson(vori,`\newline`dims=['Z','Y'],`\newline`mParams=None)` \newline|
 | Walker streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_j}$ | `psi = invert_Poisson(vorj,`\newline`dims=['Z','X'],`\newline`mParams=None)` \newline|
 | Balanced mass field [@Yuan:2008] \newline $\displaystyle{\nabla^2\Phi=\frac{\partial^2 \Phi}{\partial y^2}+\frac{\partial^2 \Phi}{\partial x^2}=F}$ | `Phi = invert_Poisson(F,`\newline`dims=['Y','X'],`\newline`mParams=None)` \newline|
 | Geostrophic streamfunction \newline $\displaystyle{\frac{\partial}{\partial y}\left(f\frac{\partial \psi}{\partial y}\right)+\frac{\partial}{\partial x}\left(f\frac{\partial \psi}{\partial x}\right)=\nabla^2 \Phi}$ | `psi = invert_geostrophic(LapPhi,`\newline`dims=['Y','X'],`\newline`mParams={f})` \newline|
