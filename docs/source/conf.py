@@ -44,8 +44,8 @@ extensions = [
     'sphinx.ext.extlinks',
     'sphinx.ext.viewcode',
     'sphinx.ext.intersphinx',
-    'numpydoc',
     'nbsphinx',
+    'numpydoc',
     #'recommonmark',           # Markdown
     #'myst_nb',
     'IPython.sphinxext.ipython_directive',
@@ -58,7 +58,6 @@ extensions = [
 # The suffix(es) of source filenames, either a string or list.
 source_suffix = {
     '.rst': 'restructuredtext',
-    '.txt': 'markdown',
     '.md': 'markdown',
 }
 

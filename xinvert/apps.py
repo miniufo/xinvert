@@ -62,9 +62,7 @@ def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
 
     The Poisson equation is given as:
 
-    .. math::
-
-        L(\psi) = \frac{\partial^2 \psi}{\partial y^2} + \frac{\partial^2 \psi}{\partial x^2} = F
+    .. math:: L(\psi) = \frac{\partial^2 \psi}{\partial y^2} + \frac{\partial^2 \psi}{\partial x^2} = F
     
     Invert the Poisson equation for :math:`\psi` given :math:`F`.
     
@@ -101,10 +99,10 @@ def invert_RefState(PV, dims, coords='z-lat', icbc=None,
 
     .. math::
 
-        L(\Lambda) = \frac{\partial}{\partial \theta}\left(\frac{2\Lambda_0}{r^3}
-        \frac{\partial \Lambda}{\partial \theta}\right) +
-        \frac{\partial}{\partial \r}\left(\frac{\Gamma g}{Q r}
-        \frac{\partial \Lambda}{\partial \r}\right) = 0
+         L(\Lambda) = \frac{\partial}{\partial \theta}\left(\frac{2\Lambda_0}{r^3}
+         \frac{\partial \Lambda}{\partial \theta}\right) +
+         \frac{\partial}{\partial \r}\left(\frac{\Gamma g}{Q r}
+         \frac{\partial \Lambda}{\partial \r}\right) = 0
     
     Invert this equation for absolute angular momentum :math:`\Lambda` given
     the PV distribution :math:`Q`.
