@@ -3,12 +3,13 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Here are examples of xinvert!
-=============================
+Examples
+========
 
 Classical problems include: Poisson equation, Gill-Matsuno model, Stommel-Munk
-model, QG omega model, PV inversion, Swayer-Eliassen balance model...  Users are
-also encouraged to add their examples.
+model, QG omega model, PV inversion, Swayer-Eliassen balance model... 
+
+Users are also encouraged to add their own examples.
 
 A complete list of the classical inversion problems can be found at
 `this notebook <https://github.com/miniufo/xinvert/blob/master/notebooks/01.%20Introduction%20to%20xinvert.ipynb>`_.
@@ -18,12 +19,5 @@ A complete list of the classical inversion problems can be found at
    :maxdepth: 2
    :caption: Examples:
    
-   notebooks/02
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+   02
+   03
