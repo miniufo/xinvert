@@ -2,3 +2,4 @@ numba
 xarray
 dask
 nbsphinx
+numpydoc
