@@ -4,7 +4,7 @@
    contain the root `toctree` directive.
 
 Welcome to xinvert's documentation!
-==================================+
+===================================
 
 .. image:: https://raw.githubusercontent.com/miniufo/xinvert/master/pics/animateConverge.gif
 
