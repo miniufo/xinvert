@@ -21,7 +21,6 @@ def invert_standard_3D(S, A, B, C, F,
 
     .. math::
 
-        L(\psi) =
         \frac{1}{\partial z}\left(A\frac{\partial \omega}{\partial z}\right)+
         \frac{1}{\partial y}\left(B\frac{\partial \omega}{\partial y}\right)+
         \frac{1}{\partial x}\left(C\frac{\partial \omega}{\partial x}\right)=F
@@ -222,7 +221,6 @@ def invert_standard_2D(S, A, B, C, F,
 
     .. math::
 
-        L(\psi) =
         \frac{1}{\partial y}\left(
         A\frac{\partial \psi}{\partial y} + 
         B\frac{\partial \psi}{\partial x} \right) +
@@ -428,7 +426,6 @@ def invert_standard_2D_test(S, A, B, C, D, E, F,
 
     .. math::
 
-        L(\psi) =
         \frac{1}{\partial y}\left(
         A\frac{\partial \psi}{\partial y} + 
         B\frac{\partial \psi}{\partial x} \right) +
@@ -641,7 +638,6 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H,
 
     .. math::
 
-        L(\psi) =
         A \frac{\partial^2 \psi}{\partial z^2} +
         B \frac{\partial^2 \psi}{\partial y^2} +
         C \frac{\partial^2 \psi}{\partial x^2} +
@@ -884,7 +880,6 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
 
     .. math::
 
-        L(\psi) =
         A \frac{\partial^2 \psi}{\partial y^2} +
         B \frac{\partial^2 \psi}{\partial y \partial x} +
         C \frac{\partial^2 \psi}{\partial x^2} +
@@ -1105,7 +1100,6 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
 
     .. math::
 
-        L(\psi) =
         A \frac{\partial^4 \psi}{\partial y^4} +
         B \frac{\partial^4 \psi}{\partial y^2 \partial x^2} +
         C \frac{\partial^4 \psi}{\partial x^4} +

@@ -18,7 +18,6 @@ def inv_standard3D(A, B, C, F, S, dims, iParams):
 
     .. math::
 
-        L(\psi) =
         \frac{1}{\partial z}\left(A\frac{\partial \omega}{\partial z}\right)+
         \frac{1}{\partial y}\left(B\frac{\partial \omega}{\partial y}\right)+
         \frac{1}{\partial x}\left(C\frac{\partial \omega}{\partial x}\right)=F
@@ -87,7 +86,6 @@ def inv_standard2D(A, B, C, F, S, dims, iParams):
 
     .. math::
 
-        L(\psi) =
         \frac{1}{\partial y}\left(
         A\frac{\partial \psi}{\partial y} + 
         B\frac{\partial \psi}{\partial x} \right) +
@@ -159,7 +157,6 @@ def inv_standard2D_test(A, B, C, D, E, F, S, dims, iParams):
 
     .. math::
 
-        L(\psi) =
         \frac{1}{\partial y}\left(
         A\frac{\partial \psi}{\partial y} + 
         B\frac{\partial \psi}{\partial x} \right) +
@@ -235,7 +232,6 @@ def inv_general3D(A, B, C, D, E, F, G, H, S, dims, iParams):
 
     .. math::
 
-        L(\psi) =
         A \frac{\partial^2 \psi}{\partial z^2} +
         B \frac{\partial^2 \psi}{\partial y^2} +
         C \frac{\partial^2 \psi}{\partial x^2} +
@@ -316,7 +312,6 @@ def inv_general2D(A, B, C, D, E, F, G, S, dims, iParams):
 
     .. math::
 
-        L(\psi) =
         A \frac{\partial^2 \psi}{\partial y^2} +
         B \frac{\partial^2 \psi}{\partial y \partial x} +
         C \frac{\partial^2 \psi}{\partial x^2} +
@@ -390,7 +385,6 @@ def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, iParams):
 
     .. math::
 
-        L(\psi) =
         A \frac{\partial^4 \psi}{\partial y^4} +
         B \frac{\partial^4 \psi}{\partial y^2 \partial x^2} +
         C \frac{\partial^4 \psi}{\partial x^4} +

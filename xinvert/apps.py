@@ -62,7 +62,9 @@ def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
 
     The Poisson equation is given as:
 
-    .. math:: L(\psi) = \frac{\partial^2 \psi}{\partial y^2} + \frac{\partial^2 \psi}{\partial x^2} = F
+    .. math::
+        
+        \frac{\partial^2 \psi}{\partial y^2} + \frac{\partial^2 \psi}{\partial x^2} = F
     
     Invert the Poisson equation for :math:`\psi` given :math:`F`.
     
@@ -99,10 +101,10 @@ def invert_RefState(PV, dims, coords='z-lat', icbc=None,
 
     .. math::
 
-         L(\Lambda) = \frac{\partial}{\partial \theta}\left(\frac{2\Lambda_0}{r^3}
+         \frac{\partial}{\partial \theta}\left(\frac{2\Lambda_0}{r^3}
          \frac{\partial \Lambda}{\partial \theta}\right) +
-         \frac{\partial}{\partial \r}\left(\frac{\Gamma g}{Q r}
-         \frac{\partial \Lambda}{\partial \r}\right) = 0
+         \frac{\partial}{\partial r}\left(\frac{\Gamma g}{Q r}
+         \frac{\partial \Lambda}{\partial r}\right) = 0
     
     Invert this equation for absolute angular momentum :math:`\Lambda` given
     the PV distribution :math:`Q`.
@@ -196,7 +198,7 @@ def invert_Eliassen(F, dims, coords='z-lat', icbc=None,
 
     .. math::
 
-        L(\psi) = \frac{\partial}{\partial z}\left(
+        \frac{\partial}{\partial z}\left(
         A\frac{\partial \psi}{\partial z} +
         B\frac{\partial \psi}{\partial y} \right) +
         \frac{\partial}{\partial y}\left(
@@ -245,10 +247,10 @@ def invert_GillMatsuno(Q, dims, coords='lat-lon', icbc=None,
 
     .. math::
 
-        \epsilon   u  &=  fv - \frac{\partial \phi}{\partial x}\\\\
-        \epsilon   v  &= -fu - \frac{\partial \phi}{\partial y}\\\\
+        \epsilon   u  =  fv - \frac{\partial \phi}{\partial x}\\\\
+        \epsilon   v  = -fu - \frac{\partial \phi}{\partial y}\\\\
         \epsilon \phi + \Phi\left(\frac{\partial u}{\partial x}
-        +\frac{\partial v}{\partial y}\right) &= -Q
+        +\frac{\partial v}{\partial y}\right) = -Q
     
     Invert this equation for the mass distribution :math:`\phi` given
     the diabatic heating function :math:`Q`.
@@ -519,7 +521,6 @@ def invert_omega(F, dims, coords='lat-lon', icbc=None,
 
     .. math::
 
-        L(\omega) =
         \frac{f^2}{N^2}\frac{\partial^2 \omega}{\partial z^2} +
         \frac{\partial^2 \omega}{\partial y^2} +
         \frac{\partial^2 \omega}{\partial x^2} = \frac{F}{N^2}
@@ -528,7 +529,6 @@ def invert_omega(F, dims, coords='lat-lon', icbc=None,
 
     .. math::
 
-        L(\omega) =
         \frac{1}{\partial z}\left(f^2\frac{\partial \omega}{\partial z}\right)+
         \frac{1}{\partial y}\left(N^2\frac{\partial \omega}{\partial y}\right)+
         \frac{1}{\partial x}\left(N^2\frac{\partial \omega}{\partial x}\right)=F
@@ -584,7 +584,6 @@ def invert_3DOcean(F, dims, coords='lat-lon', icbc=None,
 
     .. math::
 
-        L(\psi) =
         c_3 \frac{\partial^2 \psi}{\partial z^2} +
         c_1 \frac{\partial^2 \psi}{\partial y^2} +
         c_1 \frac{\partial^2 \psi}{\partial x^2} +
