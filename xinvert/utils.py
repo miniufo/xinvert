@@ -20,8 +20,8 @@ _latlon = ['lat', 'latitude' , 'lats', 'yc', 'y',
 
 
 def loop_noncore(data, dims=None):
-    """
-    Loop over the non-core dimensions using generator.
+    """Loop over the non-core dimensions using generator.
+
     The non-core dimensions are given outside the list in `dims`.
     
     Parameters
@@ -31,10 +31,10 @@ def loop_noncore(data, dims=None):
     dims: list of str
         Core dimensions.  The remaining dimensions are non-core dimension
     
-    Returns
-    ----------
-    re: generator
-        iterator
+    Yields
+    ------
+    dict
+        dict indicates the portion of `data` can be extracted
     """
     dimAll = data.dims
     

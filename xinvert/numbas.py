@@ -17,22 +17,19 @@ def invert_standard_3D(S, A, B, C, F,
                        zc, yc, xc, delz, dely, delx, BCz, BCy, BCx, delxSqr,
                        ratio2Sqr, ratio1Sqr, optArg, undef, flags,
                        mxLoop, tolerance):
-    """
-    Inverting a 3D volume of elliptic equation in standard form as:
-    
-        d ┌  dS ┐   d ┌  dS ┐   d ┌  dS ┐
-        --│A(--)│ + --│B(--)│ + --│C(--)│ = F
-        dz└  dz ┘   dy└  dy ┘   dx└  dx ┘
-    
-    using SOR iteration. If F = F['time', 'lev', 'lat', 'lon'] and we invert
-    for the 3D spatial distribution, then 3rd dim is 'lev', 2nd dim is 'lat'
-    and 1st dim is 'lon'.
+    r"""Inverting a 3D volume of elliptic equation in standard form.
+
+    .. math::
+
+        L(\psi) =
+        \frac{1}{\partial z}\left(A\frac{\partial \omega}{\partial z}\right)+
+        \frac{1}{\partial y}\left(B\frac{\partial \omega}{\partial y}\right)+
+        \frac{1}{\partial x}\left(C\frac{\partial \omega}{\partial x}\right)=F
     
     Parameters
     ----------
     S: numpy.array (output)
         Results of the SOR inversion.
-        
     A: numpy.array
         Coefficient for the first dimensional derivative.
     B: numpy.array
@@ -78,8 +75,8 @@ def invert_standard_3D(S, A, B, C, F,
         Tolerance for iteraction, smaller than this will break the iteraction.
 
     Returns
-    ----------
-    S: numpy.array
+    -------
+    numpy.array
         Results of the SOR inversion.
     """
     loop = 0
@@ -221,21 +218,22 @@ def invert_standard_2D(S, A, B, C, F,
                        yc, xc, dely, delx, BCy, BCx, delxSqr,
                        ratioQtr, ratioSqr, optArg, undef, flags,
                        mxLoop, tolerance):
-    """
-    Inverting a 2D slice of elliptic equation in standard form as:
-    
-        d ┌  dS      dS ┐   d ┌  dS      dS ┐
-        --│A(--) + B(--)│ + --│B(--) + C(--)│ = F
-        dy└  dy      dx ┘   dx└  dy      dx ┘
-    
-    using SOR iteration. If F = F['time', 'lat', 'lon'] and we invert
-    for the horizontal slice, then 2nd dim is 'lat' and 1st dim is 'lon'.
+    r"""Inverting a 2D slice of elliptic equation in standard form.
+
+    .. math::
+
+        L(\psi) =
+        \frac{1}{\partial y}\left(
+        A\frac{\partial \psi}{\partial y} + 
+        B\frac{\partial \psi}{\partial x} \right) +
+        \frac{1}{\partial x}\left(
+        B\frac{\partial \psi}{\partial y} +
+        C\frac{\partial \psi}{\partial x} \right) = F
     
     Parameters
     ----------
     S: numpy.array (output)
         Results of the SOR inversion.
-        
     A: numpy.array
         Coefficient for the first dimensional derivative.
     B: numpy.array
@@ -275,8 +273,8 @@ def invert_standard_2D(S, A, B, C, F,
         Tolerance for iteraction, smaller than this will break the iteraction.
 
     Returns
-    ----------
-    S: numpy.array
+    -------
+    numpy.array
         Results of the SOR inversion.
     """
     loop = 0
@@ -426,15 +424,17 @@ def invert_standard_2D_test(S, A, B, C, D, E, F,
                        yc, xc, dely, delx, BCy, BCx, delxSqr,
                        ratioQtr, ratioSqr, optArg, undef, flags,
                        mxLoop, tolerance):
-    """
-    Inverting a 2D slice of elliptic equation in standard form as:
-    
-        d ┌  dS      dS ┐   d ┌  dS      dS ┐
-        --│A(--) + B(--)│ + --│C(--) + D(--)│ + ES = F
-        dy└  dy      dx ┘   dx└  dy      dx ┘
-    
-    using SOR iteration. If F = F['time', 'lat', 'lon'] and we invert
-    for the horizontal slice, then 2nd dim is 'lat' and 1st dim is 'lon'.
+    r"""Inverting a 2D slice of elliptic equation in standard form.
+
+    .. math::
+
+        L(\psi) =
+        \frac{1}{\partial y}\left(
+        A\frac{\partial \psi}{\partial y} + 
+        B\frac{\partial \psi}{\partial x} \right) +
+        \frac{1}{\partial x}\left(
+        B\frac{\partial \psi}{\partial y} +
+        C\frac{\partial \psi}{\partial x} \right) = F
     
     Parameters
     ----------
@@ -484,7 +484,7 @@ def invert_standard_2D_test(S, A, B, C, D, E, F,
         Tolerance for iteraction, smaller than this will break the iteraction.
 
     Returns
-    ----------
+    -------
     S: numpy.array
         Results of the SOR inversion.
     """
@@ -637,12 +637,17 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H,
                       zc, yc, xc, delz, dely, delx, BCz, BCy, BCx, delxSqr,
                       ratio2, ratio1, ratio2Sqr, ratio1Sqr, optArg, undef, flags,
                       mxLoop, tolerance):
-    """
-    Inverting a 3D volume of elliptic equation in general form as:
-    
-          d^2S     d^2S     d^2S     dS     dS     dS 
-        A ---- + B ---- + C ---- + D -- + E -- + F -- + G*S = H
-          dz^2     dy^2     dx^2     dz     dy     dx 
+    r"""Inverting a 3D volume of elliptic equation in the general form.
+
+    .. math::
+
+        L(\psi) =
+        A \frac{\partial^2 \psi}{\partial z^2} +
+        B \frac{\partial^2 \psi}{\partial y^2} +
+        C \frac{\partial^2 \psi}{\partial x^2} +
+        D \frac{\partial \psi}{\partial z} +
+        E \frac{\partial \psi}{\partial y} +
+        F \frac{\partial \psi}{\partial x} + G \psi = H
     
     Parameters
     ----------
@@ -702,8 +707,8 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H,
         Tolerance for iteraction, smaller than this will break the iteraction.
 
     Returns
-    ----------
-    S: numpy.array
+    -------
+    numpy.array
         Results of the SOR inversion.
     """
     loop = 0
@@ -875,12 +880,16 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
                       yc, xc, dely, delx, BCy, BCx,
                       delxSqr, ratio, ratioQtr, ratioSqr, optArg, undef, flags,
                       mxLoop, tolerance):
-    """
-    Inverting a 2D slice of elliptic equation in general form as:
-    
-          d^2S     d^2S     d^2S     dS     dS 
-        A ---- + B ---- + C ---- + D -- + E -- + F*S = G
-          dy^2     dydx     dx^2     dy     dx 
+    r"""Inverting a 2D slice of elliptic equation in the general form.
+
+    .. math::
+
+        L(\psi) =
+        A \frac{\partial^2 \psi}{\partial y^2} +
+        B \frac{\partial^2 \psi}{\partial y \partial x} +
+        C \frac{\partial^2 \psi}{\partial x^2} +
+        D \frac{\partial \psi}{\partial y} +
+        E \frac{\partial \psi}{\partial x} + F \psi = G
     
     Parameters
     ----------
@@ -934,7 +943,7 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
         Tolerance for iteraction, smaller than this will break the iteraction.
 
     Returns
-    ----------
+    -------
     S: numpy.array
         Results of the SOR inversion.
     """
@@ -1091,12 +1100,20 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
                           ratio, ratioSSr, ratioQtr, ratioSqr,
                           optArg, undef, flags,
                           mxLoop, tolerance):
-    """
-    Inverting a 2D slice of biharmonic equation in general form as:
-    
-      d^4S       d^4S       d^4S     d^2S     d^2S     d^2S     dS     dS 
-    A ---- + B -------- + C ---- + D ---- + E ---- + F ---- + G -- + H -- + I*S = J
-      dy^4     dy^2dx^2     dx^4     dy^2     dydx     dx^2     dy     dx 
+    r"""
+    Inverting a 2D slice of biharmonic equation in the general form.
+
+    .. math::
+
+        L(\psi) =
+        A \frac{\partial^4 \psi}{\partial y^4} +
+        B \frac{\partial^4 \psi}{\partial y^2 \partial x^2} +
+        C \frac{\partial^4 \psi}{\partial x^4} +
+        D \frac{\partial^2 \psi}{\partial y^2} +
+        E \frac{\partial^2 \psi}{\partial y \partial x} +
+        F \frac{\partial^2 \psi}{\partial x^2} +
+        G \frac{\partial \psi}{\partial y} +
+        H \frac{\partial \psi}{\partial x} + I \psi = J
     
     Parameters
     ----------
@@ -1162,8 +1179,8 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
         Tolerance for iteraction, smaller than this will break the iteraction.
 
     Returns
-    ----------
-    S: numpy.array
+    -------
+    numpy.array
         Results of the SOR inversion.
     """
     loop = 0
@@ -1465,6 +1482,7 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
 
 @nb.jit(nopython=True, cache=False)
 def absNorm3D(S, undef):
+    r"""Sum up 3D absolute value S"""
     norm = 0.0
     
     K, J, I = S.shape
@@ -1485,6 +1503,7 @@ def absNorm3D(S, undef):
 
 @nb.jit(nopython=True, cache=False)
 def absNorm2D(S, undef):
+    r"""Sum up 2D absolute value S"""
     norm = 0.0
     
     J, I = S.shape

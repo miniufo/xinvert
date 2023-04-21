@@ -13,17 +13,19 @@ from .utils import loop_noncore, _undeftmp
 """
 Below are the core methods of xinvert
 """
-def inv_standard3D(A, B, C, F, S, dims, params):
-    """
-    Inverting a 3D volume of elliptic equation in standard form as:
+def inv_standard3D(A, B, C, F, S, dims, iParams):
+    r"""Inverting a 3D volume of elliptic equation in a standard form.
+
+    .. math::
+
+        L(\psi) =
+        \frac{1}{\partial z}\left(A\frac{\partial \omega}{\partial z}\right)+
+        \frac{1}{\partial y}\left(B\frac{\partial \omega}{\partial y}\right)+
+        \frac{1}{\partial x}\left(C\frac{\partial \omega}{\partial x}\right)=F
     
-        d ┌  dS ┐   d ┌  dS ┐   d ┌  dS ┐
-        --│A(--)│ + --│B(--)│ + --│C(--)│ = F
-        dz└  dz ┘   dy└  dy ┘   dx└  dx ┘
-    
-    using SOR iteration. If F = F['time', 'lev', 'lat', 'lon'] and we invert
-    for the 3D spatial distribution, then 3rd dim is 'lev', 2nd dim is 'lat'
-    and 1st dim is 'lon'.
+    Invert this equation using SOR iteration. If F = F['time', 'lev', 'lat',
+    'lon'] and we invert for the 3D spatial distribution, then 3rd dim is 'lev',
+    2nd dim is 'lat' and 1st dim is 'lon'.
 
     Parameters
     ----------
@@ -40,13 +42,13 @@ def inv_standard3D(A, B, C, F, S, dims, params):
     dims: list
         Dimension combination for the inversion e.g., ['lev', 'lat', 'lon'].
         Order is important, should be consistent with the dimensions of F.
-    params: dict
+    iParams: dict
         Parameters for inversion.
 
     Returns
     -------
-    S: xr.DataArray
-        Solution.
+    xarray.DataArray
+        Solution :math:`\psi`.
     """
     if len(dims) != 3:
         raise Exception('3 dimensions are needed for inversion')
@@ -55,13 +57,13 @@ def inv_standard3D(A, B, C, F, S, dims, params):
         invert_standard_3D(S.loc[selDict].values, A.loc[selDict].values,
                            B.loc[selDict].values, C.loc[selDict].values,
                            F.loc[selDict].values,
-                           params['gc3' ], params['gc2' ], params['gc1' ],
-                           params['del3'], params['del2'], params['del1'],
-                           params['BCs'][0], params['BCs'][1], params['BCs'][2],
-                           params['del1Sqr'],
-                           params['ratio2Sqr'], params['ratio1Sqr'],
-                           params['optArg'], _undeftmp, params['flags'],
-                           params['mxLoop'], params['tolerance'])
+                           iParams['gc3' ], iParams['gc2' ], iParams['gc1' ],
+                           iParams['del3'], iParams['del2'], iParams['del1'],
+                           iParams['BCs'][0], iParams['BCs'][1], iParams['BCs'][2],
+                           iParams['del1Sqr'],
+                           iParams['ratio2Sqr'], iParams['ratio1Sqr'],
+                           iParams['optArg'], _undeftmp, iParams['flags'],
+                           iParams['mxLoop'], iParams['tolerance'])
         
         info = str(selDict).replace('numpy.datetime64(', '') \
                            .replace('numpy.timedelta64(', '') \
@@ -69,27 +71,32 @@ def inv_standard3D(A, B, C, F, S, dims, params):
                            .replace('\'', '') \
                            .replace('.000000000', '')
         
-        if params['printInfo']:
-            if params['flags'][0]:
+        if iParams['printInfo']:
+            if iParams['flags'][0]:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
             else:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
     
     return S
 
 
-def inv_standard2D(A, B, C, F, S, dims, params):
-    """
-    A template for inverting equations in standard form as:
+def inv_standard2D(A, B, C, F, S, dims, iParams):
+    r"""Inverting equations in 2D standard form.
+
+    .. math::
+
+        L(\psi) =
+        \frac{1}{\partial y}\left(
+        A\frac{\partial \psi}{\partial y} + 
+        B\frac{\partial \psi}{\partial x} \right) +
+        \frac{1}{\partial x}\left(
+        B\frac{\partial \psi}{\partial y} +
+        C\frac{\partial \psi}{\partial x} \right) = F
     
-        d ┌  dS      dS ┐   d ┌  dS      dS ┐
-        --│A(--) + B(--)│ + --│B(--) + C(--)│ = F
-        dy└  dy      dx ┘   dx└  dy      dx ┘
-    
-    using SOR iteration. If F = F['time', 'lat', 'lon'] and we invert
-    for the horizontal slice, then 2nd dim is 'lat' and 1st dim is 'lon'.
+    Invert this equation using SOR iteration. If F = F['time', 'lat', 'lon'] then
+    for the horizontal slice, the 2nd dim is 'lat' and 1st dim is 'lon'.
 
     Parameters
     ----------
@@ -106,13 +113,13 @@ def inv_standard2D(A, B, C, F, S, dims, params):
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
         Order is important, should be consistent with the order of F.
-    params: dict
+    iParams: dict
         Parameters for inversion.
 
     Returns
     -------
-    S: xr.DataArray
-        Solution.
+    xarray.DataArray
+        Solution :math:`\psi`.
     """
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
@@ -122,12 +129,12 @@ def inv_standard2D(A, B, C, F, S, dims, params):
                            A.loc[selDict].values,
                            B.loc[selDict].values, C.loc[selDict].values,
                            F.loc[selDict].values,
-                           params['gc2' ], params['gc1' ],
-                           params['del2'], params['del1'],
-                           params['BCs'][0], params['BCs'][1], params['del1Sqr'],
-                           params['ratioQtr'], params['ratioSqr'],
-                           params['optArg'], _undeftmp, params['flags'],
-                           params['mxLoop'], params['tolerance'])
+                           iParams['gc2' ], iParams['gc1' ],
+                           iParams['del2'], iParams['del1'],
+                           iParams['BCs'][0], iParams['BCs'][1], iParams['del1Sqr'],
+                           iParams['ratioQtr'], iParams['ratioSqr'],
+                           iParams['optArg'], _undeftmp, iParams['flags'],
+                           iParams['mxLoop'], iParams['tolerance'])
         
         info = str(selDict).replace('numpy.datetime64(', '') \
                            .replace('numpy.timedelta64(', '') \
@@ -135,28 +142,33 @@ def inv_standard2D(A, B, C, F, S, dims, params):
                            .replace('\'', '') \
                            .replace('.000000000', '')
         
-        if params['printInfo']:
-            if params['flags'][0]:
+        if iParams['printInfo']:
+            if iParams['flags'][0]:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
             else:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
     
     return S
 
 
 
-def inv_standard2D_test(A, B, C, D, E, F, S, dims, params):
-    """
-    A template for inverting equations in standard form as:
+def inv_standard2D_test(A, B, C, D, E, F, S, dims, iParams):
+    r"""Inverting equations in 2D standard form (test only).
+
+    .. math::
+
+        L(\psi) =
+        \frac{1}{\partial y}\left(
+        A\frac{\partial \psi}{\partial y} + 
+        B\frac{\partial \psi}{\partial x} \right) +
+        \frac{1}{\partial x}\left(
+        B\frac{\partial \psi}{\partial y} +
+        C\frac{\partial \psi}{\partial x} \right) + E\psi= F
     
-        d ┌  dS      dS ┐   d ┌  dS      dS ┐
-        --│A(--) + B(--)│ + --│C(--) + D(--)│ + ES = F
-        dy└  dy      dx ┘   dx└  dy      dx ┘
-    
-    using SOR iteration. If F = F['time', 'lat', 'lon'] and we invert
-    for the horizontal slice, then 2nd dim is 'lat' and 1st dim is 'lon'.
+    Invert this equation using SOR iteration. If F = F['time', 'lat', 'lon'], then
+    for the horizontal slice, the 2nd dim is 'lat' and 1st dim is 'lon'.
 
     Parameters
     ----------
@@ -177,13 +189,13 @@ def inv_standard2D_test(A, B, C, D, E, F, S, dims, params):
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
         Order is important, should be consistent with the order of F.
-    params: dict
+    iParams: dict
         Parameters for inversion.
 
     Returns
     -------
-    S: xr.DataArray
-        Solution.
+    xarray.DataArray
+        Solution :math:`\psi`.
     """
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
@@ -194,12 +206,12 @@ def inv_standard2D_test(A, B, C, D, E, F, S, dims, params):
                            B.loc[selDict].values, C.loc[selDict].values,
                            D.loc[selDict].values, E.loc[selDict].values,
                            F.loc[selDict].values,
-                           params['gc2' ], params['gc1' ],
-                           params['del2'], params['del1'],
-                           params['BCs'][0], params['BCs'][1], params['del1Sqr'],
-                           params['ratioQtr'], params['ratioSqr'],
-                           params['optArg'], _undeftmp, params['flags'],
-                           params['mxLoop'], params['tolerance'])
+                           iParams['gc2' ], iParams['gc1' ],
+                           iParams['del2'], iParams['del1'],
+                           iParams['BCs'][0], iParams['BCs'][1], iParams['del1Sqr'],
+                           iParams['ratioQtr'], iParams['ratioSqr'],
+                           iParams['optArg'], _undeftmp, iParams['flags'],
+                           iParams['mxLoop'], iParams['tolerance'])
         
         info = str(selDict).replace('numpy.datetime64(', '') \
                            .replace('numpy.timedelta64(', '') \
@@ -207,24 +219,32 @@ def inv_standard2D_test(A, B, C, D, E, F, S, dims, params):
                            .replace('\'', '') \
                            .replace('.000000000', '')
         
-        if params['printInfo']:
-            if params['flags'][0]:
+        if iParams['printInfo']:
+            if iParams['flags'][0]:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
             else:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
     
     return S
 
 
-def inv_general3D(A, B, C, D, E, F, G, H, S, dims, params):
-    """
-    A template for inverting a 2D slice of equation in general form as:
+def inv_general3D(A, B, C, D, E, F, G, H, S, dims, iParams):
+    r"""Inverting a 3D volume of elliptic equation in the general form.
+
+    .. math::
+
+        L(\psi) =
+        A \frac{\partial^2 \psi}{\partial z^2} +
+        B \frac{\partial^2 \psi}{\partial y^2} +
+        C \frac{\partial^2 \psi}{\partial x^2} +
+        D \frac{\partial \psi}{\partial z} +
+        E \frac{\partial \psi}{\partial y} +
+        F \frac{\partial \psi}{\partial x} + G \psi = H
     
-          d^2S     d^2S     d^2S     dS     dS     dS 
-        A ---- + B ---- + C ---- + D -- + E -- + F -- + G*S = H
-          dz^2     dy^2     dx^2     dz     dy     dx 
+    Invert this equation using SOR iteration. If F = F['time', 'lev', 'lat',
+    'lon'], then for the 3D volume, the 3rd dim is 'lev' and 1st dim is 'lon'.
 
     Parameters
     ----------
@@ -249,13 +269,13 @@ def inv_general3D(A, B, C, D, E, F, G, H, S, dims, params):
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
         Order is important, should be consistent with the order of F.
-    params: dict
+    iParams: dict
         Parameters for inversion.
 
     Returns
     -------
-    S: xr.DataArray
-        Solution.
+    xarray.DataArray
+        Solution :math:`\psi`.
     """
     if len(dims) != 3:
         raise Exception('3 dimensions are needed for inversion')
@@ -266,13 +286,13 @@ def inv_general3D(A, B, C, D, E, F, G, H, S, dims, params):
                           D.loc[selDict].values, E.loc[selDict].values,
                           F.loc[selDict].values, G.loc[selDict].values,
                           H.loc[selDict].values,
-                          params['gc3' ], params['gc2' ], params['gc1' ],
-                          params['del3'], params['del2'], params['del1'],
-                          params['BCs'][0], params['BCs'][1], params['BCs'][2],
-                          params['del1Sqr'], params['ratio2'], params['ratio1'],
-                          params['ratio2Sqr'], params['ratio1Sqr'],
-                          params['optArg'], _undeftmp, params['flags'],
-                          params['mxLoop'], params['tolerance'])
+                          iParams['gc3' ], iParams['gc2' ], iParams['gc1' ],
+                          iParams['del3'], iParams['del2'], iParams['del1'],
+                          iParams['BCs'][0], iParams['BCs'][1], iParams['BCs'][2],
+                          iParams['del1Sqr'], iParams['ratio2'], iParams['ratio1'],
+                          iParams['ratio2Sqr'], iParams['ratio1Sqr'],
+                          iParams['optArg'], _undeftmp, iParams['flags'],
+                          iParams['mxLoop'], iParams['tolerance'])
         
         info = str(selDict).replace('numpy.datetime64(', '') \
                            .replace('numpy.timedelta64(', '') \
@@ -280,24 +300,31 @@ def inv_general3D(A, B, C, D, E, F, G, H, S, dims, params):
                            .replace('\'', '') \
                            .replace('.000000000', '')
         
-        if params['printInfo']:
-            if params['flags'][0]:
+        if iParams['printInfo']:
+            if iParams['flags'][0]:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
             else:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
     
     return S
 
 
-def inv_general2D(A, B, C, D, E, F, G, S, dims, params):
-    """
-    A template for inverting a 2D slice of equation in general form as:
+def inv_general2D(A, B, C, D, E, F, G, S, dims, iParams):
+    r"""Inverting a 2D slice of elliptic equation in general form.
+
+    .. math::
+
+        L(\psi) =
+        A \frac{\partial^2 \psi}{\partial y^2} +
+        B \frac{\partial^2 \psi}{\partial y \partial x} +
+        C \frac{\partial^2 \psi}{\partial x^2} +
+        D \frac{\partial \psi}{\partial y} +
+        E \frac{\partial \psi}{\partial x} + F \psi = G
     
-          d^2S     d^2S     d^2S     dS     dS 
-        A ---- + B ---- + C ---- + D -- + E -- + F*S = G
-          dy^2     dydx     dx^2     dy     dx 
+    Invert this equation using SOR iteration. If F = F['time', 'lat', 'lon'], then
+    for the horizontal slice, the 2nd dim is 'lat' and 1st dim is 'lon'.
 
     Parameters
     ----------
@@ -318,13 +345,13 @@ def inv_general2D(A, B, C, D, E, F, G, S, dims, params):
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
         Order is important, should be consistent with the order of F.
-    params: dict
+    iParams: dict
         Parameters for inversion.
 
     Returns
     -------
-    S: xr.DataArray
-        Solution.
+    xarray.DataArray
+        Solution :math:`\psi`.
     """
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
@@ -334,12 +361,12 @@ def inv_general2D(A, B, C, D, E, F, G, S, dims, params):
                           B.loc[selDict].values, C.loc[selDict].values,
                           D.loc[selDict].values, E.loc[selDict].values,
                           F.loc[selDict].values, G.loc[selDict].values,
-                          params['gc2' ], params['gc1' ],
-                          params['del2'], params['del1'],
-                          params['BCs'][0], params['BCs'][1], params['del1Sqr'],
-                          params['ratio'], params['ratioQtr'], params['ratioSqr'],
-                          params['optArg'], _undeftmp, params['flags'],
-                          params['mxLoop'], params['tolerance'])
+                          iParams['gc2' ], iParams['gc1' ],
+                          iParams['del2'], iParams['del1'],
+                          iParams['BCs'][0], iParams['BCs'][1], iParams['del1Sqr'],
+                          iParams['ratio'], iParams['ratioQtr'], iParams['ratioSqr'],
+                          iParams['optArg'], _undeftmp, iParams['flags'],
+                          iParams['mxLoop'], iParams['tolerance'])
         
         info = str(selDict).replace('numpy.datetime64(', '') \
                            .replace('numpy.timedelta64(', '') \
@@ -347,24 +374,34 @@ def inv_general2D(A, B, C, D, E, F, G, S, dims, params):
                            .replace('\'', '') \
                            .replace('.000000000', '')
         
-        if params['printInfo']:
-            if params['flags'][0]:
+        if iParams['printInfo']:
+            if iParams['flags'][0]:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
             else:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
     
     return S
 
 
-def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, params):
-    """
-    A template for inverting a 2D slice of equation in general form as:
+def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, iParams):
+    r"""Inverting a 2D slice of elliptic equation in the general form.
+
+    .. math::
+
+        L(\psi) =
+        A \frac{\partial^4 \psi}{\partial y^4} +
+        B \frac{\partial^4 \psi}{\partial y^2 \partial x^2} +
+        C \frac{\partial^4 \psi}{\partial x^4} +
+        D \frac{\partial^2 \psi}{\partial y^2} +
+        E \frac{\partial^2 \psi}{\partial y \partial x} +
+        F \frac{\partial^2 \psi}{\partial x^2} +
+        G \frac{\partial \psi}{\partial y} +
+        H \frac{\partial \psi}{\partial x} + I \psi = J
     
-      d^4S       d^4S       d^4S     d^2S     d^2S     d^2S     dS     dS 
-    A ---- + B -------- + C ---- + D ---- + E ---- + F ---- + G -- + H -- + I*S = J
-      dy^4     dy^2dx^2     dx^4     dy^2     dydx     dx^2     dy     dx 
+    Invert this equation using SOR iteration. If F = F['time', 'lat', 'lon'], then
+    for the horizontal slice, the 2nd dim is 'lat' and 1st dim is 'lon'.
 
     Parameters
     ----------
@@ -393,13 +430,13 @@ def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, params):
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
         Order is important, should be consistent with the order of F.
-    params: dict
+    iParams: dict
         Parameters for inversion.
 
     Returns
     -------
-    S: xr.DataArray
-        Solution.
+    xarray.DataArray
+        Solution :math:`\psi`.
     """
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
@@ -411,14 +448,14 @@ def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, params):
                               F.loc[selDict].values, G.loc[selDict].values,
                               H.loc[selDict].values, I.loc[selDict].values,
                               J.loc[selDict].values,
-                              params['gc2' ], params['gc1' ],
-                              params['del2'], params['del1'],
-                              params['BCs'][0], params['BCs'][1],
-                              params['del1SSr'], params['del1Tr'], params['del1Sqr'],
-                              params['ratio'   ], params['ratioSSr'],
-                              params['ratioQtr'], params['ratioSqr'],
-                              params['optArg'], _undeftmp, params['flags'],
-                              params['mxLoop'], params['tolerance'])
+                              iParams['gc2' ], iParams['gc1' ],
+                              iParams['del2'], iParams['del1'],
+                              iParams['BCs'][0], iParams['BCs'][1],
+                              iParams['del1SSr'], iParams['del1Tr'], iParams['del1Sqr'],
+                              iParams['ratio'   ], iParams['ratioSSr'],
+                              iParams['ratioQtr'], iParams['ratioSqr'],
+                              iParams['optArg'], _undeftmp, iParams['flags'],
+                              iParams['mxLoop'], iParams['tolerance'])
         
         info = str(selDict).replace('numpy.datetime64(', '') \
                            .replace('numpy.timedelta64(', '') \
@@ -426,13 +463,13 @@ def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, params):
                            .replace('\'', '') \
                            .replace('.000000000', '')
         
-        if params['printInfo']:
-            if params['flags'][0]:
+        if iParams['printInfo']:
+            if iParams['flags'][0]:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
             else:
                 print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(params['flags'][2], params['flags'][1]))
+                      .format(iParams['flags'][2], iParams['flags'][1]))
     
     return S
 

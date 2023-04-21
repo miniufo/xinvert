@@ -25,11 +25,45 @@ class FiniteDiff(object):
     For derivative along a dimension, one may use xarray's `differentiate()`.
     The problem with xarray's `differentiate()` is that the boundary conditions
     are not flexible enough for our purpose.  So we implement each operator
-    here using `DataArray.pad()` method to account for different BCs.
+    here using `xr.DataArray.pad()` method to account for different BCs.
+
+    Attributes
+    ----------
+    dmap: dict
+        Dimension mapping from those in `xarray.DataArray` to ['T', 'Z', 'Y', 'X'].
+    BCs: dict
+        Default boundary conditions e.g., BCs={'X': 'periodic'} for both end
+        points along 'X' dimension; or BCs={'Z': ('fixed','reflect')} for fixed
+        left BC and reflected right BC.  Left indicates lower indices along 'X'.
+    fill: float or dict
+        Fill value if BCs are fixed.  A typical example can be:
+        {'Z':(1,2), 'Y':(0,0), 'X':(1,0)}
+    coords: {'lat-lon', 'cartesian'}
+        Types of coords.  Should be one of ['lat-lon', 'cartesian'].
+    
+    Methods
+    -------
+    grad(scalar)
+        3D gradient.
+    divg(vector)
+        3D divergence.
+    vort(vector)
+        3D vorticity.
+    curl(vector)
+        vertical vorticity of vector.
+    laplacian(scalar)
+        Laplacian.
+    tension_strain(vector)
+        Tension strain.
+    shear_strain(vector)
+        Shear strain.
+    deformation_rate(vector)
+        Deformation rate.
+    Okubo_Weiss(vector)
+        Okubo Weiss parameter.
     """
     def __init__(self, dim_mapping, BCs='extend', coords='lat-lon', fill=0):
-        """
-        Construct a FiniteDiff instance given dimension mapping
+        """Construct a FiniteDiff instance given dimension mapping
         
         Parameters
         ----------
@@ -42,14 +76,12 @@ class FiniteDiff(object):
         BCs: dict
             Boundary conditions along each dimension, one can specify different
             BCs at different end points along a single dimension.  BCs includes:
-              - 'fixed'       # pad with fixed value.
-              - 'extend'      # pad with edge value.
-              - 'reflect      # pad with first inner value.
-                                1st derivative is exactly zero.
-              - 'periodic'    # pad with cyclic values.
-              - 'extrapolate' # pad with extrapolated value. (NOT implemented)
-                                1st derivative equals the first inner point.
-                                2nd derivative is exactly zero.
+            * 'fixed': pad with fixed value.
+            * 'extend': pad with edge value.
+            * 'reflect': pad with first inner value.  1st derivative is exactly zero.
+            * 'periodic': pad with cyclic values.
+            * 'extrapolate': pad with extrapolated value. (NOT implemented). 1st
+              derivative equals the first inner point. 2nd derivative is exactly zero.
         coords: str
             Types of coords.  Should be one of ['lat-lon', 'cartesian'].
         fills: float or dict
@@ -113,12 +145,7 @@ class FiniteDiff(object):
 
     
     def grad(self, v, dims=['X','Y'], BCs=None, fill=None):
-        """
-        Calculate spatial gradient components along each dimension given.
-        
-        For example:
-            vx = grad(v, 'X', coords='cartesian')
-            vx, vy = grad(v, ['lon','lat'])
+        """Calculate spatial gradient components along each dimension given.
         
         Parameters
         ----------
@@ -132,6 +159,17 @@ class FiniteDiff(object):
             Boundary condition.  If provided, overwrite the default one per call.
         fill: tuple of floats
             Fill values of fixed BC.  If provided, overwrite the default one per call.
+        
+        Examples
+        --------
+        >>> vx = grad(v, 'X', coords='cartesian')
+        >>> vx, vy = grad(v, ['lon', 'lat'])
+        >>> vz, vy, vx = grad(v, ['lev', 'lat', 'lon'])
+        
+        Returns
+        -------
+        xarray.DataArray or list
+            Gradient components.
         """
         BCs  = _overwriteBCs(BCs, self.BCs)
         fill = _overwriteFills(fill, self.fill)
@@ -165,17 +203,7 @@ class FiniteDiff(object):
             return re
     
     def divg(self, vector, dims, BCs=None, fill=None):
-        """
-        Calculate divergence as du/dx + dv/dy + dw/dz ...
-        
-        For example:
-            du/dx            ->   divX   = divg(u, 'X')
-            dv/dy            ->   divY   = divg(v, 'Y')
-            dw/dz            ->   divZ   = divg(w, 'Z')
-            du/dx+dv/dy      ->   divXY  = divg((u,v), ['X','Y'])
-            dv/dy+dw/dz      ->   divVW  = divg((v,w), ['Y','Z'])
-            du/dx+dw/dz      ->   divXZ  = divg((u,w), ['X','Z'])
-            du/dx+dv/dy+dw/dz->   divXYZ = divg((u,v,w), ['X','Y','Z'])
+        """Calculate divergence as du/dx + dv/dy + dw/dz.
         
         Parameters
         ----------
@@ -189,6 +217,21 @@ class FiniteDiff(object):
             Boundary condition.  If provided, overwrite the default one per call.
         fill: tuple of floats
             Fill values of fixed BC. If provided, overwrite the default one per call.
+        
+        Examples
+        --------
+        >>> divX   = divg(u, 'X')            # du/dx
+        >>> divY   = divg(v, 'Y')            # dv/dy
+        >>> divZ   = divg(w, 'Z')            # dw/dz
+        >>> divXY  = divg((u,v), ['X','Y'])  # du/dx+dv/dy
+        >>> divVW  = divg((v,w), ['Y','Z'])  # dv/dy+dw/dz
+        >>> divXZ  = divg((u,w), ['X','Z'])  # du/dx+dw/dz
+        >>> divXYZ = divg((u,v,w), ['X','Y','Z'])  # du/dx+dv/dy+dw/dz
+        
+        Returns
+        -------
+        xarray.DataArray
+            Divergence.
         """
         BCs  = _overwriteBCs(BCs, self.BCs)
         fill = _overwriteFills(fill, self.fill)
@@ -240,14 +283,6 @@ class FiniteDiff(object):
         the right-hand rule so that we only need one function and input
         different components accordingly.
         
-        For example:
-            x-component (i) is: dw/dy - dv/dz  ->  vori = vort(v=v, w=w, 'i')
-            y-component (j) is: du/dz - dw/dx  ->  vorj = vort(u=u, w=w, 'j')
-            z-component (k) is: dv/dx - du/dy  ->  vork = vort(u=u, v=v, 'k')
-            
-            i,j components:  ->  vori,vorj      = vort(u=u,v=v,w=w, ['i','j'])
-            all components:  ->  vori,vorj,vork = vort(u=u,v=v,w=w, ['i','j','k'])
-        
         Parameters
         ----------
         u: xarray.DataArray
@@ -263,6 +298,20 @@ class FiniteDiff(object):
             Boundary condition.  If provided, overwrite the default one per call.
         fill: tuple of floats
             Fill values of fixed BC. If provided, overwrite the default one per call.
+        
+        Examples
+        --------
+        >>> vori = vort(v=v, w=w, 'i')   # x-component (i) is: dw/dy - dv/dz
+        >>> vorj = vort(u=u, w=w, 'j')   # y-component (j) is: du/dz - dw/dx
+        >>> vork = vort(u=u, v=v, 'k')   # z-component (k) is: dv/dx - du/dy
+
+        >>> vori,vorj      = vort(u=u,v=v,w=w, ['i','j'])      # i,j components
+        >>> vori,vorj,vork = vort(u=u,v=v,w=w, ['i','j','k'])  # all components
+        
+        Returns
+        -------
+        xarray.DataArray or list
+            vorticity components.
         """
         BCs  = _overwriteBCs(BCs, self.BCs)
         fill = _overwriteFills(fill, self.fill)
@@ -316,8 +365,7 @@ class FiniteDiff(object):
         return vors if len(vors) != 1 else vors[0]
     
     def curl(self, u, v, BCs=None, fill=None):
-        """
-        Calculate vertical vorticity component.
+        """Calculate vertical vorticity (k) component.
         
         Parameters
         ----------
@@ -333,8 +381,7 @@ class FiniteDiff(object):
         return self.vort(u=u, v=v, components='k', BCs=BCs, fill=fill)
     
     def Laplacian(self, v, dims=['X', 'Y'], BCs=None, fill=None):
-        """
-        Calculate $\nabla^2 v$.
+        """Calculate the Laplacian of a scalar.
         
         Parameters
         ----------
@@ -348,6 +395,11 @@ class FiniteDiff(object):
             Boundary condition.  If provided, overwrite the default one per call.
         fill: tuple of floats
             Fill values of fixed BC. If provided, overwrite the default one per call.
+        
+        Returns
+        -------
+        xarray.DataArray
+            Laplacian of a scalar.
         """
         BCs  = _overwriteBCs(BCs, self.BCs)
         fill = _overwriteFills(fill, self.fill)
@@ -380,8 +432,7 @@ class FiniteDiff(object):
             return sum(re)
     
     def tension_strain(self, u, v, dims=['X', 'Y'], BCs=None, fill=None):
-        """
-        Calculate tension strain as du/dx - dv/dy.
+        """Calculate tension strain as du/dx - dv/dy.
         
         Parameters
         ----------
@@ -397,13 +448,17 @@ class FiniteDiff(object):
             Boundary condition.  If provided, overwrite the default one per call.
         fill: tuple of floats
             Fill values of fixed BC. If provided, overwrite the default one per call.
+        
+        Returns
+        -------
+        xarray.DataArray
+            tension strain.
         """
         # defined at tracer point
         return self.divg((u, -v), dims, BCs, fill)
     
     def shear_strain(self, u, v, dims=['X', 'Y'], BCs=None, fill=None):
-        """
-        Calculate tension strain as dv/dx + du/dy.
+        """Calculate tension strain as dv/dx + du/dy.
         
         Parameters
         ----------
@@ -419,13 +474,17 @@ class FiniteDiff(object):
             Boundary condition.  If provided, overwrite the default one per call.
         fill: tuple of floats
             Fill values of fixed BC. If provided, overwrite the default one per call.
+        
+        Returns
+        -------
+        xarray.DataArray
+            shear strain.
         """
         # defined at vorticity point
         return self.vort(u=v, v=-u, dims=dims, BCs=BCs, fill=fill)
     
     def deformation_rate(self, u, v, dims=['X', 'Y'], BCs=None, fill=None):
-        """
-        Calculate sqrt(tension^2+shear^2).
+        """Calculate sqrt(tension^2+shear^2).
         
         Parameters
         ----------
@@ -441,6 +500,11 @@ class FiniteDiff(object):
             Boundary condition.  If provided, overwrite the default one per call.
         fill: tuple of floats
             Fill values of fixed BC. If provided, overwrite the default one per call.
+        
+        Returns
+        -------
+        xarray.DataArray
+            Deformation rate.
         """
         tension = self.tension_strain(u, v, dims, BCs, fill)
         shear   = self.shear_strain  (u, v, dims, BCs, fill)
@@ -448,8 +512,7 @@ class FiniteDiff(object):
         return np.hypot(tension + shear)
     
     def Okubo_Weiss(self, u, v, dims=['X', 'Y'], BCs=None, fill=None):
-        """
-        Calculate Okubo-Weiss parameter.
+        """Calculate Okubo-Weiss parameter.
         
         Parameters
         ----------
@@ -465,6 +528,11 @@ class FiniteDiff(object):
             Boundary condition.  If provided, overwrite the default one per call.
         fill: tuple of floats
             Fill values of fixed BC. If provided, overwrite the default one per call.
+        
+        Returns
+        -------
+        xarray.DataArray
+            Okubo-Weiss parameter.
         """
         deform = self.deformation_rate(u, v, dims, BCs, fill)
         curlZ  = self.vort(u=v, v=u, components='j', dims=dims, BCs=BCs, fill=fill)
@@ -474,17 +542,17 @@ class FiniteDiff(object):
 
 
 def padBCs(v, dim, BCs, fill=(0,0)):
-    """
+    """Pad array with boundary conditions.
+
     Pad (add two extra endpoints) original DataArray with BCs along a
     specific dimension.  Types of boundary conditions are:
-        - 'fixed'       # pad with fixed value.
-        - 'extend'      # pad with original edge value.
-        - 'reflect      # pad with first inner value.
-                          1st-order derivative is exactly zero.
-        - 'extrapolate' # pad with extrapolated value. (NOT implemented)
-                          1st-order derivative equals the first inner point.
-                          2nd-order derivative is exactly zero.
-        - 'periodic'    # pad with cyclic values.
+
+        * 'fixed': pad with fixed value.
+        * 'extend': pad with original edge value.
+        * 'reflect: pad with first inner value. 1st-order derivative is exactly zero.
+        * 'extrapolate': pad with extrapolated value. (NOT implemented). 1st-order
+          derivative equals the first inner point. 2nd-order derivative is exactly zero.
+        * 'periodic': pad with cyclic values.
     
     Parameters
     ----------
@@ -498,7 +566,7 @@ def padBCs(v, dim, BCs, fill=(0,0)):
         Fill values as BCs if BC is fixed at two end points e.g., (0,0).
     
     Returns
-    ----------
+    -------
     p: xarray.DataArray
         Padded array.
     """
@@ -533,8 +601,10 @@ def padBCs(v, dim, BCs, fill=(0,0)):
 
 def deriv(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1,
           scheme='center'):
-    """First-order derivative along a given dimension, with proper
-    boundary conditions (BCs) and finite difference scheme.
+    """First-order derivative along a given dimension.
+    
+    The first-order derivative is calculated with proper boundary conditions
+    (BCs) and finite difference scheme.
     
     Parameters
     ----------
@@ -544,14 +614,14 @@ def deriv(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1,
         Dimension along which difference is taken.
     BCs: tuple or list of str
         Boundary conditions for the two end points. Types of BCs are:
-        - 'fixed'       # pad with fixed value.
-        - 'extend'      # pad with original edge value.
-        - 'reflect      # pad with first inner value.
-                          1st-order derivative is exactly zero.
-        - 'extrapolate' # pad with extrapolated value. (NOT implemented)
-                          1st-order derivative equals the first inner point.
-                          2nd-order derivative is exactly zero.
-        - 'periodic'    # pad with cyclic values.
+
+        * 'fixed': pad with fixed value.
+        * 'extend': pad with original edge value.
+        * 'reflect: pad with first inner value. 1st-order derivative is exactly zero.
+        * 'extrapolate': pad with extrapolated value. (NOT implemented). 1st-order
+          derivative equals the first inner point. 2nd-order derivative is exactly zero.
+        * 'periodic': pad with cyclic values.
+
     fill: tuple of floats
         Fill values as BCs if BC is fixed at two end points.
     scale: float or xarray.DataArray
@@ -560,9 +630,9 @@ def deriv(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1,
         Finite difference scheme in ['center', 'forward', 'backward']
     
     Returns
-    ----------
-    grd: xarray.DataArray
-         gradient along the dimension
+    -------
+    xarray.DataArray
+         First-order derivative along the dimension
     """
     if   scheme == 'center':
         pad = padBCs(v, dim, BCs, fill).chunk({dim:len(v[dim])+2})
@@ -583,8 +653,10 @@ def deriv(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1,
 
 
 def deriv2(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1):
-    """Second-order derivative along a given dimension, with proper
-    boundary conditions (BCs) and centered finite-difference scheme.
+    """Second-order derivative along a given dimension
+    
+    The second-order derivative is calculated with proper boundary conditions
+    (BCs) and centered finite-difference scheme.
     
     Parameters
     ----------
@@ -594,25 +666,25 @@ def deriv2(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1):
         Dimension along which difference is taken.
     BCs: tuple or list of str
         Boundary conditions for the two end points. Types of BCs are:
-        - 'fixed'       # pad with fixed value.
-        - 'extend'      # pad with original edge value.
-        - 'reflect      # pad with first inner value.
-                          1st-order derivative is exactly zero.
-        - 'extrapolate' # pad with extrapolated value. (NOT implemented)
-                          1st-order derivative equals the first inner point.
-                          2nd-order derivative is exactly zero.
-        - 'periodic'    # pad with cyclic values.
+
+        * 'fixed': pad with fixed value.
+        * 'extend': pad with original edge value.
+        * 'reflect: pad with first inner value. 1st-order derivative is exactly zero.
+        * 'extrapolate': pad with extrapolated value. (NOT implemented). 1st-order
+          derivative equals the first inner point. 2nd-order derivative is exactly zero.
+        * 'periodic': pad with cyclic values.
+        
     fill: tuple of floats
         Fill values as BCs if BC is fixed at two end points.
     scale: float or xarray.DataArray
         Scale of the result, usually the metric of the dimension.
-    scheme: str
-        Finite difference scheme in ['center', 'forward', 'backward']
+    scheme: {'center', 'forward', 'backward'}
+        Finite difference scheme in ['center', 'forward', 'backward'].
     
     Returns
-    ----------
-    grd: xarray.DataArray
-         gradient along the dimension
+    -------
+    xarray.DataArray
+         Second-order derivative along the dimension
     """
     pad = padBCs(v, dim, BCs, fill)
     lap = pad.diff(dim, 2, 'lower') / pad[dim].diff(dim) ** 2 / scale ** 2

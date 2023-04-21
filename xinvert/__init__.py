@@ -17,7 +17,6 @@ from .apps import invert_Poisson, \
                   invert_Stommel, invert_Stommel_test, \
                   invert_StommelMunk, \
                   invert_Eliassen, \
-                  invert_Omega_MG, \
                   invert_MultiGrid, \
                   invert_omega, \
                   invert_PV2D, \

@@ -58,33 +58,34 @@ Application functions
 """
 def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
                    mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting Poisson equation of the form \nabla^2 S = F:
+    r"""Inverting the Poisson equation.
+
+    The Poisson equation is given as:
+
+    .. math::
+
+        L(\psi) = \frac{\partial^2 \psi}{\partial y^2} + \frac{\partial^2 \psi}{\partial x^2} = F
     
-        d  dS    d  dS
-        --(--) + --(--) = F
-        dy dy    dx dx
-    
-    using SOR iteration.
+    Invert the Poisson equation for :math:`\psi` given :math:`F`.
     
     Parameters
     ----------
     F: xarray.DataArray
-        Forcing function.
+        Forcing function (e.g., vorticity).
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
-    coords: str
-        Coordinates in ['lat-lon', 'z-lat', 'z-lon', 'cartesian'] are supported.
-    icbc: xarray.DataArray
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
+    coords: {'lat-lon', 'z-lat', 'z-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
+        Prescribed inital condition/guess (IC) and boundary conditions (BC).
+    mParams: dict, optional
         Model parameters.  None for the Poisson model.
-    iParams: dict
+    iParams: dict, optional
         Iteration parameters.
     
     Returns
-    ----------
-    S: xarray.DataArray
+    -------
+    xarray.DataArray
         Results of the SOR inversion.
     """
     return __template(__coeffs_Poisson, inv_standard2D, 2,
@@ -94,36 +95,42 @@ def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
 
 def invert_RefState(PV, dims, coords='z-lat', icbc=None,
                     mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting a balanced vortex of the form:
+    r"""PV inversion for a balanced symmetric vortex.
+
+    The balanced symmetric vortex equation is given as:
+
+    .. math::
+
+        L(\Lambda) = \frac{\partial}{\partial \theta}\left(\frac{2\Lambda_0}{r^3}
+        \frac{\partial \Lambda}{\partial \theta}\right) +
+        \frac{\partial}{\partial \r}\left(\frac{\Gamma g}{Q r}
+        \frac{\partial \Lambda}{\partial \r}\right) = 0
     
-        d  2Λ0 dΛ    d  Γg dΛ
-        --(--- --) + --(-- --)  = 0
-        dθ r^3 dθ    dr Qr dr
-    
-    for Λ of the reference state using SOR iteration.
+    Invert this equation for absolute angular momentum :math:`\Lambda` given
+    the PV distribution :math:`Q`.
     
     Parameters
     ----------
     PV: xarray.DataArray
         2D distribution of PV.
     dims: list
-        Dimension combination for the inversion e.g., ['lat', 'lon'].
-    coords: str
-        Coordinates in ['z-lat', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+        Dimension combination for the inversion e.g., ['lev', 'lat'].
+    coords: {'z-lat', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
     mParams: dict
-		Ang0: xarray.DataArray or float
-		    Angular momentum Λ0 as the known coefficient.
-		Gamma: xarray.DataArray or float
-            vertical function defined as Γ = Rd/p * (p/p0)^κ = κ * Π/p.
-    iParams: dict
+        Parameters required for this model are:
+
+		* Ang0: Angular momentum Λ0 as the known coefficient.
+		* Gamma: vertical function defined as Γ = Rd/p * (p/p0)^κ = κ * Π/p.
+        
+    iParams: dict, optional
         Iteration parameters.
     
     Returns
-    ----------
-    S: xarray.DataArray
+    -------
+    xarray.DataArray
         Results (angular momentum Λ) of the SOR inversion.
     """
     return __template(__coeffs_RefState, inv_standard2D, 2,
@@ -132,43 +139,52 @@ def invert_RefState(PV, dims, coords='z-lat', icbc=None,
 
 def invert_PV2D(PV, dims, coords='z-lat', icbc=None,
                 mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting QG PV equation of the form:
+    r"""Inverting the QG PV equation.
+
+    The QG PV equation is given as:
+
+    .. math::
+
+        \frac{\partial}{\partial p}\left(\frac{f_0}{N^2}
+        \frac{\partial \psi}{\partial p}\right) +
+        \frac{1}{f_0}\frac{\partial^2 \psi}{\partial y^2} + f = q
     
-        d   f  dS    1 d  dS
-        --(--- --) + - --(--) + f = q
-        dp N^2 dp    f dy dy
+    This is slightly changed to:
+
+    .. math::
+
+        L(\psi) = \frac{\partial}{\partial p}\left(\frac{f_0^2}{N^2}
+        \frac{\partial \psi}{\partial p}\right) +
+        \frac{\partial^2 \psi}{\partial y^2} = (q - f)f_0
     
-    for S using SOR iteration.  It is slightly changed to:
+    Invert this equation for QG streamfunction :math:`\psi` given
+    the PV distribution :math:`q`.
     
-        d  f^2 dS    d  dS
-        --(--- --) + --(--) = (q - f)f
-        dp N^2 dp    dy dy
-    
+
     Parameters
     ----------
     PV: xarray.DataArray
         2D distribution of QGPV.
     dims: list
-        Dimension combination for the inversion e.g., ['lat', 'lon'].
-    coords: str
-        Coordinates in ['z-lat', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+        Dimension combination for the inversion e.g., ['lev', 'lat'].
+    coords: {'z-lat', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
-		f0: xarray.DataArray or float
-            Coriolis parameter.
-		beta: xarray.DataArray or float
-            Coriolis parameter.
-		N2: xarray.DataArray or float
-            buoyancy frequency.
-    iParams: dict
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* f0: Coriolis parameter.
+		* beta: Coriolis parameter.
+		* N2: buoyancy frequency.
+
+    iParams: dict, optional
         Iteration parameters.
         
     Returns
-    ----------
-    S: xarray.DataArray
-        Results of the SOR inversion.
+    -------
+    xarray.DataArray
+        Results (QG streamfunction) of the SOR inversion.
     """
     return __template(__coeffs_PV2D, inv_standard2D, 2,
                       PV, dims, coords, icbc, mParams, iParams)
@@ -176,45 +192,47 @@ def invert_PV2D(PV, dims, coords='z-lat', icbc=None,
 
 def invert_Eliassen(F, dims, coords='z-lat', icbc=None,
                     mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting meridional overturning streamfunction of the form:
+    r"""Inverting the Eliassen balanced vortex model.
+
+    The Eliassen model is given as:
+
+    .. math::
+
+        L(\psi) = \frac{\partial}{\partial z}\left(
+        A\frac{\partial \psi}{\partial z} +
+        B\frac{\partial \psi}{\partial y} \right) +
+        \frac{\partial}{\partial y}\left(
+        B\frac{\partial \psi}{\partial z} +
+        C\frac{\partial \psi}{\partial y} \right) = F
     
-        d ┌  dS      dS ┐   d ┌  dS      dS ┐
-        --│A(--) + B(--)│ + --│B(--) + C(--)│ = F
-        dz└  dz      dy ┘   dy└  dz      dy ┘
-    
-    using SOR iteration.
+    Invert this equation for the overturning streamfunction :math:`\psi` given
+    the forcing :math:`F`.
+
     
     Parameters
     ----------
     F: xarray.DataArray
         Forcing function.
-    Am: xarray.DataArray
-        Coefficient for the first direction (e.g., z).
-    Bm: xarray.DataArray
-        Forcing function.
-    Cm: xarray.DataArray
-        Coefficient for the second direction (e.g., y).
     dims: list
         Dimension combination for the inversion
         e.g., ['lev', 'lat'] or ['z','y'].
-    coords: str
-        Coordinates in ['z-lat', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+    coords: {'z-lat', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
     mParams: dict
-		    A: xarray.DataArray or float
-		        Coriolis parameter.
-		    B: xarray.DataArray or float
-		        Buoyancy frequency.
-		    C: xarray.DataArray or float
-		        Buoyancy frequency.
-    iParams: dict
+        Parameters required for this model are:
+
+		* A: Inertial stability.
+		* B: baroclinic stability.
+		* C: static stability.
+
+    iParams: dict, optional
         Iteration parameters.
     
     Returns
-    ----------
-    S: xarray.DataArray
+    -------
+    xarray.DataArray
         Results of the SOR inversion.
     """
     return __template(__coeffs_Eliassen, inv_standard2D, 2,
@@ -223,49 +241,46 @@ def invert_Eliassen(F, dims, coords='z-lat', icbc=None,
 
 def invert_GillMatsuno(Q, dims, coords='lat-lon', icbc=None, 
                        mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting Gill-Matsuno model of the form:
+    r"""Inverting Gill-Matsuno model.
+
+    The Gill-Matsuno model is given as:
+
+    .. math::
+
+        \epsilon   u  &=  fv - \frac{\partial \phi}{\partial x}\\\\
+        \epsilon   v  &= -fu - \frac{\partial \phi}{\partial y}\\\\
+        \epsilon \phi + \Phi\left(\frac{\partial u}{\partial x}
+        +\frac{\partial v}{\partial y}\right) &= -Q
     
-                             dphi
-        epsilon * u =   fv - ----
-                              dx
-    
-                             dphi
-        epsilon * v = - fu - ----
-                              dy
-    
-                            ┌ du   dv ┐
-        epsilon * phi + Phi*│ -- + -- │ = -Q
-                            └ dx   dy ┘
-    
-    given the heating field Q using SOR iteration.
+    Invert this equation for the mass distribution :math:`\phi` given
+    the diabatic heating function :math:`Q`.
+
     
     Parameters
     ----------
     Q: xarray.DataArray
-        heating function.
+        Diabatic heating function.
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
-    coords: str
-        Coordinates in ['lat-lon', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
-		    f0: xarray.DataArray or float
-		        Coriolis parameter at south BC if on beta plane.
-		    beta: xarray.DataArray or float
-		        Meridional derivative of f.
-		    epsilon: xarray.DataArray or float
-		        Linear damping coefficient.
-		    Phi: xarray.DataArray or float
-		        Background geopotential.
-    iParams: dict
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* f0: Coriolis parameter at south BC if on beta plane.
+		* beta: Meridional derivative of f.
+		* epsilon: Linear damping coefficient.
+		* Phi: Background geopotential.
+
+    iParams: dict, optional
         Iteration parameters.
         
     Returns
-    ----------
-    S: xarray.DataArray
-        Results of the SOR inversion.
+    -------
+    xarray.DataArray
+        Results (mass distribution) of the SOR inversion.
     """
     return __template(__coeffs_GillMatsuno, inv_general2D, 2,
                       Q, dims, coords, icbc, mParams, iParams)
@@ -273,49 +288,46 @@ def invert_GillMatsuno(Q, dims, coords='lat-lon', icbc=None,
 
 def invert_GillMatsuno_test(Q, dims, coords='lat-lon', icbc=None, 
                        mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting Gill-Matsuno model of the form:
+    r"""Inverting Gill-Matsuno model (test use only).
+
+    The Gill-Matsuno model is given as:
+
+    .. math::
+
+        \epsilon   u  &=  fv - \frac{\partial \phi}{\partial x}\\\\
+        \epsilon   v  &= -fu - \frac{\partial \phi}{\partial y}\\\\
+        \epsilon \phi + \Phi\left(\frac{\partial u}{\partial x}
+        +\frac{\partial v}{\partial y}\right) &= -Q
     
-                             dphi
-        epsilon * u =   fv - ----
-                              dx
-    
-                             dphi
-        epsilon * v = - fu - ----
-                              dy
-    
-                            ┌ du   dv ┐
-        epsilon * phi + Phi*│ -- + -- │ = -Q
-                            └ dx   dy ┘
-    
-    given the heating field Q using SOR iteration.
+    Invert this equation for the mass distribution :math:`\phi` given
+    the diabatic heating function :math:`Q`.
+
     
     Parameters
     ----------
     Q: xarray.DataArray
-        heating function.
+        Diabatic heating function.
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
-    coords: str
-        Coordinates in ['lat-lon', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
-		    f0: xarray.DataArray or float
-		        Coriolis parameter at south BC if on beta plane.
-		    beta: xarray.DataArray or float
-		        Meridional derivative of f.
-		    epsilon: xarray.DataArray or float
-		        Linear damping coefficient.
-		    Phi: xarray.DataArray or float
-		        Background geopotential.
-    iParams: dict
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* f0: Coriolis parameter at south BC if on beta plane.
+		* beta: Meridional derivative of f.
+		* epsilon: Linear damping coefficient.
+		* Phi: Background geopotential.
+
+    iParams: dict, optional
         Iteration parameters.
         
     Returns
-    ----------
-    S: xarray.DataArray
-        Results of the SOR inversion.
+    -------
+    xarray.DataArray
+        Results (mass distribution) of the SOR inversion.
     """
     return __template(__coeffs_GillMatsuno_test, inv_standard2D_test, 2,
                       Q, dims, coords, icbc, mParams, iParams)
@@ -323,14 +335,18 @@ def invert_GillMatsuno_test(Q, dims, coords='lat-lon', icbc=None,
 
 def invert_Stommel(curl, dims, coords='lat-lon', icbc=None,
                    mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting Stommel model of the form:
+    r"""Inverting Stommel model.
+
+    The Stommel model is given as:
+
+    .. math::
+
+        - \frac{R}{D}\nabla^2 \psi - \beta\frac{\partial \psi}{\partial x} =
+        - \frac{\hat\nabla \cdot \vec\tau}{\rho_0 D}
     
-         R                          dpsi     curl(tau)
-      - --- * \nabla^2 psi - beta * ---- = - ---------
-         D                           dx       rho * D
-    
-    for psi given the wind stress curl field using SOR iteration.
+    Invert this equation for the streamfunction :math:`\psi` given wind-stress
+    curl :math:`\hat\nabla \cdot \vec\tau`.
+
     
     Parameters
     ----------
@@ -338,26 +354,25 @@ def invert_Stommel(curl, dims, coords='lat-lon', icbc=None,
         Wind stress curl.
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
-    coords: str
-        Coordinates in ['lat-lon', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
-		    beta: xarray.DataArray or float
-		        Meridional derivative of Coriolis parameter.
-		    R: xarray.DataArray or float
-		        Laplacian viscosity.
-		    D: xarray.DataArray or float
-        		Depth of the ocean or mixed layer depth.
-		    rho: xarray.DataArray or float
-		        Density of the fluid.
-    iParams: dict
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* beta: Meridional derivative of Coriolis parameter.
+		* R: Laplacian viscosity.
+		* D: Depth of the ocean or mixed layer depth.
+		* rho0: Density of the fluid.
+
+    iParams: dict, optional
         Iteration parameters.
         
     Returns
-    ----------
-    S: xarray.DataArray
-        Results of the SOR inversion.
+    -------
+    xarray.DataArray
+        Results (streamfunction) of the SOR inversion.
     """
     return __template(__coeffs_Stommel, inv_general2D, 2,
                       curl, dims, coords, icbc, mParams, iParams)
@@ -365,14 +380,18 @@ def invert_Stommel(curl, dims, coords='lat-lon', icbc=None,
 
 def invert_Stommel_test(curl, dims, coords='lat-lon', icbc=None,
                    mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting Stommel model of the form:
+    r"""Inverting Stommel model (test used only).
+
+    The Stommel model is given as:
+
+    .. math::
+
+        - \frac{R}{D}\nabla^2 \psi - \beta\frac{\partial \psi}{\partial x} =
+        - \frac{\hat\nabla \cdot \vec\tau}{\rho_0 D}
     
-         R                          dpsi     curl(tau)
-      - --- * \nabla^2 psi - beta * ---- = - ---------
-         D                           dx       rho * D
-    
-    for psi given the wind stress curl field using SOR iteration.
+    Invert this equation for the streamfunction :math:`\psi` given wind-stress
+    curl :math:`\hat\nabla \cdot \vec\tau`.
+
     
     Parameters
     ----------
@@ -380,26 +399,25 @@ def invert_Stommel_test(curl, dims, coords='lat-lon', icbc=None,
         Wind stress curl.
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
-    coords: str
-        Coordinates in ['lat-lon', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
-		    beta: xarray.DataArray or float
-		        Meridional derivative of Coriolis parameter.
-		    R: xarray.DataArray or float
-		        Laplacian viscosity.
-		    D: xarray.DataArray or float
-        		Depth of the ocean or mixed layer depth.
-		    rho: xarray.DataArray or float
-		        Density of the fluid.
-    iParams: dict
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* beta: Meridional derivative of Coriolis parameter.
+		* R: Laplacian viscosity.
+		* D: Depth of the ocean or mixed layer depth.
+		* rho0: Density of the fluid.
+
+    iParams: dict, optional
         Iteration parameters.
         
     Returns
-    ----------
-    S: xarray.DataArray
-        Results of the SOR inversion.
+    -------
+    xarray.DataArray
+        Results (streamfunction) of the SOR inversion.
     """
     return __template(__coeffs_Stommel_test, inv_standard2D_test, 2,
                       curl, dims, coords, icbc, mParams, iParams)
@@ -407,14 +425,19 @@ def invert_Stommel_test(curl, dims, coords='lat-lon', icbc=None,
 
 def invert_StommelMunk(curl, dims, coords='lat-lon', icbc=None,
                        mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting Stommel-Munk model of the form:
+    r"""Inverting Stommel-Munk model.
+
+    The Stommel-Munk model is given as:
+
+    .. math::
+
+        A_4\nabla^4\psi - \frac{R}{D}\nabla^2 \psi
+        - \beta\frac{\partial \psi}{\partial x} =
+        - \frac{\hat\nabla \cdot \vec\tau}{\rho_0 D}
     
-                        R                         dpsi     curl(tau)
-      A4*nabla^4 psi - --- * nabla^2 psi - beta * ---- = - ---------
-                        D                          dx       rho * D
-    
-    given the wind stress curl field using SOR iteration.
+    Invert this equation for the streamfunction :math:`\psi` given wind-stress
+    curl :math:`\hat\nabla \cdot \vec\tau`.
+
     
     Parameters
     ----------
@@ -422,27 +445,25 @@ def invert_StommelMunk(curl, dims, coords='lat-lon', icbc=None,
         Wind-stress curl (N/m^2).
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
-    coords: str
-        Coordinates in ['lat-lon', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
-		    beta: xarray.DataArray or float
-		        Meridional derivative of Coriolis parameter.
-		    A4: xarray.DataArray or float
-		        Hyperviscosity.
-		    R: xarray.DataArray or float
-		        Laplacian viscosity.
-		    D: xarray.DataArray or float
-        		Depth of the ocean or mixed layer depth.
-		    rho: xarray.DataArray or float
-		        Density of the fluid.
-    iParams: dict
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* beta: Meridional derivative of Coriolis parameter.
+		* A4: Hyperviscosity.
+		* R: Laplacian viscosity.
+		* D: Depth of the ocean or mixed layer depth.
+		* rho0: Density of the fluid.
+
+    iParams: dict, optional
         Iteration parameters.
         
     Returns
-    ----------
-    S: xarray.DataArray
+    -------
+    xarray.DataArray
         Results of the SOR inversion.
     """
     return __template(__coeffs_StommelMunk, inv_general2D_bih, 2,
@@ -451,14 +472,18 @@ def invert_StommelMunk(curl, dims, coords='lat-lon', icbc=None,
 
 def invert_geostrophic(lapPhi, dims, coords='lat-lon', icbc=None,
                        mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting geostrophic model of the form:
+    r"""Inverting the geostrophic balance model.
+
+    The geostrophic balance model is given as:
+
+    .. math::
+
+        \frac{1}{\partial y}\left(f\frac{\partial \psi}{\partial y}\right)+
+        \frac{1}{\partial x}\left(f\frac{\partial \psi}{\partial x}\right)=\nabla^2 \Phi
     
-        d    dS    d    dS
-        --(f*--) + --(f*--) = \nabla^2 \Phi
-        dy   dy    dx   dx
-    
-    for geostrophic streamfunction S using SOR iteration.
+    Invert this equation for the geostrophic streamfunction :math:`\psi` given
+    the Laplacian of geopotential field :math:`\nabla^2\Phi`.
+
     
     Parameters
     ----------
@@ -466,67 +491,78 @@ def invert_geostrophic(lapPhi, dims, coords='lat-lon', icbc=None,
         Laplacian of geopotential.
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
-    coords: str
-        Coordinates in ['lat-lon', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
-		    f: xarray.DataArray or float
-		        Coriolis parameter.
-		    beta: xarray.DataArray or float
-		        Meridional derivative of Coriolis parameter.
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* f: Coriolis parameter.
+		* beta: Meridional derivative of Coriolis parameter.
+
     iParams: dict
         Iteration parameters.
         
     Returns
-    ----------
-    S: xarray.DataArray
-        Results of the SOR inversion.
+    -------
+    xarray.DataArray
+        Results (geostrophic streamfunction) of the SOR inversion.
     """
     return __template(__coeffs_geostrophic, inv_standard2D, 2,
                       lapPhi, dims, coords, icbc, mParams, iParams)
 
 
 def invert_omega(F, dims, coords='lat-lon', icbc=None,
-                         mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting Omega equation of the form:
-    
-               f^2 d ┌ dw ┐   d ┌ dw ┐   d ┌ dw ┐    F
-        L(w) = --- --│(--)│ + --│(--)│ + --│(--)│ = ---
-                N2 dz└ dz ┘   dy└ dy ┘   dx└ dx ┘    N2
-    
-    for w using SOR iteration.  It is slightly changed to:
-    
-                d ┌    dw ┐   d ┌   dw ┐   d ┌   dw ┐
-        L(w) =  --│f^2(--)│ + --│N2(--)│ + --│N2(--)│ = F
-                dz└    dz ┘   dy└   dy ┘   dx└   dx ┘
-    
+                 mParams=default_mParams, iParams=default_iParams):
+    r"""Inverting the Omega equation.
+
+    The Omega equation is given as:
+
+    .. math::
+
+        L(\omega) =
+        \frac{f^2}{N^2}\frac{\partial^2 \omega}{\partial z^2} +
+        \frac{\partial^2 \omega}{\partial y^2} +
+        \frac{\partial^2 \omega}{\partial x^2} = \frac{F}{N^2}
+
+    This is slightly changed to:
+
+    .. math::
+
+        L(\omega) =
+        \frac{1}{\partial z}\left(f^2\frac{\partial \omega}{\partial z}\right)+
+        \frac{1}{\partial y}\left(N^2\frac{\partial \omega}{\partial y}\right)+
+        \frac{1}{\partial x}\left(N^2\frac{\partial \omega}{\partial x}\right)=F
+
+    Invert this equation for the vertical velocity :math:`\omega` given
+    the forcing function :math:`F`.
+
+
     Parameters
     ----------
     F: xarray.DataArray
-        Forcing function.
+        A forcing function.
     dims: list
         Dimension combination for the inversion e.g., ['lev', 'lat', 'lon'].
-    coords: str
-        Coordinates in ['lat-lon', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
-		    f0: xarray.DataArray or float
-		        Coriolis parameter at south BC on beta plane.
-		    beta: xarray.DataArray or float
-		        Meridional derivative of Coriolis parameter.
-            N2: xarray.DataArray or float
-                Buoyancy frequency = g/theta0 * dtheta/dz
-                                   = -R*pi/p * dtheta/dp.
-    iParams: dict
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* f0: Coriolis parameter at south BC on beta plane.
+		* beta: Meridional derivative of Coriolis parameter.
+        * N2: Buoyancy frequency = g/theta0 * dtheta/dz = -R*pi/p * dtheta/dp.
+
+    iParams: dict, optional
         Iteration parameters.
-        
+
     Returns
-    ----------
-    S: xarray.DataArray
-        Results of the SOR inversion.
+    -------
+    xarray.DataArray
+        Results (vertical velocity) of the SOR inversion.
     """
     if isinstance(mParams['N2'], xr.DataArray):
         if not np.isfinite(mParams['N2'][1:]).all():
@@ -544,42 +580,49 @@ def invert_omega(F, dims, coords='lat-lon', icbc=None,
 
 def invert_3DOcean(F, dims, coords='lat-lon', icbc=None,
                    mParams=default_mParams, iParams=default_iParams):
-    """
-    Inverting 3D ocean flow of the form:
-    
-          d^2h      d^2h      d^2h      dh      dh     dh
-        c3----  + c1----  + c1----  + c3--  + c1-- - c2-- = F
-          dz^2      dy^2      dx^2      dz      dy     dx
-    
-    for h using SOR iteration. 
-    
+    r"""Inverting 3D ocean flow.
+
+    The 3D ocean flow equation is given as:
+
+    .. math::
+
+        L(\psi) =
+        c_3 \frac{\partial^2 \psi}{\partial z^2} +
+        c_1 \frac{\partial^2 \psi}{\partial y^2} +
+        c_1 \frac{\partial^2 \psi}{\partial x^2} +
+        c_3 \frac{\partial \psi}{\partial z} +
+        c_1 \frac{\partial \psi}{\partial y} +
+        c_1 \frac{\partial \psi}{\partial x} = F
+
+    Invert this equation for the streamfunction :math:`\psi` given
+    the forcing function :math:`F`.
+
+
     Parameters
     ----------
     F: xarray.DataArray
-        Forcing function.
+        A forcing function.
     dims: list
         Dimension combination for the inversion e.g., ['lev', 'lat', 'lon'].
-    coords: str
-        Coordinates in ['lat-lon', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
-		    f0: xarray.DataArray or float
-		        Coriolis parameter at south BC on beta plane.
-		    beta: xarray.DataArray or float
-		        Meridional derivative of Coriolis parameter.
-		    epsilon: xarray.DataArray or float
-		        Linear damping coefficient.
-            N2: xarray.DataArray or float
-                Buoyancy frequency = g/theta0 * dtheta/dz
-                                   = -R*pi/p * dtheta/dp.
-    iParams: dict
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* f0: Coriolis parameter at south BC on beta plane.
+		* beta: Meridional derivative of Coriolis parameter.
+		* epsilon: Linear damping coefficient.
+        * N2: Buoyancy frequency = g/theta0 * dtheta/dz = -R*pi/p * dtheta/dp.
+
+    iParams: dict, optional
         Iteration parameters.
-        
+
     Returns
-    ----------
-    S: xarray.DataArray
-        Results of the SOR inversion.
+    -------
+    xarray.DataArray
+        Results (streamfunction) of the SOR inversion.
     """
     if isinstance(mParams['N2'], xr.DataArray):
         if not np.isfinite(mParams['N2'][1:]).all():
@@ -602,34 +645,37 @@ Some high-level functions are based on application functions
 def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
                       mParams=default_mParams, iParams=default_iParams,
                       loop_per_frame=5, max_frames=30):
-    """Animate the iteration process.
+    r"""Animate the iteration process.
+
+    All the `invert_xxx` function can be animated here.  This function will add
+    a `iter` dimension similar to a `time` dimension that shows the results at
+    different iteration steps.
     
     Parameters
     ----------
-    app_name: str
-        Application name in ['Poisson', 'PV2D', 'GillMatsuno', 'Eliassen',
-                             'geostrophic','StommelMunk', 'RefState', 'Omega'].
+    app_name: {'Poisson', 'PV2D', 'GillMatsuno', 'Eliassen', 'geostrophic', 'StommelMunk', 'RefState', 'Omega'}
+        Application name as a suffix of `invert_xxx`.
     F: xarray.DataArray
-        Forcing function.
+        A forcing function.
     dims: list
         Dimension combination for the inversion e.g., ['lat', 'lon'].
-    coords: str
-        Coordinates in ['lat-lon', 'z-lat', 'z-lon', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+    coords: str, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
+    mParams: dict, optional
         Model parameters.  None for the Poisson model.
-    iParams: dict
+    iParams: dict, optional
         Iteration parameters.
-    loop_per_frame: int
+    loop_per_frame: int, optional
         Iteration loop count per frame.
-    max_frames: int
+    max_frames: int, optional
         Max frames beyond which loop is stopped.
     
     Returns
-    ----------
-    S: xarray.DataArray
-        The result will be added a dimension called `iter`.
+    -------
+    xarray.DataArray
+        The result, in which an extra dimension called `iter` will be added.
     """
     len_nc = 0
     
@@ -724,6 +770,36 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
 
 
 def invert_MultiGrid(invert_func, *args, ratio=3, gridNo=3, **kwargs):
+    r"""Using multi-grid method to do the inversion (test only now).
+
+    All the `invert_xxx` function can be solved using multi-grid method here.
+    
+    Parameters
+    ----------
+    app_name: {'Poisson', 'PV2D', 'GillMatsuno', 'Eliassen', 'geostrophic', 'StommelMunk', 'RefState', 'Omega'}
+        Application name as a suffix of `invert_xxx`.
+    F: xarray.DataArray
+        A forcing function.
+    dims: list
+        Dimension combination for the inversion e.g., ['lat', 'lon'].
+    coords: str, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
+        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+    mParams: dict, optional
+        Model parameters.  None for the Poisson model.
+    iParams: dict, optional
+        Iteration parameters.
+    ratio: int, optional
+        Ratio of multi grids.
+    gridNo: int, optional
+        Number of multi grids.
+    
+    Returns
+    -------
+    xarray.DataArray
+        The result, in which an extra dimension called `iter` will be added.
+    """
     from utils.XarrayUtils import coarsen
     
     ratios = [10, 6, 3, 1]
@@ -770,7 +846,7 @@ def invert_MultiGrid(invert_func, *args, ratio=3, gridNo=3, **kwargs):
     return o_guess, fs, os
 
 
-def invert_Omega_MG(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
+def _invert_Omega_MG(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
                     coords='latlon', f0=None, beta=None,
                     undef=np.nan, mxLoop=5000, tolerance=1e-6,
                     optArg=None, printInfo=True, debug=False,
@@ -815,7 +891,7 @@ def invert_Omega_MG(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
 
 def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
              vtype='streamfunction', mParams=default_mParams):
-    """Calculate flow vector using streamfunction or velocity potential.
+    r"""Calculate flow vector using streamfunction or velocity potential.
 
     Parameters
     ----------
@@ -823,17 +899,16 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
         Streamfunction or velocity potential.
     dims: list of str
         Dimension combination for the inversion e.g., ['lat', 'lon'].
-    coords: str
-        Coordinates in ['lat-lon', 'z-lat', 'z-lon', 'cartesian'] are supported.
+    coords: {'lat-lon', 'z-lat', 'z-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
     BCs: dict
         Boundary conditions e.g., ['fixed', 'periodic'] for 2D case.
-    vtype: str
-        Type of the given variable, should be one of
-        ['streamfunction', 'velocitypotential', 'GillMatsuno'].
+    vtype: {'streamfunction', 'velocitypotential', 'GillMatsuno'}, optional
+        Type of the given variable, which determins the returns.
 
     Returns
     -------
-    c1, c2 : tuple
+    tuple
         Flow vector components.
     """
     if vtype.lower() not in ['streamfunction', 'velocitypotential', 'gillmatsuno']:
@@ -956,7 +1031,7 @@ Below are the helper methods of these applications
 def __template(coef_func, inv_func, dimLen,
                F, dims, coords='lat-lon', icbc=None,
                mParams=default_mParams, iParams=default_iParams):
-    """Template for the whole inverting process.
+    r"""Template for the whole inverting process.
     
     Parameters
     ----------
@@ -971,23 +1046,20 @@ def __template(coef_func, inv_func, dimLen,
     dims: list
         Dimension combination for the inversion e.g., ['lev', 'lat', 'lon']
         for 3D case and ['lat', 'lon'] for 2D case.
-    coords: str
+    coords: str, optional
         Coordinates in ['lat-lon', 'cartesian'] are supported.
     icbc: xarray.DataArray
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
-    mParams: dict
-		    f0: xarray.DataArray or float
-		        Coriolis parameter at south BC on beta plane.
-		    beta: xarray.DataArray or float
-		        Meridional derivative of Coriolis parameter.
-            N2: xarray.DataArray or float
-                Buoyancy frequency.
-    iParams: dict
+    mParams: dict, optional
+		* f0: Coriolis parameter at south BC on beta plane.
+		* beta: Meridional derivative of Coriolis parameter.
+        * N2: Buoyancy frequency.
+    iParams: dict, optional
         Iteration parameters.
         
     Returns
-    ----------
-    S: xarray.DataArray
+    -------
+    xarray.DataArray
         Results of the SOR inversion.
     """
     if len(dims) != dimLen:
@@ -1508,7 +1580,7 @@ def __coeffs_3DOcean(force, dims, coords, mParams, iParams, icbc):
 
 
 def __mask_FS(F, dims, iParams, icbc):
-    """Properly mask forcing and output with _undeftmp.
+    r"""Properly mask forcing and output with _undeftmp.
 
     Parameters
     ----------
@@ -1558,7 +1630,7 @@ def __mask_FS(F, dims, iParams, icbc):
 
 
 def __cal_params3D(dim3_var, dim2_var, dim1_var, coords, debug=False):
-    """Pre-calculate some parameters needed in SOR for the 3D cases.
+    r"""Pre-calculate some parameters needed in SOR for the 3D cases.
 
     Parameters
     ----------
@@ -1637,7 +1709,7 @@ def __cal_params3D(dim3_var, dim2_var, dim1_var, coords, debug=False):
 
 
 def __cal_params2D(dim2_var, dim1_var, coords):
-    """Pre-calculate some parameters needed in SOR.
+    r"""Pre-calculate some parameters needed in SOR.
 
     Parameters
     ----------
