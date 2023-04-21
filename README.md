@@ -2,6 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/323045845.svg)](https://zenodo.org/badge/latestdoi/323045845)
 ![GitHub](https://img.shields.io/github/license/miniufo/xinvert)
+[![Documentation Status](https://readthedocs.org/projects/xinvert/badge/?version=latest)](https://xinvert.readthedocs.io/en/latest/?badge=latest)
 
 ![animate plot](https://raw.githubusercontent.com/miniufo/xinvert/master/pics/animateConverge.gif)
 
