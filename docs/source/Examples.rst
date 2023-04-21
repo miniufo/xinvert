@@ -6,23 +6,19 @@
 Here are examples of xinvert!
 =============================
 
-Classical problems include:
-- Poisson equation
-- Gill-Matsuno model
-- Stommel-Munk model
-- QG omega model
-- PV inversion
-- Swayer-Eliassen balance model
-- ... more can be added ...
+Classical problems include: Poisson equation, Gill-Matsuno model, Stommel-Munk
+model, QG omega model, PV inversion, Swayer-Eliassen balance model...  Users are
+also encouraged to add their examples.
 
-A complete list of the classical inversion problems can be found at [this notebook](https://github.com/miniufo/xinvert/blob/master/notebooks/01.%20Introduction%20to%20xinvert.ipynb).
+A complete list of the classical inversion problems can be found at
+`this notebook <https://github.com/miniufo/xinvert/blob/master/notebooks/01.%20Introduction%20to%20xinvert.ipynb>`_.
 
 
 .. toctree::
    :maxdepth: 2
    :caption: Examples:
    
-   notebooks/02. Poisson equation (horizontal case)
+   notebooks/02
 
 
 Indices and tables
