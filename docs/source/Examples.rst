@@ -6,13 +6,9 @@
 Examples
 ========
 
-Classical problems include: Poisson equation, Gill-Matsuno model, Stommel-Munk
-model, QG omega model, PV inversion, Swayer-Eliassen balance model... 
-
-Users are also encouraged to add their own examples.
-
-A complete list of the classical inversion problems can be found at
-`this notebook <https://github.com/miniufo/xinvert/blob/master/notebooks/01.%20Introduction%20to%20xinvert.ipynb>`_.
+Classical inversion problems in geophysical fluid dynamics are demonstrated here. 
+Users are also encouraged to add their own examples.  A complete list of the
+problems can be found at `this notebook <https://github.com/miniufo/xinvert/blob/master/notebooks/01.%20Introduction%20to%20xinvert.ipynb>`_.
 
 
 .. toctree::
