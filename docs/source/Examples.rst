@@ -19,11 +19,11 @@ A complete list of the classical inversion problems can be found at
    :maxdepth: 2
    :caption: Examples:
    
-   02
-   03
-   04
-   05
-   08
-   09
-   10
-   11
+   01_Poisson_equation_horizontal
+   02_Poisson_equation_vertical
+   03_Balanced_mass_and_flow
+   04_Eliassen_model
+   07_Gill_Matsuno_model
+   08_Stommel_Munk_model
+   09_Omega_equation
+   10_3D_Ocean_flow

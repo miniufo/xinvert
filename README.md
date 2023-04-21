@@ -18,7 +18,7 @@ More importantly, this could be generalized into a numerical solver for elliptic
 
 One problem with SOR is that the speed of iteration using **explicit loops in Python** will be **e-x-t-r-e-m-e-l-y ... s-l-o-w**!  A very suitable solution here is to use [`numba`](https://numba.pydata.org/).  We may try our best to speed things up using more hardwares (possibly GPU).
 
-Classical problems include Gill-Matsuno model, Stommel-Munk model, QG omega model, PV inversion model, Swayer-Eliassen balance model...  A complete list of the classical inversion problems can be found at [this notebook](https://github.com/miniufo/xinvert/blob/master/notebooks/01.%20Introduction%20to%20xinvert.ipynb).
+Classical problems include Gill-Matsuno model, Stommel-Munk model, QG omega model, PV inversion model, Swayer-Eliassen balance model...  A complete list of the classical inversion problems can be found at [this notebook](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/Introduction.ipynb).
 
 Why `xinvert`?
 
@@ -106,15 +106,15 @@ psi = animate_iteration(invert_Poisson, vor, iParams=iParams,
 ![animate plot](https://raw.githubusercontent.com/miniufo/xinvert/master/pics/animateConverge.gif)
 
 More examples can be found in these notebooks:
-01. [Poisson equation for streamfunction/velocity potential](https://github.com/miniufo/xinvert/blob/master/notebooks/02.%20Poisson%20equation%20(horizontal%20case).ipynb);
-02. [Poisson equation for meridional overturning and zonal Walker circulations](https://github.com/miniufo/xinvert/blob/master/notebooks/03.%20Poisson%20equation%20(meridional%20and%20zonal%20cases).ipynb);
-03. [Geopotential model for balanced mass field](https://github.com/miniufo/xinvert/blob/master/notebooks/04.%20Balanced%20mass%20and%20flow%20fields.ipynb);
-04. [Eliassen model for the meridional overturning circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/05.%20Eliassen%20model.ipynb);
-05. PV inversion for 2D reference state (TODO);
-06. PV inversion for 2D QGPV (TODO);
-07. [Matsuno-Gill model for heat-induced tropical circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/08.%20Gill-Matsuno%20model.ipynb)
-08. [Stommel-Munk model for wind-driven ocean circulation](https://github.com/miniufo/xinvert/blob/master/notebooks/09.%20Stommel-Munk%20model.ipynb)
-09. [Omega equation for quasi-geostrophic vertical motion](https://github.com/miniufo/xinvert/blob/master/notebooks/10.%20Omega%20equation.ipynb);
-10. [3D oceanic flow](https://github.com/miniufo/xinvert/blob/master/notebooks/11.%203D%20Ocean%20flow.ipynb);
+1.  [Poisson equation for streamfunction/velocity potential](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/01_Poisson_equation_horizontal.ipynb);
+2.  [Poisson equation for meridional overturning and zonal Walker circulations](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/02_Poisson_equation_vertical.ipynb);
+3.  [Geopotential model for balanced mass field](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/03_Balanced_mass_and_flow.ipynb);
+4.  [Eliassen model for the meridional overturning circulation](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/04_Eliassen_model.ipynb);
+5.  PV inversion for 2D reference state (TODO);
+6.  PV inversion for 2D QGPV (TODO);
+7.  [Matsuno-Gill model for heat-induced tropical circulation](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/07_Gill_Matsuno_model.ipynb)
+8.  [Stommel-Munk model for wind-driven ocean circulation](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/08_Stommel_Munk_model.ipynb)
+9.  [Omega equation for quasi-geostrophic vertical motion](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/09_Omega_equation.ipynb);
+10. [3D oceanic flow](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/10_3D_Ocean_flow.ipynb);
 
 more to be added...
