@@ -23,15 +23,8 @@ using its `Zenodo DOI <https://doi.org/10.5281/zenodo.7801501>`__.
    :maxdepth: 2
    :caption: Contents:
    
-   01
-   02
-   03
-   04
-   05
-   08
-   09
-   10
-   11
+   Introduction
+   Examples
 
 
    ../modules
