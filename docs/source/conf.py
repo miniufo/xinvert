@@ -48,7 +48,6 @@ extensions = [
     'numpydoc',
     #'recommonmark',           # Markdown
     #'myst_nb',
-    'IPython.sphinxext.ipython_directive',
     #'myst_parser',            # Markdown
 ]
 
