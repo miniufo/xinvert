@@ -1,0 +1,12 @@
+name: test_env_xinvert_docs
+dependencies:
+  - python=3.7
+  - xarray
+  - dask
+  - numpy
+  - numba
+  - numpydoc
+  - sphinx
+  - sphinx_rtd_theme
+  - pip:
+    - nbsphinx
