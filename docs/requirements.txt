@@ -1,3 +1,4 @@
 numba
 xarray
 dask
+nbsphinx
