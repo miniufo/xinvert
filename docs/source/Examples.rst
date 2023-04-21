@@ -21,3 +21,9 @@ A complete list of the classical inversion problems can be found at
    
    02
    03
+   04
+   05
+   08
+   09
+   10
+   11
