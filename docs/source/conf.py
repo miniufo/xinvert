@@ -88,6 +88,9 @@ html_theme_options = {
     'navigation_depth': 4,
     'prev_next_buttons_location': 'bottom',  # top and bottom
 }
+html_css_files = [
+    'my_theme.css',
+]
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
