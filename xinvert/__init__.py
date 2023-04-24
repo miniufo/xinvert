@@ -17,7 +17,6 @@ from .apps import invert_Poisson, \
                   invert_Stommel, invert_Stommel_test, \
                   invert_StommelMunk, \
                   invert_Eliassen, \
-                  invert_MultiGrid, \
                   invert_omega, \
                   invert_PV2D, \
                   invert_RefState, \
@@ -28,4 +27,4 @@ from .utils import loop_noncore
 
 from .finitediffs import FiniteDiff, deriv, deriv2, padBCs
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
