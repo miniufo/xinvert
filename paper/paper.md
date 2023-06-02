@@ -29,7 +29,7 @@ Many problems in meteorology and oceanography can be cast into a balanced model 
 
 $$\nabla^2 \psi = \frac{\partial^2 \psi}{\partial y^2}+\frac{\partial^2 \psi}{\partial y^2} = \zeta$$
 
-Once $\zeta$ is given as a known, one need to get the unknown $\psi$ with proper boundary conditions, which is essentially an inversion problem (\autoref{fig:1}).  Many geophysical fluid dynamical (GFD) problems can be described by such a balanced model, which is generally of second (or fourth) order in spatial derivatives and do not depend explicitly on time.  Therefore, it is also known as a steady-state model.  Early scientists tried to find analytical solutions by simplified the parameters of these models (e.g., assuming constant coefficients).  Nowadays, with the new developments in numerical algorithms and parallel-computing programming, one may need a modern solver, written in a popular programming language like `Python`, to invert all these models in a numerical fashion.  More specifically, the following needs should be satisfied:
+Once $\zeta$ is given as a known, one needs to get the unknown $\psi$ with proper boundary conditions, which is essentially an inversion problem (\autoref{fig:1}).  Many geophysical fluid dynamical (GFD) problems can be described by such a balanced model, which is generally of second (or fourth) order in spatial derivatives and do not depend explicitly on time.  Therefore, it is also known as a steady-state model.  Early scientists tried to find analytical solutions by simplified the parameters of these models (e.g., assuming constant coefficients).  Nowadays, with the new developments in numerical algorithms and parallel-computing programming, one may need a modern solver, written in a popular programming language like `Python`, to invert all these models in a numerical fashion.  More specifically, the following needs should be satisfied:
 
 - **A unified numerical solver:** It can solve all the classical balanced GFD models, even in a domain with irregular boundaries like the ocean.  New models can also be adapted straightforwardly to fit the solver;
 - **Thinking and coding in equations:** Users focus naturally on the key inputs and outputs of the GFD models, just like thinking of the knowns and unknowns of the PDEs;
@@ -73,7 +73,7 @@ L\left(\psi\right) &\equiv A_1\frac{\partial^4 \psi}{\partial y^4}+A_2\frac{\par
 \end{aligned} \tag{5}
 $$
 
-So we implements four basic solvers to take into account the above four Eqs. \eqref{eq:2}-\eqref{eq:5} cases.  Most of the problems fit one of these four types of solver.  However, it is **NOT** clear which form, the genral form Eq. \eqref{eq:2} or the standard form Eq. \eqref{eq:3}, is preferred for the inversion if a problem can be cast into either one.
+So we implement four basic solvers to take into account the above four Eqs. \eqref{eq:2}-\eqref{eq:5} cases.  Most of the problems fit one of these four types of solver.  However, it is **NOT** clear which form, the genral form Eq. \eqref{eq:2} or the standard form Eq. \eqref{eq:3}, is preferred for the inversion if a problem can be cast into either one.
 
 
 # Summary
