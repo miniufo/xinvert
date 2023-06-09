@@ -12,7 +12,7 @@ from xinvert import padBCs, FiniteDiff, deriv
 
 
 def test_FD():
-    dset = xr.open_dataset('../Data/Helmholtz_atmos.nc')
+    dset = xr.open_dataset('../../Data/Helmholtz_atmos.nc')
     
     assert dset.dims == {'time':2, 'lat':73, 'lon':144}
     
