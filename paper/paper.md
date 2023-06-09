@@ -40,6 +40,9 @@ Once $\zeta$ is given as a known, one needs to get the unknown $\psi$ with prope
 
 ![(a) Vertical relative vorticity $\zeta$ and (b) the inverted streamfunction $\psi$ (shading) with current vector superimposed.  Note the irregular boundaries over the global ocean. \label{fig:1}](streamfunction.png){width=100%}
 
+# State of the field
+There are also several PDE solvers written in Python, like [**windspharm**](https://github.com/ajdawson/windspharm) and [**Dedalus**](https://github.com/DedalusProject/dedalus).  While they are efficient and accurate in double-periodic or global domains using the spectral method, they are not suitable for arbitary domain or boundary like the ocean (Gibbs phenomenon will arise near ocean boundaries).  Also, it is not easy to apply these solvers to more general elliptic equations with arbitary coefficients (sometimes given in a numerical or discretized fashion).  In this case, SOR method is definitely a better choice in the presence of irregular land/sea mask and spatially-varying coefficients.
+
 # Mathematics
 
 This package, `xinvert`, is designed to invert or solve the following PDE in an abstract form:
@@ -85,7 +88,7 @@ So we implement four basic solvers to take into account the above four Eqs. \eqr
 - Passing a single `xarray.DataArray` is usually enough for the inversion. Coordinates information is already encapsulated and thus reducing the length of the parameter list.  In addition, paramters in `mParams` can be either a constant, or varying with a specific dimension (like Coriolis parameter $f$), or fully varying with space and time, due to the use of `xarray`'s [@Hoyer:2017] broadcasting capability;
 - This package leverages `numba` [@Lam:2015] and `dask` [@Rocklin:2015] to support Just-In-Time (JIT) compilation, multi-core, and out-of-core computations, and therefore greatly increases the speed and efficiency of the inversion.
 
-Here we summarize the inversion problems in meteorology and oceanography into \autoref{table:1}.  The table can be extended further if one finds more problems that fit the abstract form of Eq. \eqref{eq:1}.
+Here we summarize some inversion problems in meteorology and oceanography into \autoref{table:1}.  The table can be extended further if one finds more problems that fit the abstract form of Eq. \eqref{eq:1}.
 
 | Problem names and equations | Function calls |
 | :--------- | ---------: |
@@ -100,7 +103,6 @@ Here we summarize the inversion problems in meteorology and oceanography into \a
 | Gill-Matsuno model [@Matsuno:1966; @Gill:1980] \newline $\displaystyle{A\frac{\partial^2 \phi}{\partial y^2}+B\frac{\partial^2 \phi}{\partial x^2}+C\frac{\partial \phi}{\partial y}+D\frac{\partial \phi}{\partial x}+E\phi=Q}$ | `phi = invert_GillMatsuno(Q,`\newline`dims=['Y','X'],`\newline`mParams={f, epsilon, Phi})` \newline|
 | Stommel-Munk model [@Stommel:1948; @Munk:1950] \newline $\displaystyle{A\nabla^4\psi-\frac{R}{D}\nabla^2\psi-\beta\frac{\partial \psi}{\partial x}=-\frac{\hat\nabla \cdot \vec{\tau}  }{\rho_0 D} }$ | `psi = invert_StommelMunk(curl,`\newline`dims=['Y','X'],`\newline`mParams={A, R, D, beta, rho})` \newline |
 | QG-Omega equation [@Hoskins:1978] \newline $\displaystyle{\frac{\partial}{\partial p}\left(f^2\frac{\partial \omega}{\partial p}\right)+\nabla\cdot\left(S\nabla\omega\right)=F}$ | `w = invert_Omega(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, S})` \newline|
-| 3D ocean flow \newline $\displaystyle{\frac{\partial}{\partial p}\left(c_3\frac{\partial \psi}{\partial p}\right)+\nabla\cdot\left(c_1\nabla\psi-c_2\hat\nabla\psi\right)=F}$ | `psi = invert_3DFlow(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, N2, epsilon})` \newline|
 | **...** more problems **...** |  |
 
   : Classical inversion problems in GFD.  The model names, equations, typical references and function calls are listed \label{table:1}
@@ -113,7 +115,7 @@ Here we summarize the inversion problems in meteorology and oceanography into \a
 
 # Acknowledgements
 
-This work is jointly supported by the National Natural Science Foundation of China (42227901, 41931182, 41976023, 42106008), and the support of the Independent Research Project Program of State Key Laboratory of Tropical Oceanography (LTOZZ2102). The author gratefully acknowledge the use of the HPCC at the South China Sea Institute of ceanology, Chinese Academy of Sciences.
+This work is jointly supported by the National Natural Science Foundation of China (41931182, 41976023), and the support of the Independent Research Project Program of State Key Laboratory of Tropical Oceanography (LTOZZ2102). The author gratefully acknowledge the use of the HPCC at the South China Sea Institute of oceanology, Chinese Academy of Sciences.
 
 
 # References

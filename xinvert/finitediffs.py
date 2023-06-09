@@ -570,6 +570,9 @@ def padBCs(v, dim, BCs, fill=(0,0)):
     p: xarray.DataArray
         Padded array.
     """
+    if type(BCs) == str:
+        BCs = (BCs, BCs)
+    
     p = v
     
     if 'periodic' in BCs: # pad with periodic BC

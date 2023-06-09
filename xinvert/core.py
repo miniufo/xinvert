@@ -5,7 +5,7 @@ Created on 2020.12.09
 @author: MiniUFO
 Copyright 2018. All rights reserved. Use is subject to license terms.
 """
-from .numbas import invert_standard_3D, invert_standard_2D, \
+from .numbas import invert_standard_3D, invert_standard_2D, invert_standard_1D,\
                     invert_general_3D, invert_general_2D, \
                     invert_general_bih_2D, invert_standard_2D_test
 from .utils import loop_noncore, _undeftmp
@@ -207,6 +207,66 @@ def inv_standard2D_test(A, B, C, D, E, F, S, dims, iParams):
                            iParams['del2'], iParams['del1'],
                            iParams['BCs'][0], iParams['BCs'][1], iParams['del1Sqr'],
                            iParams['ratioQtr'], iParams['ratioSqr'],
+                           iParams['optArg'], _undeftmp, iParams['flags'],
+                           iParams['mxLoop'], iParams['tolerance'])
+        
+        info = str(selDict).replace('numpy.datetime64(', '') \
+                           .replace('numpy.timedelta64(', '') \
+                           .replace(')', '') \
+                           .replace('\'', '') \
+                           .replace('.000000000', '')
+        
+        if iParams['printInfo']:
+            if iParams['flags'][0]:
+                print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
+                      .format(iParams['flags'][2], iParams['flags'][1]))
+            else:
+                print(info + ' loops {0:4.0f} and tolerance is {1:e}'
+                      .format(iParams['flags'][2], iParams['flags'][1]))
+    
+    return S
+
+
+def inv_standard1D(A, B, F, S, dims, iParams):
+    r"""Inverting equations in 1D standard form.
+
+    .. math::
+
+        \frac{1}{\partial x}\left(
+        A\frac{\partial \psi}{\partial x} + B\psi= F
+    
+    Invert this equation using SOR iteration. If F = F['time', 'lat'], then
+    for the meridional series, the 1st dim is 'lat' .
+
+    Parameters
+    ----------
+    A: xr.DataArray
+        Coefficient A.
+    B: xr.DataArray
+        Coefficient B.
+    F: xr.DataArray
+        Forcing function F.
+    S: xr.DataArray
+        Initial guess of the solution (also the output).
+    dims: list or str
+        Dimension combination for the inversion e.g., ['lat'].
+    iParams: dict
+        Parameters for inversion.
+
+    Returns
+    -------
+    xarray.DataArray
+        Solution :math:`\psi`.
+    """
+    if len(dims) != 1:
+        raise Exception('1 dimensions are needed for inversion')
+    
+    for selDict in loop_noncore(F, dims):
+        invert_standard_1D(S.loc[selDict].values,
+                           A.loc[selDict].values, B.loc[selDict].values,
+                           F.loc[selDict].values,
+                           iParams['gc1']   , iParams['del1'],
+                           iParams['BCs'][0], iParams['del1Sqr'],
                            iParams['optArg'], _undeftmp, iParams['flags'],
                            iParams['mxLoop'], iParams['tolerance'])
         

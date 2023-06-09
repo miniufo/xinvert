@@ -1,0 +1,5 @@
+xarray
+dask
+scipy
+numba
+

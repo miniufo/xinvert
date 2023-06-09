@@ -9,7 +9,7 @@ import numpy as np
 import xarray as xr
 import copy
 from .utils import _R_earth, _omega, _undeftmp, _g, _deg2m, loop_noncore
-from .core import inv_standard3D, inv_standard2D,\
+from .core import inv_standard3D, inv_standard2D, inv_standard1D,\
                   inv_general3D, inv_general2D,\
                   inv_general2D_bih, inv_standard2D_test
 
@@ -47,8 +47,9 @@ default_mParams = copy.deepcopy({
     'depth'  : 100  , # depth of the ocean or mixed layer in Stommel-Munk model
     'rho0'   : 1027 , # constant density of seawater in Stommel-Munk model
     'ang0'   : 2e5  , # background angular momentum
-    'Gamma'  : 1027 , # ...
-    'um'     : 1027 , # ...
+    'lambda' : 1e-8 , # used in Bretherton-Haidvogel model
+    'c0'     : 8e-9 , # for Fofonoff model
+    'c1'     : 8e-5 , # for Fofonoff model
 })
 
 
@@ -88,8 +89,8 @@ def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results of the SOR inversion.
     """
-    return __template(__coeffs_Poisson, inv_standard2D, 2,
-                      F, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_Poisson, inv_standard2D, 2, F, dims, coords,
+                      icbc, [], mParams, iParams)
 
 
 
@@ -133,8 +134,50 @@ def invert_RefState(PV, dims, coords='z-lat', icbc=None,
     xarray.DataArray
         Results (angular momentum Λ) of the SOR inversion.
     """
-    return __template(__coeffs_RefState, inv_standard2D, 2,
-                      PV, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_RefState, inv_standard2D, 2, PV, dims, coords,
+                      icbc, ['Ang0', 'Gamma'], mParams, iParams)
+
+
+def invert_RefState1D(PV, dims, coords='lat', icbc=None,
+                      mParams=default_mParams, iParams=default_iParams):
+    r"""PV inversion for a balanced symmetric vortex.
+
+    The balanced symmetric vortex equation is given as:
+
+    .. math::
+
+         \frac{\partial}{\partial \y}\left(\frac{g}{2\pi rQ}
+         \frac{\partial C}{\partial y}\right) -
+         \frac{\sin\phi C_0}{4\pi^2 r^3} C = -\Omega^2 r \sin\phi
+    
+    Invert this equation for circulation :math:`C` given
+    the PV distribution :math:`Q`.
+    
+    Parameters
+    ----------
+    PV: xarray.DataArray
+        2D distribution of PV.
+    dims: list
+        Dimension combination for the inversion e.g., ['lev', 'lat'].
+    coords: {'z-lat', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
+        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+    mParams: dict
+        Parameters required for this model are:
+
+		* c0: Eulerian zonal-mean circulation as the known coefficient.
+        
+    iParams: dict, optional
+        Iteration parameters.
+    
+    Returns
+    -------
+    xarray.DataArray
+        Results (angular momentum Λ) of the SOR inversion.
+    """
+    return __template(__coeffs_RefState1D, inv_standard1D, 1, PV, dims, coords,
+                      icbc, ['c0'], mParams, iParams)
 
 
 def invert_PV2D(PV, dims, coords='z-lat', icbc=None,
@@ -186,8 +229,8 @@ def invert_PV2D(PV, dims, coords='z-lat', icbc=None,
     xarray.DataArray
         Results (QG streamfunction) of the SOR inversion.
     """
-    return __template(__coeffs_PV2D, inv_standard2D, 2,
-                      PV, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_PV2D, inv_standard2D, 2, PV, dims, coords,
+                      icbc, ['f0', 'beta', 'N2'], mParams, iParams)
 
 
 def invert_Eliassen(F, dims, coords='z-lat', icbc=None,
@@ -235,8 +278,8 @@ def invert_Eliassen(F, dims, coords='z-lat', icbc=None,
     xarray.DataArray
         Results of the SOR inversion.
     """
-    return __template(__coeffs_Eliassen, inv_standard2D, 2,
-                      F, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_Eliassen, inv_standard2D, 2, F, dims, coords,
+                      icbc, ['A', 'B', 'C'], mParams, iParams)
 
 
 def invert_GillMatsuno(Q, dims, coords='lat-lon', icbc=None, 
@@ -282,8 +325,8 @@ def invert_GillMatsuno(Q, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results (mass distribution) of the SOR inversion.
     """
-    return __template(__coeffs_GillMatsuno, inv_general2D, 2,
-                      Q, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_GillMatsuno, inv_general2D, 2, Q, dims, coords,
+                      icbc, ['f0', 'beta', 'epsilon', 'Phi'], mParams, iParams)
 
 
 def invert_GillMatsuno_test(Q, dims, coords='lat-lon', icbc=None, 
@@ -329,8 +372,8 @@ def invert_GillMatsuno_test(Q, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results (mass distribution) of the SOR inversion.
     """
-    return __template(__coeffs_GillMatsuno_test, inv_standard2D_test, 2,
-                      Q, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_GillMatsuno_test, inv_standard2D_test, 2, Q, dims, coords,
+                      icbc, ['f0', 'beta', 'epsilon', 'Phi'], mParams, iParams)
 
 
 def invert_Stommel(curl, dims, coords='lat-lon', icbc=None,
@@ -374,8 +417,8 @@ def invert_Stommel(curl, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results (streamfunction) of the SOR inversion.
     """
-    return __template(__coeffs_Stommel, inv_general2D, 2,
-                      curl, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_Stommel, inv_general2D, 2, curl, dims, coords,
+                      icbc, ['beta', 'R', 'D', 'rho0'], mParams, iParams)
 
 
 def invert_Stommel_test(curl, dims, coords='lat-lon', icbc=None,
@@ -419,8 +462,8 @@ def invert_Stommel_test(curl, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results (streamfunction) of the SOR inversion.
     """
-    return __template(__coeffs_Stommel_test, inv_standard2D_test, 2,
-                      curl, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_Stommel_test, inv_standard2D_test, 2, curl, dims, coords,
+                      icbc, ['beta', 'R', 'D', 'rho0'], mParams, iParams)
 
 
 def invert_StommelMunk(curl, dims, coords='lat-lon', icbc=None,
@@ -466,8 +509,54 @@ def invert_StommelMunk(curl, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results of the SOR inversion.
     """
-    return __template(__coeffs_StommelMunk, inv_general2D_bih, 2,
-                      curl, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_StommelMunk, inv_general2D_bih, 2, curl, dims, coords,
+                      icbc, ['A4', 'beta', 'R', 'D', 'rho0'], mParams, iParams)
+
+
+def invert_StommelArons(Q, dims, coords='lat-lon', icbc=None, 
+                        mParams=default_mParams, iParams=default_iParams):
+    r"""Inverting Stommel-Arons model.
+
+    The Stommel-Arons model is given as:
+
+    .. math::
+
+        \epsilon   u  =  fv - \frac{\partial \phi}{\partial x}\\\\
+        \epsilon   v  = -fu - \frac{\partial \phi}{\partial y}\\\\
+        \left(\frac{\partial u}{\partial x}
+        +\frac{\partial v}{\partial y}\right) = -Q
+    
+    Invert this equation for the mass distribution :math:`\phi` given
+    the diabatic heating function :math:`Q`.
+
+    
+    Parameters
+    ----------
+    Q: xarray.DataArray
+        Diabatic heating function.
+    dims: list
+        Dimension combination for the inversion e.g., ['lat', 'lon'].
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
+        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* f0: Coriolis parameter at south BC if on beta plane.
+		* beta: Meridional derivative of f.
+		* epsilon: Linear damping coefficient for velocity only.
+
+    iParams: dict, optional
+        Iteration parameters.
+        
+    Returns
+    -------
+    xarray.DataArray
+        Results (mass distribution) of the SOR inversion.
+    """
+    return __template(__coeffs_StommelArons, inv_general2D, 2, Q, dims, coords,
+                      icbc, ['f0', 'beta', 'epsilon'], mParams, iParams)
 
 
 def invert_geostrophic(lapPhi, dims, coords='lat-lon', icbc=None,
@@ -498,7 +587,7 @@ def invert_geostrophic(lapPhi, dims, coords='lat-lon', icbc=None,
     mParams: dict, optional
         Parameters required for this model are:
 
-		* f: Coriolis parameter.
+		* f0: Coriolis parameter.
 		* beta: Meridional derivative of Coriolis parameter.
 
     iParams: dict
@@ -509,8 +598,96 @@ def invert_geostrophic(lapPhi, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results (geostrophic streamfunction) of the SOR inversion.
     """
-    return __template(__coeffs_geostrophic, inv_standard2D, 2,
-                      lapPhi, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_geostrophic, inv_standard2D, 2, lapPhi, dims, coords,
+                      icbc, ['f0', 'beta'], mParams, iParams)
+
+
+def invert_BrethertonHaidvogel(h, dims, coords='cartesian', icbc=None,
+                               mParams=default_mParams, iParams=default_iParams):
+    r"""Inverting the Bretherton-Haiduogel model.
+
+    The Bretherton-Haiduogel model is given as:
+
+    .. math::
+
+        \nabla^2\psi - \lambda D \psi=-f_0-\beta y-\frac{f_0}{D}h \Phi
+    
+    Invert this equation for the geostrophic streamfunction :math:`\psi` given
+    the topography :math:`h`.
+
+    
+    Parameters
+    ----------
+    lapPhi: xarray.DataArray
+        Laplacian of geopotential.
+    dims: list
+        Dimension combination for the inversion e.g., ['lat', 'lon'].
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
+        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* f0: Coriolis parameter.
+		* beta: Meridional derivative of Coriolis parameter.
+		* D: Constant total depth of the fluid (>> h).
+		* lambda: Lagrangian multiplier, determined by the total energy.
+
+    iParams: dict
+        Iteration parameters.
+        
+    Returns
+    -------
+    xarray.DataArray
+        Results (geostrophic streamfunction) of the SOR inversion.
+    """
+    return __template(__coeffs_Bretherton, inv_standard2D_test, 2, h, dims, coords,
+                      icbc, ['f0', 'beta', 'D', 'lambda'], mParams, iParams)
+
+
+def invert_Fofonoff(F, dims, coords='cartesian', icbc=None,
+                    mParams=default_mParams, iParams=default_iParams):
+    r"""Inverting the Fofonoff (1954) model.
+
+    The equation is given as:
+
+    .. math::
+        
+        \nabla^2 \psi - c_0 \psi = c_1 - f
+    
+    Invert the equation for :math:`\psi` given :math:`f`.
+    
+    Parameters
+    ----------
+    F: xarray.DataArray
+        Forcing function.  Note that Forcing is irrelevant, only coordinates
+        are used here.  The true forcing (Coriolis parameter f) will be
+        calculated automatically depending on the geometry of the domain.
+    dims: list
+        Dimension combination for the inversion e.g., ['lat', 'lon'].
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
+        Prescribed inital condition/guess (IC) and boundary conditions (BC).
+    mParams: dict, optional
+        Parameters required for this model are:
+
+		* c0: Linear coefficient (>0).
+		* c1: A constant.
+  		* f0: Coriolis parameter.
+  		* beta: Meridional derivative of Coriolis parameter.
+        
+    iParams: dict, optional
+        Iteration parameters.
+    
+    Returns
+    -------
+    xarray.DataArray
+        Results of the SOR inversion.
+    """
+    return __template(__coeffs_Fofonoff, inv_standard2D_test, 2, F, dims, coords,
+                      icbc, ['c0', 'c1', 'f0', 'beta'], mParams, iParams)
 
 
 def invert_omega(F, dims, coords='lat-lon', icbc=None,
@@ -572,8 +749,8 @@ def invert_omega(F, dims, coords='lat-lon', icbc=None,
         if (mParams['N2'][1:]<=0).any():
             raise Exception('unstable stratification in coefficient A')
     
-    return __template(__coeffs_Omega, inv_standard3D, 3,
-                      F, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_Omega, inv_standard3D, 3, F, dims, coords,
+                      icbc, ['f0', 'beta', 'N2'], mParams, iParams)
 
 
 def invert_3DOcean(F, dims, coords='lat-lon', icbc=None,
@@ -610,9 +787,10 @@ def invert_3DOcean(F, dims, coords='lat-lon', icbc=None,
 
 		* f0: Coriolis parameter at south BC on beta plane.
 		* beta: Meridional derivative of Coriolis parameter.
-		* epsilon: Linear damping coefficient.
+		* epsilon: Linear damping coefficient for momentum.
         * N2: Buoyancy frequency = g/theta0 * dtheta/dz = -R*pi/p * dtheta/dp.
-
+        * k:linear damping coefficient for buoyancy
+        
     iParams: dict, optional
         Iteration parameters.
 
@@ -631,8 +809,8 @@ def invert_3DOcean(F, dims, coords='lat-lon', icbc=None,
         if (mParams['N2'][1:]<=0).any():
             raise Exception('unstable stratification in coefficient A')
     
-    return __template(__coeffs_3DOcean, inv_general3D, 3,
-                      F, dims, coords, icbc, mParams, iParams)
+    return __template(__coeffs_3DOcean, inv_general3D, 3, F, dims, coords,
+                      icbc, ['f0', 'beta', 'epsilon', 'N2', 'k'], mParams, iParams)
 
 
 
@@ -691,27 +869,62 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
     if   app_name == 'poisson':
         coef_func = __coeffs_Poisson
         invt_func = inv_standard2D
+        validMPs  = []
+        
     elif app_name == 'pv2d':
         coef_func = __coeffs_PV2D
         invt_func = inv_standard2D
+        validMPs  = ['f0', 'beta', 'N2']
+        
     elif app_name == 'geostrophic':
         coef_func = __coeffs_geostrophic
         invt_func = inv_standard2D
+        validMPs  = ['f0', 'beta']
+        
     elif app_name == 'gillmatsuno':
         coef_func = __coeffs_GillMatsuno
         invt_func = inv_general2D
+        validMPs  = ['f0', 'beta', 'epsilon', 'Phi']
+        
     elif app_name == 'eliassen':
         coef_func = __coeffs_Eliassen
         invt_func = inv_standard2D
+        validMPs  = ['A', 'B', 'C']
+        
+    elif app_name == 'stommel':
+        coef_func = __coeffs_Stommel
+        invt_func = inv_general2D_bih
+        validMPs  = ['beta', 'R', 'D', 'rho0']
+        
     elif app_name == 'stommelmunk':
         coef_func = __coeffs_StommelMunk
         invt_func = inv_general2D_bih
+        validMPs  = ['A4', 'beta', 'R', 'D', 'rho0']
+        
     elif app_name == 'refstate':
         coef_func = __coeffs_RefState
         invt_func = inv_standard2D
+        validMPs  = ['Ang0', 'Gamma']
+        
+    elif app_name == 'brethertonhaidvogel':
+        coef_func = __coeffs_Bretherton
+        invt_func = inv_standard2D_test
+        validMPs  = ['f0', 'beta', 'D', 'lambda']
+        
+    elif app_name == 'fofonoff':
+        coef_func = __coeffs_Fofonoff
+        invt_func = inv_standard2D_test
+        validMPs  = ['c0', 'c1', 'f0', 'beta']
+        
     elif app_name == 'omega':
         coef_func = __coeffs_Omega
         invt_func = inv_standard3D
+        validMPs  = ['f0', 'beta', 'N2']
+        
+    elif app_name == '3Docean':
+        coef_func = __coeffs_Omega
+        invt_func = inv_standard3D
+        validMPs  = ['f0', 'beta', 'N2', 'epsilon', 'k']
     else:
         raise Exception('unsupported problem: '+app_name+', should be one of:\n'+
                         "'Poisson'\n'PV2D'\n'GillMatsuno'\n'Eliassen'\n"+
@@ -727,7 +940,7 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         ps = __cal_params3D(maskF[dims[0]], maskF[dims[1]], maskF[dims[2]], coords)
     else:
         raise Exception('dimension length should be one of [2, 3]')
-        
+    
     iParams = __update(ps, iParams)
     
     if iParams['debug']:
@@ -983,7 +1196,8 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
                             ', should be [lat-lon, z-lat, z-lon, cartesian]')
     
     else: # GillMatsuno case
-        mParams = __update(default_mParams, mParams)
+        mParams = __update(default_mParams, mParams,
+                           ['f0', 'beta', 'epsilon', 'Phi'])
         
         eps  = mParams['epsilon']
         f0   = mParams['f0']
@@ -1026,7 +1240,7 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
 Below are the helper methods of these applications
 """
 def __template(coef_func, inv_func, dimLen,
-               F, dims, coords='lat-lon', icbc=None,
+               F, dims, coords='lat-lon', icbc=None, validParams=[],
                mParams=default_mParams, iParams=default_iParams):
     r"""Template for the whole inverting process.
     
@@ -1047,10 +1261,10 @@ def __template(coef_func, inv_func, dimLen,
         Coordinates in ['lat-lon', 'cartesian'] are supported.
     icbc: xarray.DataArray
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
+    validParams: list of str
+        Valid mParams for a specific model.
     mParams: dict, optional
-		* f0: Coriolis parameter at south BC on beta plane.
-		* beta: Meridional derivative of Coriolis parameter.
-        * N2: Buoyancy frequency.
+		Parameters that depends on a specific model.
     iParams: dict, optional
         Iteration parameters.
         
@@ -1063,13 +1277,15 @@ def __template(coef_func, inv_func, dimLen,
         raise Exception('{0:2d} dimensional forcing are needed'.format(dimLen))
     
     iParams = __update(default_iParams, iParams)
-    mParams = __update(default_mParams, mParams)
+    mParams = __update(default_mParams, mParams, validParams)
     
     ######  1. calculating the coefficients  ######
     maskF, initS, coeffs = coef_func(F, dims, coords, mParams, iParams, icbc)
     
     ######  2. calculating the parameters  ######
-    if dimLen == 2:
+    if dimLen == 1:
+        ps = __cal_params1D(maskF[dims[0]], coords)
+    elif dimLen == 2:
         ps = __cal_params2D(maskF[dims[0]], maskF[dims[1]], coords)
     elif dimLen == 3:
         ps = __cal_params3D(maskF[dims[0]], maskF[dims[1]], maskF[dims[2]], coords)
@@ -1165,6 +1381,34 @@ def __coeffs_RefState(Q, dims, coords, mParams, iParams, icbc):
     return F, initS, (A, B, C)
 
 
+def __coeffs_RefState1D(Q, dims, coords, mParams, iParams, icbc):
+    """Calculating coefficients for reference state."""
+    c0 = mParams['c0']
+    
+    maskF, initS, zero = __mask_FS(Q, dims, iParams, icbc)
+
+    if coords.lower() == 'lat': # dims[0] is θ, dims[1] is lat
+        lats = np.deg2rad(maskF[dims[0]])
+        sinL = np.sin(lats)
+        cosL = np.cos(lats)
+        r    = _R_earth * cosL
+        
+        A = zero + _g / (2.0 * np.pi * r * maskF)
+        B = zero - sinL * c0 * maskF / (_g * np.pi * r**2.0)
+        F = zero - (((c0*cosL)/(2.0*np.pi*r**2.0))**2.0 +
+                    ((c0*sinL)/(2.0*np.pi*r**2.0))**2.0 -
+                    _omega**2.0*np.cos(2.0*lats)) / _g
+    
+    elif coords.lower() == 'cartesian': # dims[0] is θ, dims[1] is r
+        raise Exception('not supported for cartesian coordinates')
+
+    else:
+        raise Exception('unsupported coords ' + coords +
+                        ', should be in [z-lat, cartesian]')
+    
+    return F, initS, (A, B)
+
+
 def __coeffs_PV2D(PV, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for QG PV equation."""
     f0 = mParams['f0']
@@ -1193,9 +1437,9 @@ def __coeffs_PV2D(PV, dims, coords, mParams, iParams, icbc):
 
 def __coeffs_Eliassen(force, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Eliassen model."""
-    Am = mParams['Am']
-    Bm = mParams['Bm']
-    Cm = mParams['Cm']
+    Am = mParams['A']
+    Bm = mParams['B']
+    Cm = mParams['C']
     
     maskF, initS, zero = __mask_FS(force, dims, iParams, icbc)
 
@@ -1220,9 +1464,9 @@ def __coeffs_Eliassen(force, dims, coords, mParams, iParams, icbc):
 
 def __coeffs_GillMatsuno(Q, dims, coords, mParam, iParams, icbc):
     """Calculating coefficients for Gill-Matsuno model."""
-    Phi     = mParam['Phi']
+    Phi     = mParam['Phi' ]
     epsilon = mParam['epsilon']
-    f0      = mParam['f0']
+    f0      = mParam['f0'  ]
     beta    = mParam['beta']
     
     maskF, initS, zero = __mask_FS(Q, dims, iParams, icbc)
@@ -1269,9 +1513,9 @@ def __coeffs_GillMatsuno(Q, dims, coords, mParam, iParams, icbc):
 
 def __coeffs_GillMatsuno_test(Q, dims, coords, mParam, iParams, icbc):
     """Calculating coefficients for Gill-Matsuno model."""
-    Phi     = mParam['Phi']
+    Phi     = mParam['Phi' ]
     epsilon = mParam['epsilon']
-    f0      = mParam['f0']
+    f0      = mParam['f0'  ]
     beta    = mParam['beta']
     
     maskF, initS, zero = __mask_FS(Q, dims, iParams, icbc)
@@ -1320,10 +1564,10 @@ def __coeffs_GillMatsuno_test(Q, dims, coords, mParam, iParams, icbc):
 
 def __coeffs_Stommel(curl, dims, coords, mParam, iParams, icbc):
     """Calculating coefficients for Stommel model."""
-    beta  = mParam['beta']
-    R     = mParam['R']
-    depth = mParam['depth']
-    rho0  = mParam['rho0']
+    beta = mParam['beta']
+    R    = mParam['R'   ]
+    depth= mParam['D'   ]
+    rho0 = mParam['rho0']
     
     maskF, initS, zero = __mask_FS(curl, dims, iParams, icbc)
     
@@ -1357,11 +1601,11 @@ def __coeffs_Stommel(curl, dims, coords, mParam, iParams, icbc):
 
 def __coeffs_Stommel_test(curl, dims, coords, mParam, iParams, icbc):
     """Calculating coefficients for Stommel model."""
-    f0    = mParam['f0']
-    beta  = mParam['beta']
-    R     = mParam['R']
-    depth = mParam['depth']
-    rho0  = mParam['rho0']
+    f0   = mParam['f0'  ]
+    beta = mParam['beta']
+    R    = mParam['R'   ]
+    depth= mParam['D'   ]
+    rho0 = mParam['rho0']
     
     maskF, initS, zero = __mask_FS(curl, dims, iParams, icbc)
     
@@ -1398,11 +1642,11 @@ def __coeffs_Stommel_test(curl, dims, coords, mParam, iParams, icbc):
 
 def __coeffs_StommelMunk(curl, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Stommel-Munk model."""
-    beta  = mParams['beta']
-    A     = mParams['A']
-    R     = mParams['R']
-    depth = mParams['depth']
-    rho0  = mParams['rho0']
+    beta = mParams['beta']
+    A4   = mParams['A4'  ]
+    R    = mParams['R'   ]
+    depth= mParams['D'   ]
+    rho0 = mParams['rho0']
     
     maskF, initS, zero = __mask_FS(curl, dims, iParams, icbc)
     
@@ -1410,9 +1654,9 @@ def __coeffs_StommelMunk(curl, dims, coords, mParams, iParams, icbc):
         lats = np.deg2rad(curl[dims[0]])
         cosL = np.cos(lats)
         
-        A = zero + A
+        A = zero + A4
         B = zero
-        C = zero + A / cosL**2.
+        C = zero + A4 / cosL**2.
         D = zero - R / depth
         E = zero
         F = zero - R / depth / cosL**2.
@@ -1422,9 +1666,9 @@ def __coeffs_StommelMunk(curl, dims, coords, mParams, iParams, icbc):
         J = (-maskF / depth / rho0).where(maskF!=_undeftmp, _undeftmp)
     
     elif coords.lower() == 'cartesian': # dims[0] is y, dims[1] is x
-        A = zero + A
+        A = zero + A4
         B = zero
-        C = zero + A
+        C = zero + A4
         D = zero - R / depth
         E = zero
         F = zero - R / depth
@@ -1440,6 +1684,54 @@ def __coeffs_StommelMunk(curl, dims, coords, mParams, iParams, icbc):
     return J, initS, (A, B, C, D, E, F, G, H, I)
 
 
+def __coeffs_StommelArons(Q, dims, coords, mParam, iParams, icbc):
+    """Calculating coefficients for Stommel-Arons model."""
+    epsilon = mParam['epsilon']
+    f0      = mParam['f0']
+    beta    = mParam['beta']
+    
+    maskF, initS, zero = __mask_FS(Q, dims, iParams, icbc)
+    
+    if coords.lower() == 'lat-lon': # dims[0] is lat, dims[1] is lon
+        lats = np.deg2rad(Q[dims[0]])
+        cosL = np.cos(lats)
+        
+        f = 2.0 * _omega * np.sin(lats)
+        
+        c1 = epsilon / (epsilon**2. + f**2.)
+        c2 = f       / (epsilon**2. + f**2.)
+        const = _R_earth / 180. * np.pi
+        
+        A = zero + c1
+        B = zero
+        C = zero + c1 / cosL**2.
+        D = zero + (c1.differentiate(dims[0]) / const + c1*np.tan(lats)/_R_earth)
+        E = zero - c2.differentiate(dims[0]) / const / cosL
+        F = zero
+        G = maskF.where(maskF!=_undeftmp, _undeftmp)
+    
+    elif coords.lower() == 'cartesian': # dims[0] is y, dims[1] is x
+        ydef = Q[dims[0]]
+        f    = f0 + beta * ydef
+        
+        c1 = epsilon / (epsilon**2. + f**2.)
+        c2 = f       / (epsilon**2. + f**2.)
+        
+        A = zero + c1
+        B = zero
+        C = zero + c1
+        D = zero + c1.differentiate(dims[0])
+        E = zero - c2.differentiate(dims[0])
+        F = zero
+        G = maskF.where(maskF!=_undeftmp, _undeftmp)
+        
+    else:
+        raise Exception('unsupported coords ' + coords +
+                        ', should be in [lat-lon, cartesian]')
+    
+    return G, initS, (A, B, C, D, E, F)
+
+
 def __coeffs_geostrophic(lapPhi, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for geostrophic equation."""
     f0   = mParams['f0']
@@ -1448,7 +1740,7 @@ def __coeffs_geostrophic(lapPhi, dims, coords, mParams, iParams, icbc):
     maskF, initS, zero = __mask_FS(lapPhi, dims, iParams, icbc)
 
     if coords.lower() == 'lat-lon': # dims[0] is lat, dims[1] is lon
-        lats = np.deg2rad(lapPhi[dims[0]])
+        lats = np.deg2rad(maskF[dims[0]])
         
         sinG = np.sin(lats)
         sinH = np.sin((lats+lats.shift({dims[0]:1}))/2.)
@@ -1468,7 +1760,7 @@ def __coeffs_geostrophic(lapPhi, dims, coords, mParams, iParams, icbc):
         F =(lapPhi * cosG).where(lapPhi!=_undeftmp, _undeftmp)
     
     elif coords.lower() == 'cartesian': # dims[0] is y, dims[1] is x
-        ydef = lapPhi[dims[0]]
+        ydef = maskF[dims[0]]
         fG = f0 + beta * ydef
         fH = f0 + beta * (ydef+ydef.shift({dims[0]:1}))/2.
         
@@ -1482,6 +1774,86 @@ def __coeffs_geostrophic(lapPhi, dims, coords, mParams, iParams, icbc):
                         ', should be in [lat-lon, cartesian]')
     
     return F, initS, (A, B, C)
+
+
+def __coeffs_Bretherton(h, dims, coords, mParams, iParams, icbc):
+    """Calculating coefficients for Bretherton-Haiduogel equation."""
+    f0   = mParams['f0']
+    beta = mParams['beta']
+    depth= mParams['D']
+    lamb = mParams['lambda']
+    
+    maskF, initS, zero = __mask_FS(h, dims, iParams, icbc)
+    
+    if coords.lower() == 'lat-lon': # dims[0] is lat, dims[1] is lon
+        lats = np.deg2rad(maskF[dims[0]])
+        cosG = np.cos(lats)
+        cosH = np.cos((lats+lats.shift({dims[0]:1}))/2.0) # shift half grid
+        f    = 2. * _omega * np.sin(lats)
+        
+        A = zero + cosH
+        B = zero
+        C = zero
+        D = zero + 1.0 / cosG
+        E = zero - lamb * depth * cosG
+        F = (-maskF*f/depth * cosG).where(maskF!=_undeftmp, _undeftmp)
+        
+    elif coords.lower() == 'cartesian':
+        ydef = maskF[dims[0]]
+        f = f0 + beta * ydef
+        
+        A = zero + 1.0
+        B = zero
+        C = zero
+        D = zero + 1.0
+        E = zero - lamb * depth
+        F = (-maskF*f/depth).where(maskF!=_undeftmp, _undeftmp)
+
+    else:
+        raise Exception('unsupported coords ' + coords +
+                        ', should be in [lat-lon, cartesian]')
+    
+    return F, initS, (A, B, C, D, E)
+
+
+def __coeffs_Fofonoff(f, dims, coords, mParams, iParams, icbc):
+    """Calculating coefficients for Bretherton-Haiduogel equation."""
+    f0   = mParams['f0']
+    beta = mParams['beta']
+    c0   = mParams['c0']
+    c1   = mParams['c1']
+    
+    maskF, initS, zero = __mask_FS(f, dims, iParams, icbc)
+    
+    if coords.lower() == 'lat-lon': # dims[0] is lat, dims[1] is lon
+        lats = np.deg2rad(maskF[dims[0]])
+        cosG = np.cos(lats)
+        cosH = np.cos((lats+lats.shift({dims[0]:1}))/2.0) # shift half grid
+        f    = 2. * _omega * np.sin(lats)
+        
+        A = zero + cosH
+        B = zero
+        C = zero
+        D = zero + 1.0 / cosG
+        E = zero - c0 * cosG
+        F = ((zero + c1 - f) * cosG).where(maskF!=_undeftmp, _undeftmp)
+        
+    elif coords.lower() == 'cartesian':
+        ydef = maskF[dims[0]]
+        f = f0 + beta * ydef
+        
+        A = zero + 1.0
+        B = zero
+        C = zero
+        D = zero + 1.0
+        E = zero - c0
+        F = (zero + c1 - f).where(maskF!=_undeftmp, _undeftmp)
+
+    else:
+        raise Exception('unsupported coords ' + coords +
+                        ', should be in [lat-lon, cartesian]')
+    
+    return F, initS, (A, B, C, D, E)
 
 
 def __coeffs_Omega(force, dims, coords, mParams, iParams, icbc):
@@ -1774,8 +2146,58 @@ def __cal_params2D(dim2_var, dim1_var, coords):
     return re
 
 
-def __update(default, users):
+def __cal_params1D(dim1_var, coords):
+    r"""Pre-calculate some parameters needed in SOR.
+
+    Parameters
+    ----------
+    dim1_var: xarray.DataArray
+        Dimension variable of first  dimension (e.g., lon).
+    debug: boolean
+        Print result for debugging. The default is False.
+
+    Returns
+    -------
+    re: dict
+        Pre-calculated parameters.
+    """
+    gc1  = len(dim1_var)
+    del1 = dim1_var.diff(dim1_var.name).values[0] # assumed uniform
+    
+    if coords.lower() == 'lat':
+        del1 = np.deg2rad(del1) * _R_earth # convert lon to m
+    else:
+        raise Exception('unsupported coords for 2D case: ' + coords +
+                        ', should be [lat-lon, cartesian]')
+    
+    del1Sqr = del1 ** 2.0
+    epsilon = np.sin(np.pi/(2.0*gc1+2.0))**2
+    optArg  = 2.0 / (1.0 + np.sqrt((2.0 - epsilon) * epsilon))
+    flags   = np.array([0.0, 1.0, 0.0])
+    
+    # store all and return
+    re = {}
+    
+    re['gc1'     ] = gc1       # grid count in first  dimension (e.g., lon)
+    re['del1'    ] = del1      # distance in first  dimension (unit: m)
+    re['del1Sqr' ] = del1Sqr   # del1 ** 2
+    re['optArg'  ] = optArg    # optimal argument for SOR
+    re['flags'   ] = flags     # outputs of the SOR iteration:
+                               #   [0] overflow or not
+                               #   [1] tolerance
+                               #   [2] loop count
+    
+    return re
+
+
+def __update(default, users, valid=None):
     """Update default invert parameters with user-defined ones."""
+    
+    if valid is not None and users != default:
+        for k, v in users.items():
+            if k not in valid:
+                raise Exception(f'mParams[\'{k}\'] is not used, valid are {valid}')
+    
     for k, v in users.items():
         if v is not None:
             default[k] = v
@@ -1806,7 +2228,7 @@ def __print_params(params):
               params['undef'])
         print('boundaries : ',
               params['BCs'])
-    elif 'ratio1Sqr':
+    elif 'ratio1Sqr' in params:
         print('dim grids  : ',
               params['gc3'], params['gc2'], params['gc1'])
         print('dim intervs: ',
@@ -1815,6 +2237,27 @@ def __print_params(params):
               params['ratio1Sqr'], params['ratio2Sqr'])
         print('ratio1, ratio2 : ',
               params['ratio1'], params['ratio2'])
+        print('optArg     : ',
+              params['optArg'])
+        print('max loops  : ',
+              params['mxLoop'])
+        print('tolerance  : ',
+              params['tolerance'])
+        print('printInfo  : ',
+              params['printInfo'])
+        print('debug      : ',
+              params['debug'])
+        print('undef      : ',
+              params['undef'])
+        print('boundaries : ',
+              params['BCs'])
+    else:
+        print('dim grids  : ',
+              params['gc1'])
+        print('dim intervs: ',
+              params['del1'])
+        print('del1Sqr : ',
+              params['del1Sqr'],)
         print('optArg     : ',
               params['optArg'])
         print('max loops  : ',

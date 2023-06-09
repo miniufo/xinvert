@@ -16,9 +16,13 @@ from .apps import invert_Poisson, \
                   invert_geostrophic, \
                   invert_Stommel, invert_Stommel_test, \
                   invert_StommelMunk, \
+                  invert_StommelArons, \
                   invert_Eliassen, \
+                  invert_BrethertonHaidvogel, \
+                  invert_Fofonoff, \
                   invert_omega, \
                   invert_PV2D, \
+                  invert_RefState1D, \
                   invert_RefState, \
                   invert_3DOcean, \
                   animate_iteration, cal_flow

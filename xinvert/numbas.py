@@ -196,7 +196,7 @@ def invert_standard_3D(S, A, B, C, F,
         
         norm = absNorm3D(S, undef)
         
-        if np.isnan(norm) or norm > 1e17:
+        if np.isnan(norm) or norm > 1e100:
             flags[0] = True
             break
         
@@ -400,7 +400,7 @@ def invert_standard_2D(S, A, B, C, F,
         
         norm = absNorm2D(S, undef)
         
-        if np.isnan(norm) or norm > 1e17:
+        if np.isnan(norm) or norm > 1e100:
             flags[0] = True
             break
         
@@ -430,8 +430,8 @@ def invert_standard_2D_test(S, A, B, C, D, E, F,
         A\frac{\partial \psi}{\partial y} + 
         B\frac{\partial \psi}{\partial x} \right) +
         \frac{1}{\partial x}\left(
-        B\frac{\partial \psi}{\partial y} +
-        C\frac{\partial \psi}{\partial x} \right) = F
+        C\frac{\partial \psi}{\partial y} +
+        D\frac{\partial \psi}{\partial x} \right) + E\psi = F
     
     Parameters
     ----------
@@ -547,7 +547,7 @@ def invert_standard_2D_test(S, A, B, C, D, E, F,
                     ) + (E[j,0] * S[j,0] - F[j,0]) * delxSqr
                     
                     temp *= optArg / ((A[j+1,0] + A[j,0]) *ratioSqr +
-                                      (D[j  ,1] + D[j,0]))
+                                      (D[j  ,1] + D[j,0]) - E[j, 0]*delxSqr)
                     S[j,0] += temp
             
             # inner loop
@@ -577,7 +577,7 @@ def invert_standard_2D_test(S, A, B, C, D, E, F,
                     ) + (E[j,i] * S[j,i] - F[j,i]) * delxSqr
                     
                     temp *= optArg / ((A[j+1,i] + A[j,i]) *ratioSqr +
-                                      (D[j,i+1] + D[j,i]))
+                                      (D[j,i+1] + D[j,i]) - E[j, i]*delxSqr)
                     S[j,i] += temp
             
             
@@ -608,12 +608,125 @@ def invert_standard_2D_test(S, A, B, C, D, E, F,
                     ) + (E[j,-1] * S[j,-1] - F[j,-1]) * delxSqr
                     
                     temp *= optArg / ((A[j+1,-1] + A[j,-1]) *ratioSqr +
-                                      (D[j  , 0] + D[j,-1]))
+                                      (D[j  , 0] + D[j,-1]) - E[j, -1]*delxSqr)
                     S[j,-1] += temp
         
         norm = absNorm2D(S, undef)
         
-        if np.isnan(norm) or norm > 1e17:
+        if np.isnan(norm) or norm > 1e100:
+            flags[0] = True
+            break
+        
+        flags[1] = abs(norm - normPrev) / normPrev
+        flags[2] = loop
+        
+        if flags[1] < tolerance or loop >= mxLoop or norm == 0:
+            break
+        
+        normPrev = norm
+        loop += 1
+        
+    return S
+
+
+@nb.jit(nopython=True, cache=False)
+def invert_standard_1D(S, A, B, F,
+                       xc, delx, BCx, delxSqr, optArg, undef, flags,
+                       mxLoop, tolerance):
+    r"""Inverting a 1D series of elliptic equation in standard form.
+
+    .. math::
+
+        \frac{1}{\partial x}\left(
+        A\frac{\partial \psi}{\partial x}\right) + B\psi = F
+    
+    Parameters
+    ----------
+    S: numpy.array (output)
+        Results of the SOR inversion.
+        
+    A: numpy.array
+        Coefficient for the 2nd-order derivative.
+    B: numpy.array
+        Coefficient for the linear term.
+    F: numpy.array
+        Forcing function.
+    xc: int
+        Number of grid point in x-dimension (e.g., X or lon).
+    delx: float
+        Increment (interval) in dimension x (unit of m, not degree).
+    BCx: str
+        Boundary condition for dimension x in ['fixed', 'extend', 'periodic'].
+    delxSqr: float
+        Squared increment (interval) in dimension x (unit of m^2).
+    optArg: float
+        Optimal argument 'omega' (relaxation factor between 1 and 2) for SOR.
+    undef: float
+        Undefined value.
+    flags: numpy.array
+        Length of 3 array, [0] is flag for overflow, [1] for converge speed and
+        [2] for how many loops used for iteration.
+    mxLoop: int
+        Maximum loop count, larger than this will break the iteration.
+    tolerance: float
+        Tolerance for iteraction, smaller than this will break the iteraction.
+
+    Returns
+    -------
+    S: numpy.array
+        Results of the SOR inversion.
+    """
+    loop = 0
+    temp = 0.0
+    normPrev = np.finfo(np.float64).max
+    
+    while(True):
+        # process boundaries
+        if BCx == 'extend':
+            if  S[ 1] != undef:
+                S[ 0] = S[ 1]
+            if  S[-2] != undef:
+                S[-1] = S[-2]
+        
+        # for the west boundary iteration (i==0)
+        if BCx == 'periodic':
+            cond = (F[0]!=undef and A[0]!=undef and A[1]!=undef and B[0]!=undef)
+            
+            if cond:
+                temp = (
+                    A[1] * (S[1] - S[0]) - A[0] * (S[0] - S[-1])
+                ) / delxSqr + (B[0] * S[0] - F[0])
+                
+                temp *= optArg / ((A[1] + A[0]) / delxSqr - B[0])
+                S[0] += temp
+        
+        # inner loop
+        for i in range(1, xc-1):
+            cond = (F[i]!=undef and A[i]!=undef and A[i+1]!=undef and B[i]!=undef)
+            
+            if cond:
+                temp = (
+                    A[i+1] * (S[i+1] - S[i]) - A[i] * (S[i] - S[i-1])
+                ) / delxSqr + (B[i] * S[i] - F[i])
+                
+                temp *= optArg / ((A[i+1] + A[i]) / delxSqr - B[i])
+                S[i] += temp
+        
+        # for the west boundary iteration (i==-1)
+        if BCx == 'periodic':
+            cond = (F[-1]!=undef and A[-1]!=undef and A[0]!=undef and B[-1]!=undef)
+            
+            if cond:
+                temp = (
+                    A[0] * (S[0] - S[-1]) - A[-1] * (S[-1] - S[-2])
+                ) / delxSqr + (B[-1] * S[-1] - F[-1])
+                
+                temp *= optArg / ((A[0] + A[-1]) / delxSqr - B[-1])
+                S[-1] += temp
+        
+        norm = absNorm1D(S, undef)
+        
+        if np.isnan(norm) or norm > 1e100:
             flags[0] = True
             break
         
@@ -855,7 +968,7 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H,
         
         norm = absNorm3D(S, undef)
         
-        if np.isnan(norm) or norm > 1e17:
+        if np.isnan(norm) or norm > 1e100:
             flags[0] = True
             break
         
@@ -1072,7 +1185,7 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
         
         norm = absNorm2D(S, undef)
         
-        if np.isnan(norm) or norm > 1e17:
+        if np.isnan(norm) or norm > 1e100:
             flags[0] = True
             break
         
@@ -1457,7 +1570,7 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
         
         norm = absNorm2D(S, undef)
         
-        if np.isnan(norm) or norm > 1e17:
+        if np.isnan(norm) or norm > 1e100:
             flags[0] = True
             break
         
@@ -1507,6 +1620,25 @@ def absNorm2D(S, undef):
             if S[j,i] != undef:
                 norm += abs(S[j,i])
                 count += 1
+    
+    if count != 0:
+        norm /= count
+    else:
+        norm = np.nan
+    
+    return norm
+
+@nb.jit(nopython=True, cache=False)
+def absNorm1D(S, undef):
+    r"""Sum up 1D absolute value S"""
+    norm = 0.0
+    
+    I = S.shape[0]
+    count = 0
+    for i in range(I):
+        if S[i] != undef:
+            norm += abs(S[i])
+            count += 1
     
     if count != 0:
         norm /= count
