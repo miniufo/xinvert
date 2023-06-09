@@ -13,7 +13,7 @@ from xinvert import deriv, FiniteDiff, invert_Eliassen
 
 
 def test_Hadley():
-    ds = xr.open_dataset('../Data/atmos3D.nc')\
+    ds = xr.open_dataset('./Data/atmos3D.nc')\
         .isel(lat=np.arange(0, 72))
         # .isel(latitude=np.arange(115, -1, -1))
     
@@ -150,7 +150,7 @@ def test_Hadley():
 
 def test_ideal_TC():
     # load a snapshot as a radius-vertical 2D structure
-    ds = xr.open_dataset('../Data/TC2D.nc')
+    ds = xr.open_dataset('./Data/TC2D.nc')
     
     assert ds.dims == {'lev': 37, 'lat': 50}
     
@@ -202,7 +202,7 @@ def test_ideal_TC():
 
 
 def test_real_TC():
-    ds = xr.open_dataset('../Data/TC2D.nc')
+    ds = xr.open_dataset('./Data/TC2D.nc')
     
     assert ds.dims == {'lev': 37, 'lat': 50}
     

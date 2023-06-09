@@ -11,7 +11,7 @@ import numpy as np
 from xinvert import invert_omega, FiniteDiff
 
 def test_omega_atmos():
-    ds = xr.open_dataset('../Data/atmos3D.nc', decode_times=False)
+    ds = xr.open_dataset('./Data/atmos3D.nc', decode_times=False)
     
     # ds, grid = add_latlon_metrics(dset, dims={'Z':'LEV', 'Y':'lat', 'X':'lon'},
     #                               boundary={'X':'periodic', 'Y':'extend', 'Z':'extend'})

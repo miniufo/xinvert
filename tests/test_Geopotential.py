@@ -11,15 +11,7 @@ import numpy as np
 from xinvert import FiniteDiff, invert_Poisson
 
 def test_Geopotential():
-    from os.path import exists
-    print('testing relative paths')
-    print(exists('./Data/atmos3D.nc'))
-    print(exists('../Data/atmos3D.nc'))
-    print(exists('../../Data/atmos3D.nc'))
-    print(exists('./xinvert/Data/atmos3D.nc'))
-    print(exists('../xinvert/Data/atmos3D.nc'))
-    print(exists('../../xinvert/Data/atmos3D.nc'))
-    ds = xr.open_dataset('./xinvert/Data/atmos3D.nc').sel({'LEV':500})
+    ds = xr.open_dataset('./Data/atmos3D.nc').sel({'LEV':500})
     
     u = ds.U
     v = ds.V

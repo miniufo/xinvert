@@ -58,7 +58,7 @@ def test_GillMatsuno_idealized():
 
 
 def test_GillMatsuno_real():
-    ds = xr.open_dataset('../Data/MJO.nc')
+    ds = xr.open_dataset('./Data/MJO.nc')
     
     Q  = (ds.ol*-0.0015).where(np.abs(ds.lat)<60, 0)
     

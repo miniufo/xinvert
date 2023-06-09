@@ -63,7 +63,7 @@ def test_Munk_real():
     rho0 = 1027
     R = 1e-4
     
-    ds = xr.open_dataset('../Data/SODA_curl.nc')
+    ds = xr.open_dataset('./Data/SODA_curl.nc')
     curl = ds.curl
     
     # invert

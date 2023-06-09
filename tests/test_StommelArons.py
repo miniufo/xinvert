@@ -18,7 +18,7 @@ def test_StommelAron():
         msrc += amp * np.exp(-((lats-olat)**2/rad + (lons-olon)**2/rad/4))
     
     
-    ds = xr.open_dataset('../Data/SODA_curl.nc')
+    ds = xr.open_dataset('./Data/SODA_curl.nc')
     
     # mass source/sink over the global ocean
     msrc = (ds.curl-ds.curl)[0].load()

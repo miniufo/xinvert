@@ -79,7 +79,7 @@ def test_stommel_idealized():
 
 
 def test_stommel_real():
-    ds = xr.open_dataset('../Data/SODA_curl.nc')
+    ds = xr.open_dataset('./Data/SODA_curl.nc')
     
     curl_Jan = ds.curl[0]
     curl_Jul = ds.curl[6]
