@@ -11,7 +11,7 @@ import xarray as xr
 from xinvert import invert_BrethertonHaidvogel, cal_flow
 
 def test_BrethertonHaidvogel():
-    topo = xr.open_dataset('./Data/topo.nc').topo
+    topo = xr.open_dataset('../Data/topo.nc').topo
     topo = topo - topo.mean()
     
     assert topo.dims == ('y', 'x')

@@ -12,7 +12,7 @@ from xinvert import invert_PV2D
 
 
 def test_invert_PV2D():
-    ds = xr.open_dataset('./Data/atmos3D.nc', decode_times=False)
+    ds = xr.open_dataset('../Data/atmos3D.nc', decode_times=False)
     
     # select mid-latitude range as background state
     dset = ds.sel({'lon':slice(150, 200), 'lat':slice(50, 40)})

@@ -11,7 +11,7 @@ import numpy as np
 from xinvert import FiniteDiff, invert_Poisson
 
 def test_Geopotential():
-    ds = xr.open_dataset('./Data/atmos3D.nc').sel({'LEV':500})
+    ds = xr.open_dataset('../Data/atmos3D.nc').sel({'LEV':500})
     
     u = ds.U
     v = ds.V

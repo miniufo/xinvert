@@ -12,7 +12,7 @@ from xinvert import invert_Poisson, cal_flow, FiniteDiff
 
 
 def test_poisson_atmos():
-    ds = xr.open_dataset('./Data/Helmholtz_atmos.nc')
+    ds = xr.open_dataset('../Data/Helmholtz_atmos.nc')
     
     vor = ds.vor.rename('vorticity')
     div = ds.div.rename('divergence')
@@ -42,7 +42,7 @@ def test_poisson_atmos():
 
 
 def test_poisson_ocean():
-    ds = xr.open_dataset('./Data/Helmholtz_ocean.nc')
+    ds = xr.open_dataset('../Data/Helmholtz_ocean.nc')
     
     vor = ds.vor[0]
     
