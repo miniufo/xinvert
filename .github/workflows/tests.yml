@@ -23,4 +23,6 @@ jobs:
 
       - name: Test with pytest
         run: |
+          pwd
+          ls -l ./xinvert/Data/
           python -m pytest
