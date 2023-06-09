@@ -7,3 +7,4 @@ Data/ZonalMean.nc filter=lfs diff=lfs merge=lfs -text
 Data/atmos3D.nc filter=lfs diff=lfs merge=lfs -text
 Data/Helmholtz_atmos.nc filter=lfs diff=lfs merge=lfs -text
 Data/BarotropicData.nc filter=lfs diff=lfs merge=lfs -text
+Data/topo.nc filter=lfs diff=lfs merge=lfs -text
