@@ -23,8 +23,9 @@ using its `Zenodo DOI <https://doi.org/10.5281/zenodo.7801501>`__.
    :maxdepth: 2
    :caption: Contents:
    
-   notebooks/Introduction
+   notebooks/00_Introduction
    Examples
+   Contributors
 
 
    ../modules
