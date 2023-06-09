@@ -18,7 +18,7 @@ You can `open an issue in the github issues page <https://github.com/miniufo/xin
 If you have a cool or new example that can be fit into `xinvert`, please consider contributing to `Examples <https://github.com/miniufo/xinvert/tree/master/docs/source/notebooks>`__ in a form of Jupyter Notebook.  Generally, the notebook contains:
 
 - an introduction of the problem;
-- a mathematical formulation of the problem into a elliptic equations;
+- a mathematical formulation of the problem into an elliptic equation;
 - results from inversion and associated demonstration.
 
 In order to contribute to `xinvert`, please
