@@ -11,6 +11,12 @@ from xinvert import animate_iteration
 
 
 def test_animate():
+    ds = xr.open_dataset('./Data/ZonalMean2.nc')
+    print('test small dataset without LFS')
+    print(ds)
+    ds = xr.open_dataset('./Data/ZonalMean.nc')
+    print('test small dataset with LFS')
+    print(ds)
     ds = xr.open_dataset('./Data/Helmholtz_atmos.nc')
     
     assert ds.dims == {'time': 2, 'lat': 73, 'lon': 144}
