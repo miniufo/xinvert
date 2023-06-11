@@ -11,7 +11,7 @@ from xinvert import animate_iteration
 
 
 def test_animate():
-    ds = xr.open_dataset('./Data/Helmholtz_atmos.nc', engine='netcdf4')
+    ds = xr.open_dataset('/home/runner/work/xinvert/xinvert/Data/Helmholtz_atmos.nc', engine='netcdf4')
     
     assert ds.dims == {'time': 2, 'lat': 73, 'lon': 144}
     
