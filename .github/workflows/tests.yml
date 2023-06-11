@@ -21,6 +21,10 @@ jobs:
           pip install ruff pytest
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
+      - name: Check something
+        run: |
+          echo ${{ github.workspace }}
+
       - name: List installed packages
         shell: bash -l {0}
         run: pip list
