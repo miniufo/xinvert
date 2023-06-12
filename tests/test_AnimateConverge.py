@@ -11,6 +11,9 @@ from xinvert import animate_iteration
 
 
 def test_animate():
+    from os.path import exists
+    print('testing nc file exists')
+    print(exists('./Data/Helmholtz_atmos.nc'))
     ds = xr.open_dataset('./Data/Helmholtz_atmos.nc')
     
     assert ds.dims == {'time': 2, 'lat': 73, 'lon': 144}
