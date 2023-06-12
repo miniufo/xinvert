@@ -9,3 +9,4 @@ dependencies:
   - dask
   - scipy
   - netCDF4
+  - numba
