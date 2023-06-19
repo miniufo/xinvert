@@ -1588,6 +1588,106 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
 
 
 @nb.jit(nopython=True, cache=False)
+def trace(a, b, c, d):
+    r"""
+    Trace method for solving tri-diagonal equation set.
+    
+    Parameters
+    ----------
+    a: numpy.array
+        Lower coefficients of the matrix (N-1).
+    b: numpy.array
+        Diagonal coefficients of the matrix (N).
+    c: numpy.array
+        Upper coefficients of the matrix (N-1).
+    d: numpy.array
+        Vector on the right-hand side of the equation (N).
+    
+    Returns
+    -------
+    numpy.array
+        Results of the unknown (N).
+    """
+    N = len(b)
+    
+    if len(a) != N-1 or len(d) != N or len(c) != N-1:
+        raise Exception('lengths of given arrays are not satisfied')
+        
+    buf0 = np.zeros_like(b) # N
+    buf1 = np.zeros_like(a) # N - 1
+    res  = np.zeros_like(b) # N
+    
+    buf1[0] = c[0] / b[0]
+    buf0[0] = b[0]
+    
+    for i in range(1, N-1):
+        buf0[i] = b[i] - a[i-1] * buf1[i-1]
+        buf1[i] = c[i] / buf0[i]
+    
+    buf0[N-1] = b[N-1] - a[N-2] * buf1[N-2]
+    
+    res[0] = d[0] / buf0[0]
+    
+    for i in range(1, N):
+        res[i] = (d[i] - a[i-1] * res[i-1]) / buf0[i]
+    
+    for i in range(N-2, -1, -1):
+        res[i] -= buf1[i] * res[i+1]
+    
+    return res
+
+
+@nb.jit(nopython=True, cache=False)
+def traceCyclic(a, b, c, d, a0, cn):
+    r"""
+    Trace method for solving tri-diagonal equation set with periodic BCs.
+    
+    Parameters
+    ----------
+    a: numpy.array
+        Lower coefficients of the matrix (N-1).
+    b: numpy.array
+        Diagonal coefficients of the matrix (N).
+    c: numpy.array
+        Upper coefficients of the matrix (N-1).
+    d: numpy.array
+        Vector on the right-hand side of the equation (N).
+    a0: float
+        Cyclic coefficient for a.
+    cn: float
+        Cyclic coefficient for c.
+    
+    Returns
+    -------
+    numpy.array
+        Results of the unknown (N).
+    """
+    N = len(b)
+    
+    buf4 = np.zeros_like(b) # N
+    res  = np.zeros_like(b) # N
+    
+    buf4[N-1], buf4[0] = cn, 0
+    buf1 = trace(a, b, c, buf4)
+    
+    buf4[N-1], buf4[0] = 0, a0
+    buf2 = trace(a, b, c, buf4)
+    
+    buf4[N-1], buf4[0] = 0, a0
+    buf3 = trace(a, b, c, d)
+    
+    res[N-1] = ((1.0 + buf1[0]) / buf1[N-1] * buf3[N-1] - buf3[0]) / \
+               ((1.0 + buf1[0]) * (1.0 + buf2[N-1]) / buf1[N-1] - buf2[0]);
+    res[ 0 ] = (buf3[0] - buf2[0] * res[N-1]) / (1 + buf1[0])
+    
+    for i in range(1, N-1):
+        res[i] = buf3[i] - buf1[i] * res[0]-buf2[i] * res[N-1];
+    
+    return res
+
+
+
+@nb.jit(nopython=True, cache=False)
 def absNorm3D(S, undef):
     r"""Sum up 3D absolute value S"""
     norm = 0.0
