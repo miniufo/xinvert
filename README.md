@@ -58,7 +58,7 @@ python setup.py install
 
 
 ---
-## 3. Example: Helmholtz decomposition
+## 3. Examples:
 This is a list of the problems that can be solved by `xinvert`:
 
 |                    Gallery                                |                              descriptions                  |
