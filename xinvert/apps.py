@@ -138,35 +138,45 @@ def invert_RefState(PV, dims, coords='z-lat', icbc=None,
                       icbc, ['Ang0', 'Gamma'], mParams, iParams)
 
 
-def invert_RefState1D(PV, dims, coords='lat', icbc=None,
-                      mParams=default_mParams, iParams=default_iParams):
-    r"""PV inversion for a balanced symmetric vortex.
+def invert_RefStateSWM(Q, dims, coords='lat', icbc=None,
+                       mParams=default_mParams, iParams=default_iParams):
+    r"""(PV) inversion for a steady state of shallow-water model.
 
     The balanced symmetric vortex equation is given as:
 
     .. math::
 
-         \frac{\partial}{\partial \y}\left(\frac{g}{2\pi rQ}
-         \frac{\partial C}{\partial y}\right) -
-         \frac{\sin\phi C_0}{4\pi^2 r^3} C = -\Omega^2 r \sin\phi
+         \frac{\partial}{\partial y}\left(A\frac{\partial\Delta M}{\partial y}\right)
+         -B\Delta M &=F
     
-    Invert this equation for circulation :math:`C` given
+    where
+    
+    .. math::
+         
+         A = 1 / r
+         B = \frac{2C_0 Q_0 \sin\phi}{2\pi g r^3}
+         F = \frac{C_0^2\sin\phi }{2\pi g r^3}-\frac{2\pi\Omega^2r\sin\phi}{g}-\frac{\partial }{\partial y}\left(\frac{1}{r}\frac{\partial M_0}{\partial y}\right)
+    
+    Invert this equation for mass correction :math:`\Delta M` given
     the PV distribution :math:`Q`.
     
     Parameters
     ----------
-    PV: xarray.DataArray
-        2D distribution of PV.
+    Q: xarray.DataArray
+        A set of PV contours.
+    C0: xarray.DataArray
+        Initial circulation profile along the meridional direction.
     dims: list
-        Dimension combination for the inversion e.g., ['lev', 'lat'].
-    coords: {'z-lat', 'cartesian'}, optional
+        Dimension combination for the inversion e.g., ['lat', 'lon'].
+    coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
         Prescribe inital condition/guess (IC) and boundary conditions (BC).
     mParams: dict
         Parameters required for this model are:
 
-		* c0: Eulerian zonal-mean circulation as the known coefficient.
+        * M0: initial guess of meridional mass profile.
+		* c0: Eulerian zonal-mean circulation.
         
     iParams: dict, optional
         Iteration parameters.
@@ -176,8 +186,8 @@ def invert_RefState1D(PV, dims, coords='lat', icbc=None,
     xarray.DataArray
         Results (angular momentum Λ) of the SOR inversion.
     """
-    return __template(__coeffs_RefState1D, inv_standard1D, 1, PV, dims, coords,
-                      icbc, ['c0'], mParams, iParams)
+    return __template(__coeffs_RefStateSWM, inv_standard1D, 1, Q, dims, coords,
+                      icbc, ['M0', 'C0'], mParams, iParams)
 
 
 def invert_PV2D(PV, dims, coords='z-lat', icbc=None,
@@ -1381,23 +1391,49 @@ def __coeffs_RefState(Q, dims, coords, mParams, iParams, icbc):
     return F, initS, (A, B, C)
 
 
-def __coeffs_RefState1D(Q, dims, coords, mParams, iParams, icbc):
-    """Calculating coefficients for reference state."""
-    c0 = mParams['c0']
+def __coeffs_RefStateSWM(Q, dims, coords, mParams, iParams, icbc):
+    """Calculating coefficients for reference state of a shallow-water model."""
+    M0 = mParams['M0']
+    C0 = mParams['C0']
     
     maskF, initS, zero = __mask_FS(Q, dims, iParams, icbc)
-
+    
+    import numba as nb
+    
+    @nb.jit(nopython=True, cache=False)
+    def diff_2nd(M, cosH, delY):
+        re = np.zeros_like(M)
+        
+        J = len(re)
+        # print('inside: ', re.shape, cosH.shape, delY)
+        
+        for j in range(1, J-1):
+            re[j] = (((M[j+1] - M[j  ]) / cosH[j+1]) - 
+                     ((M[j  ] - M[j-1]) / cosH[j  ])) / (delY ** 2)
+        
+        return re
+    
     if coords.lower() == 'lat': # dims[0] is θ, dims[1] is lat
         lats = np.deg2rad(maskF[dims[0]])
-        sinL = np.sin(lats)
-        cosL = np.cos(lats)
-        r    = _R_earth * cosL
+        cosG = np.cos(lats)
+        cosH = np.cos((lats+lats.shift({dims[0]:1}))/2.0) # shift half grid
+        sinG = np.sin(lats)
+        asin = _R_earth * sinG
+        acos = _R_earth * cosG
         
-        A = zero + _g / (2.0 * np.pi * r * maskF)
-        B = zero - sinL * c0 * maskF / (_g * np.pi * r**2.0)
-        F = zero - (((c0*cosL)/(2.0*np.pi*r**2.0))**2.0 +
-                    ((c0*sinL)/(2.0*np.pi*r**2.0))**2.0 -
-                    _omega**2.0*np.cos(2.0*lats)) / _g
+        acos = xr.where(acos<0, -acos*0.1, acos) # ensure positive 0 at poles
+        
+        diff = xr.apply_ufunc(diff_2nd, M0, cosH,
+                              np.abs(lats[0]-lats[1])*_R_earth,
+                              dask='parallelized',
+                              vectorize=True,
+                              input_core_dims=[[dims[0]], [dims[0]], []],
+                              output_core_dims=[[dims[0]]])
+        
+        A = zero + 1.0 / cosH
+        B = zero - C0 * maskF * asin  / (np.pi * _g * acos**3.0)
+        F = zero - (asin * C0**2.0 / (2.0 * np.pi * _g * acos**3.0)) + \
+                   (2.0 * np.pi * _omega**2.0 * asin * acos) / _g - diff
     
     elif coords.lower() == 'cartesian': # dims[0] is θ, dims[1] is r
         raise Exception('not supported for cartesian coordinates')

@@ -22,7 +22,7 @@ from .apps import invert_Poisson, \
                   invert_Fofonoff, \
                   invert_omega, \
                   invert_PV2D, \
-                  invert_RefState1D, \
+                  invert_RefStateSWM, \
                   invert_RefState, \
                   invert_3DOcean, \
                   animate_iteration, cal_flow

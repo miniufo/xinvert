@@ -38,13 +38,19 @@ Why `xinvert`?
 **Requirements**
 `xinvert` is developed under the environment with `xarray` (=version 0.15.0), `dask` (=version 2.11.0), `numpy` (=version 1.15.4), and `numba` (=version 0.51.2).  Older versions of these packages are not well tested.
 
-**Install via pip**
+
+**Install via conda (~ not yet available ~)**
+```bash
+conda install -c conda-forge xinvert
 ```
+
+**Install via pip**
+```bash
 pip install xinvert
 ```
 
 **Install from github**
-```
+```bash
 git clone https://github.com/miniufo/xinvert.git
 cd xinvert
 python setup.py install
@@ -53,72 +59,31 @@ python setup.py install
 
 ---
 ## 3. Example: Helmholtz decomposition
-This is a classical problem in both meteorology and oceanography that a vector flow field can be deomposed into rotational and divergent parts, where rotational and divergent parts are represented by the streamfunction and velocity potential.  Given vorticity (vor) and divergence (div) as the forcing functions, one can invert the streamfunction and velocity potential directly.
+This is a list of the problems that can be solved by `xinvert`:
 
-### 3.1 Atmospheric demonstration
-Here is an atmospheric demonstration with no lateral boundaries:
-```python
-import xarray as xr
-from xinvert import invert_Poisson
-
-dset = xr.open_dataset('data.nc')
-
-vor = dset.vor
-
-# specify boundary conditions in invert parameters
-# 'extend' for lat, 'periodic' for lon
-iParams = {'BCs': ['extend', 'periodic']}
-
-# Invert within lat/lon plane, with extend and periodic boundary
-# conditions in lat and lon respectively
-psi = invert_Poisson(vor, dims=['lat','lon'], iParams=iParams)
-```
-![atmospheric plot](https://raw.githubusercontent.com/miniufo/xinvert/master/pics/atmosExample.png)
+|                    Gallery                                |                              descriptions                  |
+| :-------------------------------------------------------: | :--------------------------------------------------------: |
+| ![Streamfunction](./pics/Gallery_Streamfunction.png)      | invert<br/> Poisson equation <br/>for<br/> horizontal streamfunction  |
+| ![Overturning](./pics/Gallery_Overturning.png)            | invert<br/> Poisson equation <br/>for<br/> overturning streamfunction |
+| ![Balanced Mass](./pics/Gallery_balanceMass.png)         | invert<br/> geostrophic equation <br/>for<br/> balanced mass          |
+| ![Gill-Matsuno model](./pics/Gallery_GillMatsuno.png)     | invert<br/> Gill-Matsuno model <br/>for<br/> wind and mass fields |
+| ![Stommel-Munk model](./pics/Gallery_StommelMunk.png)     | invert<br/> Stommel-Munk model <br/>for<br/> wind-driven ocean circulation|
+| ![Reference state of SWM](./pics/Gallery_SWMReference.png)| invert<br/> PV balance equation <br/>for<br/> steady reference state    |
+| ![Fofonoff flow](./pics/Gallery_Fofonoff.png)             | invert<br/> Fofonoff model <br/>for<br/> inviscid/adiabatic steady state|
+| ![Bretherton flow](./pics/Gallery_Bretherton.png)         | invert<br/> Bretherton model <br/>for<br/> steady flow over topography|
+| ![Omega equation](./pics/Gallery_Omega.png)               | invert<br/> Omega equation <br/>for<br/> QG vertical velocity         |
 
 
-### 3.2 Oceanic demonstration
-Here is a oceanic demonstration with complex lateral boundaries of land/sea:
-```python
-import xarray as xr
-from xinvert import invert_Poisson
 
-dset = xr.open_dataset('mitgcm.nc')
-
-vor = dset.vor
-
-# specify boundary conditions in invert parameters
-# 'fixed' for lat, 'periodic' for lon; undefined value is 0
-iParams = {'BCs':['fixed', 'periodic'], 'undef':0}
-
-# Invert within YG/XGplane, with fixed and periodic boundary respectively.
-# Kwarg undef is used as a mask for land value.
-psi = invert_Poisson(vor, dims=['YG','XG'], iParams=iParams)
-```
-![oceanic plot](https://raw.githubusercontent.com/miniufo/xinvert/master/pics/oceanExample.png)
-
-### 3.3 Animate the convergence of iteration
+## 4 Animate the convergence of iteration
 One can see the whole convergence process of SOR iteration as:
 ```python
-from xinvert import invert_Poisson_animated
+from xinvert import animate_iteration
 
-# input of vor need to be two dimensional only;
-# psi has one more dimension than vor as iteration, which could be animated over.
-# Here psi has 40 frames and loop 1 per frame (final state is after 40 iterations)
+# output has 1 more dimension (iter) than input, which could be animated over.
+# Here 40 frames and loop 1 per frame (final state is after 40 iterations) is used.
 psi = animate_iteration(invert_Poisson, vor, iParams=iParams,
-                              loop_per_frame=1, max_frames=40)
+                        loop_per_frame=1, max_frames=40)
 ```
-![animate plot](https://raw.githubusercontent.com/miniufo/xinvert/master/pics/animateConverge.gif)
 
-More examples can be found in these notebooks:
-1.  [Poisson equation for streamfunction/velocity potential](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/01_Poisson_equation_horizontal.ipynb);
-2.  [Poisson equation for meridional overturning and zonal Walker circulations](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/02_Poisson_equation_vertical.ipynb);
-3.  [Geopotential model for balanced mass field](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/03_Balanced_mass_and_flow.ipynb);
-4.  [Eliassen model for the meridional overturning circulation](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/04_Eliassen_model.ipynb);
-5.  PV inversion for 2D reference state (TODO);
-6.  PV inversion for 2D QGPV (TODO);
-7.  [Matsuno-Gill model for heat-induced tropical circulation](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/07_Gill_Matsuno_model.ipynb)
-8.  [Stommel-Munk model for wind-driven ocean circulation](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/08_Stommel_Munk_model.ipynb)
-9.  [Omega equation for quasi-geostrophic vertical motion](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/09_Omega_equation.ipynb);
-10. [3D oceanic flow](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/10_3D_Ocean_flow.ipynb);
-
-more to be added...
+See the animation at the top.
