@@ -63,16 +63,16 @@ This is a list of the problems that can be solved by `xinvert`:
 
 |                    Gallery                                |                              descriptions                  |
 | :-------------------------------------------------------: | :--------------------------------------------------------: |
-| ![Streamfunction](./pics/Gallery_Streamfunction.png =640x240)      | [invert<br/> Poisson equation <br/>for<br/> horizontal streamfunction](./docs/source/notebooks/01_Poisson_equation_horizontal.ipynb)  |
-| ![Overturning](./pics/Gallery_Overturning.png =640x240)            | [invert<br/> Poisson equation <br/>for<br/> overturning streamfunction](./docs/source/notebooks/02_Poisson_equation_vertical.ipynb) |
-| ![Balanced Mass](./pics/Gallery_balanceMass.png =640x240)          | [invert<br/> geostrophic equation <br/>for<br/> balanced mass](./docs/source/notebooks/03_Balanced_mass_and_flow.ipynb)          |
-| ![Eliassen model](./pics/Gallery_Eliassen.png =640x240)     | [invert<br/> Eliassen model <br/>for<br/> overturning streamfunction](./docs/source/notebooks/04_Eliassen_model.ipynb)     |
-| ![Reference state of SWM](./pics/Gallery_SWMReference.png =640x240)| [invert<br/> PV balance equation <br/>for<br/> steady reference state](./docs/source/notebooks/05_reference_SWM.ipynb)    |
-| ![Gill-Matsuno model](./pics/Gallery_GillMatsuno.png =640x240)     | [invert<br/> Gill-Matsuno model <br/>for<br/> wind and mass fields](./docs/source/notebooks/07_Gill_Matsuno_model.ipynb)     |
-| ![Stommel-Munk model](./pics/Gallery_StommelMunk.png =640x240)     | [invert<br/> Stommel-Munk model <br/>for<br/> wind-driven ocean circulation](./docs/source/notebooks/08_Stommel_Munk_model.ipynb)|
-| ![Fofonoff flow](./pics/Gallery_Fofonoff.png =640x240)             | [invert<br/> Fofonoff model <br/>for<br/> inviscid/adiabatic steady state](./docs/source/notebooks/09_Fofonoff_flow.ipynb)|
-| ![Bretherton flow](./pics/Gallery_Bretherton.png =640x240)         | [invert<br/> Bretherton model <br/>for<br/> steady flow over topography](./docs/source/notebooks/10_Bretherton_flow_over_topography.ipynb)  |
-| ![Omega equation](./pics/Gallery_Omega.png =640x240)               | [invert<br/> Omega equation <br/>for<br/> QG vertical velocity](./docs/source/notebooks/11_Omega_equation.ipynb)           |
+| <img src="./pics/Gallery_Streamfunction.png" width="300">      | [invert<br/> Poisson equation <br/>for<br/> horizontal streamfunction](./docs/source/notebooks/01_Poisson_equation_horizontal.ipynb)  |
+| <img src="./pics/Gallery_Overturning.png" width="300">            | [invert<br/> Poisson equation <br/>for<br/> overturning streamfunction](./docs/source/notebooks/02_Poisson_equation_vertical.ipynb) |
+| <img src="./pics/Gallery_balanceMass.png" width="300">          | [invert<br/> geostrophic equation <br/>for<br/> balanced mass](./docs/source/notebooks/03_Balanced_mass_and_flow.ipynb)          |
+| <img src="./pics/Gallery_Eliassen.png" width="300">     | [invert<br/> Eliassen model <br/>for<br/> overturning streamfunction](./docs/source/notebooks/04_Eliassen_model.ipynb)     |
+| <img src="./pics/Gallery_SWMReference.png" width="300">| [invert<br/> PV balance equation <br/>for<br/> steady reference state](./docs/source/notebooks/05_reference_SWM.ipynb)    |
+| <img src="./pics/Gallery_GillMatsuno.png" width="300">     | [invert<br/> Gill-Matsuno model <br/>for<br/> wind and mass fields](./docs/source/notebooks/07_Gill_Matsuno_model.ipynb)     |
+| <img src="./pics/Gallery_StommelMunk.png" width="300">     | [invert<br/> Stommel-Munk model <br/>for<br/> wind-driven ocean circulation](./docs/source/notebooks/08_Stommel_Munk_model.ipynb)|
+| <img src="./pics/Gallery_Fofonoff.png" width="300">             | [invert<br/> Fofonoff model <br/>for<br/> inviscid/adiabatic steady state](./docs/source/notebooks/09_Fofonoff_flow.ipynb)|
+| <img src="./pics/Gallery_Bretherton.png" width="300">         | [invert<br/> Bretherton model <br/>for<br/> steady flow over topography](./docs/source/notebooks/10_Bretherton_flow_over_topography.ipynb)  |
+| <img src="./pics/Gallery_Omega.png" width="300">               | [invert<br/> Omega equation <br/>for<br/> QG vertical velocity](./docs/source/notebooks/11_Omega_equation.ipynb)           |
 
 
 
