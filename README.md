@@ -22,7 +22,7 @@ More importantly, this could be generalized into a numerical solver for elliptic
 
 One problem with SOR is that the speed of iteration using **explicit loops in Python** will be **e-x-t-r-e-m-e-l-y ... s-l-o-w**!  A very suitable solution here is to use [`numba`](https://numba.pydata.org/).  We may try our best to speed things up using more hardwares (possibly GPU).
 
-Classical problems include Gill-Matsuno model, Stommel-Munk model, QG omega model, PV inversion model, Swayer-Eliassen balance model...  A complete list of the classical inversion problems can be found at [this notebook](https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/Introduction.ipynb).
+Classical problems include Gill-Matsuno model, Stommel-Munk model, QG omega model, PV inversion model, Swayer-Eliassen balance model...  A complete list of the classical inversion problems can be found at [this notebook](./docs/source/notebooks/Introduction.ipynb).
 
 Why `xinvert`?
 
@@ -63,15 +63,16 @@ This is a list of the problems that can be solved by `xinvert`:
 
 |                    Gallery                                |                              descriptions                  |
 | :-------------------------------------------------------: | :--------------------------------------------------------: |
-| ![Streamfunction](./pics/Gallery_Streamfunction.png)      | invert<br/> Poisson equation <br/>for<br/> horizontal streamfunction  |
-| ![Overturning](./pics/Gallery_Overturning.png)            | invert<br/> Poisson equation <br/>for<br/> overturning streamfunction |
-| ![Balanced Mass](./pics/Gallery_balanceMass.png)         | invert<br/> geostrophic equation <br/>for<br/> balanced mass          |
-| ![Gill-Matsuno model](./pics/Gallery_GillMatsuno.png)     | invert<br/> Gill-Matsuno model <br/>for<br/> wind and mass fields |
-| ![Stommel-Munk model](./pics/Gallery_StommelMunk.png)     | invert<br/> Stommel-Munk model <br/>for<br/> wind-driven ocean circulation|
-| ![Reference state of SWM](./pics/Gallery_SWMReference.png)| invert<br/> PV balance equation <br/>for<br/> steady reference state    |
-| ![Fofonoff flow](./pics/Gallery_Fofonoff.png)             | invert<br/> Fofonoff model <br/>for<br/> inviscid/adiabatic steady state|
-| ![Bretherton flow](./pics/Gallery_Bretherton.png)         | invert<br/> Bretherton model <br/>for<br/> steady flow over topography|
-| ![Omega equation](./pics/Gallery_Omega.png)               | invert<br/> Omega equation <br/>for<br/> QG vertical velocity         |
+| ![Streamfunction](./pics/Gallery_Streamfunction.png)      | [invert<br/> Poisson equation <br/>for<br/> horizontal streamfunction](./docs/source/notebooks/01_Poisson_equation_horizontal.ipynb)  |
+| ![Overturning](./pics/Gallery_Overturning.png)            | [invert<br/> Poisson equation <br/>for<br/> overturning streamfunction](./docs/source/notebooks/02_Poisson_equation_vertical.ipynb) |
+| ![Balanced Mass](./pics/Gallery_balanceMass.png)          | [invert<br/> geostrophic equation <br/>for<br/> balanced mass](./docs/source/notebooks/03_Balanced_mass_and_flow.ipynb)          |
+| ![Eliassen model](./pics/Gallery_Eliassen.png)     | [invert<br/> Eliassen model <br/>for<br/> overturning streamfunction](./docs/source/notebooks/04_Eliassen_model.ipynb)     |
+| ![Reference state of SWM](./pics/Gallery_SWMReference.png)| [invert<br/> PV balance equation <br/>for<br/> steady reference state](./docs/source/notebooks/05_reference_SWM.ipynb)    |
+| ![Gill-Matsuno model](./pics/Gallery_GillMatsuno.png)     | [invert<br/> Gill-Matsuno model <br/>for<br/> wind and mass fields](./docs/source/notebooks/07_Gill_Matsuno_model.ipynb)     |
+| ![Stommel-Munk model](./pics/Gallery_StommelMunk.png)     | [invert<br/> Stommel-Munk model <br/>for<br/> wind-driven ocean circulation](./docs/source/notebooks/08_Stommel_Munk_model.ipynb)|
+| ![Fofonoff flow](./pics/Gallery_Fofonoff.png)             | [invert<br/> Fofonoff model <br/>for<br/> inviscid/adiabatic steady state](./docs/source/notebooks/09_Fofonoff_flow.ipynb)|
+| ![Bretherton flow](./pics/Gallery_Bretherton.png)         | [invert<br/> Bretherton model <br/>for<br/> steady flow over topography](./docs/source/notebooks/10_Bretherton_flow_over_topography.ipynb)  |
+| ![Omega equation](./pics/Gallery_Omega.png)               | [invert<br/> Omega equation <br/>for<br/> QG vertical velocity](./docs/source/notebooks/11_Omega_equation.ipynb)           |
 
 
 
