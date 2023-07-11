@@ -41,7 +41,7 @@ Once $\zeta$ is given as a known, one needs to get the unknown $\psi$ with prope
 ![(a) Vertical relative vorticity $\zeta$ and (b) the inverted streamfunction $\psi$ (shading) with current vector superimposed.  Note the irregular boundaries over the global ocean. \label{fig:1}](streamfunction.png){width=100%}
 
 # State of the field
-There are also several PDE solvers written in Python, like [**windspharm**](https://github.com/ajdawson/windspharm) and [**Dedalus**](https://github.com/DedalusProject/dedalus).  While they are efficient and accurate in double-periodic or global domains using the spectral method, they may not be suitable for arbitary domain or boundary like the ocean (Gibbs phenomenon will arise near ocean boundaries).  Also, it is not easy to apply these solvers to more general elliptic equations with arbitary coefficients (sometimes given in a numerical or discretized fashion).  In this case, SOR method is a better choice in the presence of irregular land/sea mask and with spatially-varying coefficients.
+There are also several PDE solvers written in Python, like **windspharm** [@Dawson:2016] and **Dedalus** [@Burns:2020].  While they are efficient and accurate in double-periodic or global domains using the spectral method, they may not be suitable for arbitary domain or boundary like the ocean (Gibbs phenomenon will arise near ocean boundaries).  Also, it is not easy to apply these solvers to more general elliptic equations with arbitary coefficients (sometimes given in a numerical or discretized fashion).  In these cases, SOR method should be a better choice.
 
 # Mathematics
 
@@ -102,6 +102,8 @@ Here we summarize some inversion problems in meteorology and oceanography into \
 | PV inversion for QG flow \newline $\displaystyle{\frac{\partial}{\partial p}\left(\frac{f^2}{N^2}\frac{\partial \psi}{\partial p}\right)+\frac{\partial^2 \psi}{\partial y^2}=q}$ | `psi = invert_PV2D(PV,`\newline`dims=['Z','Y'],`\newline`mParams={f, N2})` \newline |
 | Gill-Matsuno model [@Matsuno:1966; @Gill:1980] \newline $\displaystyle{A\frac{\partial^2 \phi}{\partial y^2}+B\frac{\partial^2 \phi}{\partial x^2}+C\frac{\partial \phi}{\partial y}+D\frac{\partial \phi}{\partial x}+E\phi=Q}$ | `phi = invert_GillMatsuno(Q,`\newline`dims=['Y','X'],`\newline`mParams={f, epsilon, Phi})` \newline|
 | Stommel-Munk model [@Stommel:1948; @Munk:1950] \newline $\displaystyle{A\nabla^4\psi-\frac{R}{D}\nabla^2\psi-\beta\frac{\partial \psi}{\partial x}=-\frac{\hat\nabla \cdot \vec{\tau}  }{\rho_0 D} }$ | `psi = invert_StommelMunk(curl,`\newline`dims=['Y','X'],`\newline`mParams={A, R, D, beta, rho})` \newline |
+| Fofonoff flow [@Fofonoff:1954] \newline $\displaystyle{\nabla^2\psi-c_0\psi=c_1-f}$ | `psi = invert_Fofonoff(f,`\newline`dims=['Y','X'],`\newline`mParams={f, c0, c1})` \newline |
+| Bretherton flow [@Bretherton:1976] \newline $\displaystyle{\nabla^2\psi-\lambda D\psi=-\frac{f_0}{D}\eta_B}$ | `psi = invert_BrethertonHaidvogel(topo,`\newline`dims=['Y','X'],`\newline`mParams={f, D, lambda})` \newline |
 | QG-Omega equation [@Hoskins:1978] \newline $\displaystyle{\frac{\partial}{\partial p}\left(f^2\frac{\partial \omega}{\partial p}\right)+\nabla\cdot\left(S\nabla\omega\right)=F}$ | `w = invert_Omega(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, S})` \newline|
 | **...** more problems **...** |  |
 

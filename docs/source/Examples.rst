@@ -8,7 +8,7 @@ Examples
 
 Classical inversion problems in geophysical fluid dynamics are demonstrated here. 
 Users are also encouraged to add their own examples.  A complete list of the
-problems can be found at `this notebook <https://github.com/miniufo/xinvert/blob/master/notebooks/01.%20Introduction%20to%20xinvert.ipynb>`_.
+problems can be found at `this notebook <https://github.com/miniufo/xinvert/blob/master/docs/source/notebooks/00_Introduction.ipynb>`_.
 
 
 .. toctree::
@@ -19,9 +19,10 @@ problems can be found at `this notebook <https://github.com/miniufo/xinvert/blob
    notebooks/02_Poisson_equation_vertical
    notebooks/03_Balanced_mass_and_flow
    notebooks/04_Eliassen_model
+   notebooks/05_reference_SWM
    notebooks/07_Gill_Matsuno_model
    notebooks/08_Stommel_Munk_model
    notebooks/09_Fofonoff_flow
-   notebooks/10_2D_Steady_flow_over_topography
+   notebooks/10_Bretherton_flow_over_topography
    notebooks/11_Omega_equation
   
