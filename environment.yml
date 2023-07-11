@@ -10,3 +10,5 @@ dependencies:
   - scipy
   - netCDF4
   - numba
+  - proplot
+  - cartopy
