@@ -39,11 +39,6 @@ Why `xinvert`?
 `xinvert` is developed under the environment with `xarray` (=version 0.15.0), `dask` (=version 2.11.0), `numpy` (=version 1.15.4), and `numba` (=version 0.51.2).  Older versions of these packages are not well tested.
 
 
-**Install via conda (~ not yet available ~)**
-```bash
-conda install -c conda-forge xinvert
-```
-
 **Install via pip**
 ```bash
 pip install xinvert

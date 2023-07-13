@@ -12,19 +12,11 @@ Requirements
 xinvert is compatible with python 3 (>= version 3.6). It requires xarray_ dask_ 
 numpy_ and numba_.
 
-Installation from conda
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-The easiest way to install xinvert along with its dependencies is via conda
-forge (not available yet)::
-
-    conda install -c conda-forge xinvert
-
 
 Installation from pip
 ^^^^^^^^^^^^^^^^^^^^^
 
-An alternative is to use pip::
+One can do this by using pip::
 
     pip install xinvert
 
