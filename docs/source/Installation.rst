@@ -39,6 +39,17 @@ or simply::
     pip install git+https://github.com/miniufo/xinvert.git
 
 
+How to run the notebooks
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+If you want to run the example notebooks in this documentation, you will need a
+few extra dependencies that you can install via:::
+
+    conda env create -f docs/environment.yml
+    conda activate xinvert
+
+
+
 .. _dask: http://dask.pydata.org/
 .. _numpy: https://numpy.org/
 .. _xarray: http://xarray.pydata.org/
