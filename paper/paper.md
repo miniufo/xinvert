@@ -41,7 +41,7 @@ Once $\zeta$ is given as a known, one needs to get the unknown $\psi$ with prope
 ![(a) Vertical relative vorticity $\zeta$ and (b) the inverted streamfunction $\psi$ (shading) with current vector superimposed.  Note the irregular boundaries over the global ocean. \label{fig:1}](streamfunction.png){width=100%}
 
 # State of the field
-There are also several PDE solvers written in Python, like **windspharm** [@Dawson:2016] and **Dedalus** [@Burns:2020].  While they are efficient and accurate in double-periodic or global domains using the spectral method, they may not be suitable for arbitary domain or boundary like the ocean (Gibbs phenomenon will arise near ocean boundaries).  Also, it is not easy to apply these solvers to more general elliptic equations with arbitary coefficients (sometimes given in a numerical or discretized fashion).  In these cases, SOR method should be a better choice.
+There are also several PDE solvers written in Python, like **windspharm** [@Dawson:2016] and **Dedalus** [@Burns:2020].  While they are efficient and accurate in double-periodic or global domains using the spectral method, they may not be suitable for arbitary domains or boundaries like the ocean (Gibbs phenomenon will arise near ocean boundaries).  Also, it is not easy to apply these solvers to more general elliptic equations with arbitary coefficients (sometimes given in a numerical or discretized fashion).  In these cases, the successive over relaxation (SOR) method should be a better choice.
 
 # Mathematics
 
