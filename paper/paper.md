@@ -92,9 +92,7 @@ Here we summarize some inversion problems in meteorology and oceanography into \
 
 | Problem names and equations | Function calls |
 | :--------- | ---------: |
-| Horizontal streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial y^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_k}$ | `psi = invert_Poisson(vork,`\newline`dims=['Y','X'],`\newline`mParams=None)` \newline|
-| MOC streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial y^2}=\zeta_i}$ | `psi = invert_Poisson(vori,`\newline`dims=['Z','Y'],`\newline`mParams=None)` \newline|
-| Walker streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial z^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_j}$ | `psi = invert_Poisson(vorj,`\newline`dims=['Z','X'],`\newline`mParams=None)` \newline|
+| Streamfunction \newline $\displaystyle{\nabla^2\psi=\frac{\partial^2 \psi}{\partial y^2}+\frac{\partial^2 \psi}{\partial x^2}=\zeta_k}$ | `psi = invert_Poisson(vork,`\newline`dims=['Y','X'],`\newline`mParams=None)` \newline|
 | Balanced mass field [@Yuan:2008] \newline $\displaystyle{\nabla^2\Phi=\frac{\partial^2 \Phi}{\partial y^2}+\frac{\partial^2 \Phi}{\partial x^2}=F}$ | `Phi = invert_Poisson(F,`\newline`dims=['Y','X'],`\newline`mParams=None)` \newline|
 | Geostrophic streamfunction \newline $\displaystyle{\frac{\partial}{\partial y}\left(f\frac{\partial \psi}{\partial y}\right)+\frac{\partial}{\partial x}\left(f\frac{\partial \psi}{\partial x}\right)=\nabla^2 \Phi}$ | `psi = invert_geostrophic(LapPhi,`\newline`dims=['Y','X'],`\newline`mParams={f})` \newline|
 | Eliassen model [@Eliassen:1952] \newline $\displaystyle{\frac{\partial}{\partial p}\left(A\frac{\partial \psi}{\partial p}+B\frac{\partial \psi}{\partial y}\right)+\frac{\partial}{\partial y}\left(B\frac{\partial \psi}{\partial p}+C\frac{\partial \psi}{\partial y}\right)=F}$ | `psi = invert_Eliassen(F,`\newline`dims=['Z','Y'],`\newline`mParams={Angm, Thm})` \newline|
@@ -102,6 +100,8 @@ Here we summarize some inversion problems in meteorology and oceanography into \
 | PV inversion for QG flow \newline $\displaystyle{\frac{\partial}{\partial p}\left(\frac{f^2}{N^2}\frac{\partial \psi}{\partial p}\right)+\frac{\partial^2 \psi}{\partial y^2}=q}$ | `psi = invert_PV2D(PV,`\newline`dims=['Z','Y'],`\newline`mParams={f, N2})` \newline |
 | Gill-Matsuno model [@Matsuno:1966; @Gill:1980] \newline $\displaystyle{A\frac{\partial^2 \phi}{\partial y^2}+B\frac{\partial^2 \phi}{\partial x^2}+C\frac{\partial \phi}{\partial y}+D\frac{\partial \phi}{\partial x}+E\phi=Q}$ | `phi = invert_GillMatsuno(Q,`\newline`dims=['Y','X'],`\newline`mParams={f, epsilon, Phi})` \newline|
 | Stommel-Munk model [@Stommel:1948; @Munk:1950] \newline $\displaystyle{A\nabla^4\psi-\frac{R}{D}\nabla^2\psi-\beta\frac{\partial \psi}{\partial x}=-\frac{\hat\nabla \cdot \vec{\tau}  }{\rho_0 D} }$ | `psi = invert_StommelMunk(curl,`\newline`dims=['Y','X'],`\newline`mParams={A, R, D, beta, rho})` \newline |
+| Fofonoff flow [@Fofonoff:1954] \newline $\displaystyle{\nabla^2\psi-c_0\psi=c_1-f}$ | `psi = invert_Fofonoff(f,`\newline`dims=['Y','X'],`\newline`mParams={f, c0, c1})` \newline |
+| Bretherton flow [@Bretherton:1976] \newline $\displaystyle{\nabla^2\psi-\lambda D\psi=-\frac{f_0}{D}\eta_B}$ | `psi = invert_BrethertonHaidvogel(topo,`\newline`dims=['Y','X'],`\newline`mParams={f, D, lambda})` \newline |
 | QG-Omega equation [@Hoskins:1978] \newline $\displaystyle{\frac{\partial}{\partial p}\left(f^2\frac{\partial \omega}{\partial p}\right)+\nabla\cdot\left(S\nabla\omega\right)=F}$ | `w = invert_Omega(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, S})` \newline|
 | **...** more problems **...** |  |
 
