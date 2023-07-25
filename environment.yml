@@ -13,3 +13,4 @@ dependencies:
   - proplot
   - cartopy
   - pooch
+  - ipykernel
