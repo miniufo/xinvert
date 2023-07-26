@@ -25,18 +25,18 @@ bibliography: paper.bib
 
 # Statement of need
 
-Many problems in meteorology and oceanography can be cast into a balanced model in the form of a partial differential equation (PDE).  The most well-known one is the relation between the streamfunction $\psi$ and the vertical vorticity $\zeta$ (also known as Poisson equation):
+Many problems in meteorology and oceanography can be cast into a balanced model in the form of a partial differential equation (PDE).  The most well-known one is the relation between the stream function $\psi$ and the vertical vorticity $\zeta$ (also known as Poisson equation):
 
 $$\nabla^2 \psi = \frac{\partial^2 \psi}{\partial y^2}+\frac{\partial^2 \psi}{\partial y^2} = \zeta$$
 
 Once $\zeta$ is given as a known, one needs to get the unknown $\psi$ with proper boundary conditions, which is essentially an inversion problem (\autoref{fig:1}).  Many geophysical fluid dynamical (GFD) problems can be described by such a balanced model, which is generally of second (or fourth) order in spatial derivatives and does not depend explicitly on time.  Therefore, it is also known as a steady-state model.  Early scientists tried to find analytical solutions by simplifying the parameters of these models (e.g., assuming constant coefficients).  Nowadays, with the new developments in numerical algorithms and parallel-computing programming, one may need a modern solver, written in a popular programming language like `Python`, to invert all these models in a numerical fashion.  More specifically, the following needs should be satisfied:
 
-- **A unified numerical solver:** It can solve all the classical balanced GFD models, even in a domain with irregular boundaries like the ocean.  New models can also be adapted straightforwardly to fit the solver;
+- **A unified numerical solver:** It can solve all of the classical balanced GFD models, even in a domain with irregular boundaries like the ocean.  New models can also be adapted straightforwardly to fit the solver;
 - **Thinking and coding in equations:** Users focus naturally on the key inputs and outputs of the GFD models, just like thinking of the knowns and unknowns of the PDEs;
-- **Flexible parameter specification:** Coefficients of the models can be either constant, 1D vectors, or ND arrays.  This allows an easy reproduce of early simplified results and also an extension to more general/realistic results;
+- **Flexible parameter specification:** Coefficients of the models can be either constant, 1D vectors, or ND arrays.  This allows an easy reproduction of early simplified results and also an extension to more general/realistic results;
 - **Fast and efficient:** The algorithm should be fast and efficient.  Also, the code can be compiled first and then executed as fast as `C` or `FORTRAN`, instead of executed in the slow pure `Python` interpreter.  In addition, it can leverage the multi-core and out-of-core computational capabilities of modern computers;
 
-`xinvert` is designed to satisfy all the above needs, based on the ecosystem of `Python`.
+`xinvert` is designed to satisfy all of the above needs, based on the `Python` ecosystem.
 
 ![(a) Vertical relative vorticity $\zeta$ and (b) the inverted streamfunction $\psi$ (shading) with current vector superimposed.  Note the irregular boundaries over the global ocean. \label{fig:1}](streamfunction.png){width=100%}
 
@@ -55,7 +55,7 @@ For the 2D case, the **general form** of Eq. \eqref{eq:1} is:
 
 $$L\left(\psi\right) \equiv A_1\frac{\partial^2 \psi}{\partial y^2}+A_2\frac{\partial^2 \psi}{\partial y \partial x}+A_3\frac{\partial^2 \psi}{\partial x^2}+A_4\frac{\partial \psi}{\partial y}+A_5\frac{\partial \psi}{\partial x}+A_6\psi = F \label{eq:2} \tag{2}$$
 
-where coefficients $A_1-A_6$ are all known variables.  When the condition $4A_1 A_3-A_2^2>0$ is met everywhere in the domain, the above equation is an elliptic-type equation.  In this case, one can invert $\psi$ using the **SOR** iteration method.  When $4A_1 A_3-A_2^2=0$ or $4A_1 A_3-A_2^2<0$, it is a parabolic or hyperbolic equation.  In either case, SOR would *fail* to converge to the solution.
+where coefficients $A_1-A_6$ are all known.  When the condition $4A_1 A_3-A_2^2>0$ is met everywhere in the domain, the above equation is an elliptic-type equation.  In this case, one can invert $\psi$ using the **SOR** iteration method.  When $4A_1 A_3-A_2^2=0$ or $4A_1 A_3-A_2^2<0$, it is a parabolic or hyperbolic equation.  In either case, SOR would *fail* to converge to the solution.
 
 Sometimes the **general form** of Eq. \eqref{eq:2} can be transformed into the **standard form** (i.e., standardization):
 
@@ -76,7 +76,8 @@ L\left(\psi\right) &\equiv A_1\frac{\partial^4 \psi}{\partial y^4}+A_2\frac{\par
 \end{aligned} \tag{5}
 $$
 
-So we implement four basic solvers to take into account the above four Eqs. \eqref{eq:2}-\eqref{eq:5} cases.  Most of the problems fit one of these four types of solver.  However, it is **NOT** clear which form, the general form Eq. \eqref{eq:2} or the standard form Eq. \eqref{eq:3}, is preferred for the inversion if a problem can be cast into either one.
+So we implement four basic solvers to take into account the above equations \eqref{eq:2} to \eqref{eq:5}.
+Most of the problems fit one of these four types of solver.  However, it is not clear which form, the general form Eq. \eqref{eq:2} or the standard form Eq. \eqref{eq:3}, is preferred for the inversion if a problem can be cast into either one.
 
 
 # Summary
@@ -110,7 +111,7 @@ Here we summarize some inversion problems in meteorology and oceanography into \
 
 # Usage
 
-`xinvert` is designed in a functional-programming (FP) style.  Users only need to import the function they are interested in and call it to get the inverted results (\autoref{table:1}).  Note that the calculation of the forcing function $F$ (e.g., calculating the vorticity using the velocity vector) on the right-hand side of the equation is **NOT** the core part of this package.  But there is a `FiniteDiff` utility module with which finite difference calculus can be readily performed.
+`xinvert` is designed in a functional-programming (FP) style.  Users only need to import the function they are interested in and call it to get the inverted results (\autoref{table:1}).  Note that the calculation of the forcing function $F$ (e.g., calculating the vorticity using the velocity vector) on the right-hand side of the equation is not the core part of this package.  But there is a `FiniteDiff` utility module with which finite difference calculus can be readily performed.
 
 
 # Acknowledgements
