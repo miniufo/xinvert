@@ -1586,7 +1586,6 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
     return S
 
 
-
 @nb.jit(nopython=True, cache=False)
 def trace(a, b, c, d):
     r"""

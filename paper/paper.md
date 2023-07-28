@@ -104,14 +104,14 @@ Here we summarize some inversion problems in meteorology and oceanography into \
 | Fofonoff flow [@Fofonoff:1954] \newline $\displaystyle{\nabla^2\psi-c_0\psi=c_1-f}$ | `psi = invert_Fofonoff(f,`\newline`dims=['Y','X'],`\newline`mParams={f, c0, c1})` \newline |
 | Bretherton flow [@Bretherton:1976] \newline $\displaystyle{\nabla^2\psi-\lambda D\psi=-\frac{f_0}{D}\eta_B}$ | `psi = invert_BrethertonHaidvogel(topo,`\newline`dims=['Y','X'],`\newline`mParams={f, D, lambda})` \newline |
 | QG-Omega equation [@Hoskins:1978] \newline $\displaystyle{\frac{\partial}{\partial p}\left(f^2\frac{\partial \omega}{\partial p}\right)+\nabla\cdot\left(S\nabla\omega\right)=F}$ | `w = invert_Omega(F,`\newline`dims=['Z','Y','X'],`\newline`mParams={f, S})` \newline|
-| **...** more problems **...** |  |
+
 
   : Classical inversion problems in GFD.  The model names, equations, typical references and function calls are listed \label{table:1}
 
 
 # Usage
 
-`xinvert` is designed in a functional-programming (FP) style.  Users only need to import the function they are interested in and call it to get the inverted results (\autoref{table:1}).  Note that the calculation of the forcing function $F$ (e.g., calculating the vorticity using the velocity vector) on the right-hand side of the equation is not the core part of this package.  But there is a `FiniteDiff` utility module with which finite difference calculus can be readily performed.
+`xinvert` provides a set of functions with a prefix `invert_`.  Users only need to import the function they are interested in and call it to get the inverted results (\autoref{table:1}).  Note that the calculation of the forcing function $F$ (e.g., calculating the vorticity using the velocity vector) on the right-hand side of the equation is not the core part of this package.  But there is a `FiniteDiff` utility module with which finite difference calculus can be readily performed.
 
 
 # Acknowledgements
