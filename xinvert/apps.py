@@ -1480,15 +1480,15 @@ def __coeffs_Eliassen(force, dims, coords, mParams, iParams, icbc):
     maskF, initS, zero = __mask_FS(force, dims, iParams, icbc)
 
     if coords.lower() == 'z-lat': # dims[0] is θ, dims[1] is lat
-        A = Am
-        B = Bm
-        C = Cm
+        A = zero + Am
+        B = zero + Bm
+        C = zero + Cm
         F = maskF.where(maskF!=_undeftmp, _undeftmp)
     
     elif coords.lower() == 'cartesian': # dims[0] is θ, dims[1] is r
-        A = Am
-        B = Bm
-        C = Cm
+        A = zero + Am
+        B = zero + Bm
+        C = zero + Cm
         F = maskF.where(maskF!=_undeftmp, _undeftmp)
 
     else:
