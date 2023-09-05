@@ -15,7 +15,7 @@ numpy_ and numba_.
 Installation from conda forge
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-GCM-Filters can be installed via conda forge::
+xinvert can be installed via conda forge::
 
     conda install -c conda-forge xinvert
 
