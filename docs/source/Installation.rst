@@ -12,6 +12,12 @@ Requirements
 xinvert is compatible with python 3 (>= version 3.6). It requires xarray_ dask_ 
 numpy_ and numba_.
 
+Installation from conda forge
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+GCM-Filters can be installed via conda forge::
+
+    conda install -c conda-forge xinvert
 
 Installation from pip
 ^^^^^^^^^^^^^^^^^^^^^

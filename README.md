@@ -7,6 +7,8 @@
 ![Workflow](https://github.com/miniufo/xinvert/actions/workflows/python-publish.yml/badge.svg)
 [![pytest](https://github.com/miniufo/xinvert/actions/workflows/tests.yml/badge.svg)](https://github.com/miniufo/xinvert/actions/workflows/tests.yml)
 [![Build Status](https://app.travis-ci.com/miniufo/xinvert.svg?branch=master)](https://app.travis-ci.com/miniufo/xinvert)
+[![status](https://joss.theoj.org/papers/1fc4ac8f98c0778516971880727a3a94/status.svg)](https://joss.theoj.org/papers/1fc4ac8f98c0778516971880727a3a94)
+
 
 ![animate plot](https://raw.githubusercontent.com/miniufo/xinvert/master/pics/animateConverge.gif)
 
