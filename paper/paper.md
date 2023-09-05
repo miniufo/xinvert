@@ -116,7 +116,7 @@ Here we summarize some inversion problems in meteorology and oceanography into \
 
 # Acknowledgements
 
-This work is jointly supported by the National Natural Science Foundation of China (41931182, 41976023), and the support of the Independent Research Project Program of State Key Laboratory of Tropical Oceanography (LTOZZ2102). The author gratefully acknowledges the use of the HPCC at the South China Sea Institute of oceanology, Chinese Academy of Sciences.
+This work is jointly supported by the National Natural Science Foundation of China (42376028, 41931182, 41976023), and the support of the Independent Research Project Program of State Key Laboratory of Tropical Oceanography (LTOZZ2102). The author gratefully acknowledges the use of the HPCC at the South China Sea Institute of oceanology, Chinese Academy of Sciences.
 
 
 # References
