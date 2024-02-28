@@ -7,7 +7,7 @@ preferred-citation:
     orcid: "https://orcid.org/0000-0001-5660-7619"
   title: "xinvert: A Python package for inversion problems in geophysical fluid dynamics"
   journal: "Journal of Open Source Software"
-  doi: "10.21105/joss.03053"
+  doi: "10.21105/joss.05510"
   volume: 8
   issue: 89
   start: 5510
