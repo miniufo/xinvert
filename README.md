@@ -80,3 +80,24 @@ psi = animate_iteration(invert_Poisson, vor, iParams=iParams,
 ```
 
 See the animation at the top.
+
+
+
+## 5 Cite
+
+If you use the package in research, teaching, or other activities, we would be grateful
+if you mention `xinvert` and cite our paper in JOSS:
+
+```bibtex
+@article{Qian2023,
+    doi = {10.21105/joss.05510},
+    url = {https://doi.org/10.21105/joss.05510},
+    year = {2023},
+    publisher = {The Open Journal},
+    volume = {8},
+    number = {89},
+    pages = {5510},
+    author = {Yu-Kun Qian},
+    title = {xinvert: A Python package for inversion problems in geophysical fluid dynamics}, journal = {Journal of Open Source Software}
+}
+```
