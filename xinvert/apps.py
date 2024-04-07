@@ -1315,7 +1315,6 @@ def __template(coef_func, inv_func, dimLen,
     iParams = __update(default_iParams, iParams)
     mParams = __update(default_mParams, mParams, validParams)
     
-    print(mParams['Rearth'])
     ######  1. calculating the coefficients  ######
     maskF, initS, coeffs = coef_func(F, dims, coords, mParams, iParams, icbc)
     
