@@ -8,7 +8,11 @@ Copyright 2018. All rights reserved. Use is subject to license terms.
 from .numbas import invert_standard_3D, invert_standard_2D, invert_standard_1D,\
                     invert_general_3D, invert_general_2D, \
                     invert_general_bih_2D, invert_standard_2D_test
-from .utils import loop_noncore, _undeftmp
+from .utils import loop_noncore
+
+
+# default undefined value
+_undeftmp = -9.99e8
 
 """
 Below are the core methods of xinvert

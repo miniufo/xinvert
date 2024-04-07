@@ -5,18 +5,6 @@ Created on 2021.01.03
 @author: MiniUFO
 Copyright 2018. All rights reserved. Use is subject to license terms.
 """
-#%%
-import numpy as np
-
-
-_R_earth = 6371200.0 # consistent with GrADS
-_omega = 7.292e-5    # angular speed of the earth rotation
-_g = 9.80665         # gravitational acceleration
-_undeftmp = -9.99e8  # default undefined value
-_deg2m = np.pi * _R_earth / 180.0
-
-_latlon = ['lat', 'latitude' , 'lats', 'yc', 'y',
-           'lon', 'longitude', 'long', 'xc', 'x']
 
 
 def loop_noncore(data, dims=None):

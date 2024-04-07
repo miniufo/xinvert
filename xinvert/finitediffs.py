@@ -8,7 +8,6 @@ Copyright 2018. All rights reserved. Use is subject to license terms.
 #%%
 import numpy as np
 import xarray as xr
-from .utils import _deg2m, _R_earth
 
 
 class FiniteDiff(object):
@@ -40,6 +39,8 @@ class FiniteDiff(object):
         {'Z':(1,2), 'Y':(0,0), 'X':(1,0)}
     coords: {'lat-lon', 'cartesian'}
         Types of coords.  Should be one of ['lat-lon', 'cartesian'].
+    R: float
+        Radius of Earth.
     
     Methods
     -------
@@ -62,7 +63,7 @@ class FiniteDiff(object):
     Okubo_Weiss(vector)
         Okubo Weiss parameter.
     """
-    def __init__(self, dim_mapping, BCs='extend', coords='lat-lon', fill=0):
+    def __init__(self, dim_mapping, BCs='extend', coords='lat-lon', fill=0, R=6371200.0):
         """Construct a FiniteDiff instance given dimension mapping
         
         Parameters
@@ -87,6 +88,8 @@ class FiniteDiff(object):
         fills: float or dict
             Fill value if BCs are fixed.  A typical example can be:
                 {'Z':(1,2), 'Y':(0,0), 'X':(1,0)}
+        R: float
+            Radius of Earth.
         """
         # Align dims and BCs with default one ('extend').
         if BCs is None:
@@ -128,6 +131,7 @@ class FiniteDiff(object):
         self.BCs    = BCs
         self.fill   = fill
         self.coords = coords
+        self.R      = R
         
         if coords not in ['lat-lon', 'cartesian']:
             raise Exception('unsupported coords: ' + coords +
@@ -180,13 +184,13 @@ class FiniteDiff(object):
             dimName = self.dmap[dim]
             
             if dim == 'Y' and llc:
-                scale = _deg2m
+                scale = np.pi * self.R / 180.0 # deg2m
             elif dim == 'X' and llc:
                 if 'Y' in self.dmap and self.dmap['Y'] in v.dims:
                     cos = np.cos(np.deg2rad(v[self.dmap['Y']]))
                 else:
                     cos = 1
-                scale = _deg2m * cos
+                scale = np.pi * self.R / 180.0 * cos # deg2m
             else:
                 scale = 1
             
@@ -254,7 +258,7 @@ class FiniteDiff(object):
             if llc and dim == 'Y':
                 # weight cos(lat)
                 cos = np.cos(np.deg2rad(comp[self.dmap['Y']]))
-                scale = _deg2m * cos
+                scale = np.pi * self.R / 180.0 * cos
                 tmp = comp * cos
             elif llc and dim == 'X':
                 # weight cos(lat)
@@ -262,7 +266,7 @@ class FiniteDiff(object):
                     cos = np.cos(np.deg2rad(comp[self.dmap['Y']]))
                 else:
                     cos = 1
-                scale = _deg2m * cos
+                scale = np.pi * self.R / 180.0 * cos
                 tmp = comp
             else:
                 scale = 1
@@ -333,7 +337,7 @@ class FiniteDiff(object):
             else:
                 cos = 1
                 
-            scale = _deg2m * cos
+            scale = np.deg2rad(1.0) * self.R * cos
         else:
             scale = 1.0
         
@@ -414,11 +418,11 @@ class FiniteDiff(object):
                 cosL  = np.cos(latR)
                 
                 if dim == 'Y':
-                    scale  = _deg2m
+                    scale  = np.pi * self.R / 180.0
                     metric = -deriv(v, dmap['Y'], BCs['Y'], fill['Y'],
-                                    scale) * np.tan(latR) / _R_earth
+                                    scale) * np.tan(latR) / self.R
                 else:
-                    scale = _deg2m * cosL
+                    scale = np.pi * self.R / 180.0 * cosL
                     metric = 0
             else:
                 scale = 1.0

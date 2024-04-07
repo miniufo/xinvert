@@ -8,11 +8,14 @@ Copyright 2018. All rights reserved. Use is subject to license terms.
 import numpy as np
 import xarray as xr
 import copy
-from .utils import _R_earth, _omega, _undeftmp, _g, _deg2m, loop_noncore
+from .utils import loop_noncore
 from .core import inv_standard3D, inv_standard2D, inv_standard1D,\
                   inv_general3D, inv_general2D,\
                   inv_general2D_bih, inv_standard2D_test
 
+
+# default undefined value
+_undeftmp = -9.99e8
 
 ###### default invert parameters. ######
 default_iParams = copy.deepcopy({
@@ -50,6 +53,10 @@ default_mParams = copy.deepcopy({
     'lambda' : 1e-8 , # used in Bretherton-Haidvogel model
     'c0'     : 8e-9 , # for Fofonoff model
     'c1'     : 8e-5 , # for Fofonoff model
+    
+    'Rearth' : 6371200.0, # Radius of Earth
+    'Omega'  : 7.292e-5 , # angular speed of Earth's rotation
+    'g'      : 9.80665  , # gravitational acceleration
 })
 
 
@@ -702,9 +709,9 @@ def invert_Fofonoff(F, dims, coords='cartesian', icbc=None,
 
 def invert_omega(F, dims, coords='lat-lon', icbc=None,
                  mParams=default_mParams, iParams=default_iParams):
-    r"""Inverting the Omega equation.
+    r"""Inverting the omega equation.
 
-    The Omega equation is given as:
+    The omega equation is given as:
 
     .. math::
 
@@ -759,7 +766,7 @@ def invert_omega(F, dims, coords='lat-lon', icbc=None,
         if (mParams['N2'][1:]<=0).any():
             raise Exception('unstable stratification in coefficient A')
     
-    return __template(__coeffs_Omega, inv_standard3D, 3, F, dims, coords,
+    return __template(__coeffs_omega, inv_standard3D, 3, F, dims, coords,
                       icbc, ['f0', 'beta', 'N2'], mParams, iParams)
 
 
@@ -927,12 +934,12 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         validMPs  = ['c0', 'c1', 'f0', 'beta']
         
     elif app_name == 'omega':
-        coef_func = __coeffs_Omega
+        coef_func = __coeffs_omega
         invt_func = inv_standard3D
         validMPs  = ['f0', 'beta', 'N2']
         
     elif app_name == '3Docean':
-        coef_func = __coeffs_Omega
+        coef_func = __coeffs_omega
         invt_func = inv_standard3D
         validMPs  = ['f0', 'beta', 'N2', 'epsilon', 'k']
     else:
@@ -945,9 +952,11 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
     
     ######  2. calculating the parameters  ######
     if dimLen == 2:
-        ps = __cal_params2D(maskF[dims[0]], maskF[dims[1]], coords)
+        ps = __cal_params2D(maskF[dims[0]], maskF[dims[1]], coords,
+                            Rearth=mParams['Rearth'])
     elif dimLen == 3:
-        ps = __cal_params3D(maskF[dims[0]], maskF[dims[1]], maskF[dims[2]], coords)
+        ps = __cal_params3D(maskF[dims[0]], maskF[dims[1]], maskF[dims[2]], coords,
+                            Rearth=mParams['Rearth'])
     else:
         raise Exception('dimension length should be one of [2, 3]')
     
@@ -1066,7 +1075,7 @@ def invert_MultiGrid(invert_func, *args, ratio=3, gridNo=3, **kwargs):
     return o_guess, fs, os
 
 
-def _invert_Omega_MG(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
+def _invert_omega_MG(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
                     coords='latlon', f0=None, beta=None,
                     undef=np.nan, mxLoop=5000, tolerance=1e-6,
                     optArg=None, printInfo=True, debug=False,
@@ -1101,7 +1110,7 @@ def _invert_Omega_MG(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
         o_guess = xr.where(np.isnan(o_guess), 0, o_guess) # maskout nan
         
         # # iteration over fine grid from the coarse initial guess
-        # o = invert_OmegaEquation(force, S, dims=dims, BCs=BCs, coords=coords,
+        # o = invert_omegaEquation(force, S, dims=dims, BCs=BCs, coords=coords,
         #                          f0=f0, beta=beta, undef=undef, mxLoop=mxLoop/50,
         #                          tolerance=tolerance, optArg=optArg, debug=debug,
         #                          printInfo=printInfo, icbc=o_guess)
@@ -1218,15 +1227,16 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
             cosLat = np.cos(lats)
             sinLat = np.sin(lats)
             
-            f = 2.0 * _omega * sinLat
+            f = 2.0 * mParams['Omega'] * sinLat
+            deg2m = np.deg2rad(1.0) * mParams['Rearth']
             
             coef1 = eps / (eps**2.0 + f**2.0)
             coef2 = f   / (eps**2.0 + f**2.0)
             
-            c1 = - coef1 * S.differentiate(dims[1]) / _deg2m / cosLat \
-                 - coef2 * S.differentiate(dims[0]) / _deg2m
-            c2 = - coef1 * S.differentiate(dims[0]) / _deg2m \
-                 + coef2 * S.differentiate(dims[1]) / _deg2m / cosLat
+            c1 = - coef1 * S.differentiate(dims[1]) / deg2m / cosLat \
+                 - coef2 * S.differentiate(dims[0]) / deg2m
+            c2 = - coef1 * S.differentiate(dims[0]) / deg2m \
+                 + coef2 * S.differentiate(dims[1]) / deg2m / cosLat
         elif coords.lower() == 'cartesian':
             ydef = S[dims[0]]
             f = f0 + beta * ydef
@@ -1294,11 +1304,14 @@ def __template(coef_func, inv_func, dimLen,
     
     ######  2. calculating the parameters  ######
     if dimLen == 1:
-        ps = __cal_params1D(maskF[dims[0]], coords)
+        ps = __cal_params1D(maskF[dims[0]], coords,
+                            Rearth=mParams['Rearth'])
     elif dimLen == 2:
-        ps = __cal_params2D(maskF[dims[0]], maskF[dims[1]], coords)
+        ps = __cal_params2D(maskF[dims[0]], maskF[dims[1]], coords,
+                            Rearth=mParams['Rearth'])
     elif dimLen == 3:
-        ps = __cal_params3D(maskF[dims[0]], maskF[dims[1]], maskF[dims[2]], coords)
+        ps = __cal_params3D(maskF[dims[0]], maskF[dims[1]], maskF[dims[2]], coords,
+                            Rearth=mParams['Rearth'])
     else:
         raise Exception('dimension length should be one of [2, 3]')
         
@@ -1366,6 +1379,7 @@ def __coeffs_RefState(Q, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for reference state."""
     angM  = mParams['angM']
     Gamma = mParams['Gamma']
+    g     = mParams['g']
     
     maskF, initS, zero = __mask_FS(Q, dims, iParams, icbc)
 
@@ -1375,13 +1389,13 @@ def __coeffs_RefState(Q, dims, coords, mParams, iParams, icbc):
         
         A = zero + sinL
         B = zero
-        C = zero + Gamma * _g / Q / maskF[dims[1]]
+        C = zero + Gamma * g / Q / maskF[dims[1]]
         F = maskF.where(maskF!=_undeftmp, _undeftmp)
     
     elif coords.lower() == 'cartesian': # dims[0] is θ, dims[1] is r
         A = zero + 2.0 * angM / maskF[dims[1]]**3.0
         B = zero
-        C = zero + Gamma * _g / Q / maskF[dims[1]]
+        C = zero + Gamma * g / Q / maskF[dims[1]]
         F = maskF.where(maskF!=_undeftmp, _undeftmp)
 
     else:
@@ -1393,8 +1407,11 @@ def __coeffs_RefState(Q, dims, coords, mParams, iParams, icbc):
 
 def __coeffs_RefStateSWM(Q, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for reference state of a shallow-water model."""
-    M0 = mParams['M0']
-    C0 = mParams['C0']
+    M0     = mParams['M0']
+    C0     = mParams['C0']
+    g      = mParams['g']
+    Rearth = mParams['Rearth']
+    Omega  = mParams['Omega']
     
     maskF, initS, zero = __mask_FS(Q, dims, iParams, icbc)
     
@@ -1418,22 +1435,22 @@ def __coeffs_RefStateSWM(Q, dims, coords, mParams, iParams, icbc):
         cosG = np.cos(lats)
         cosH = np.cos((lats+lats.shift({dims[0]:1}))/2.0) # shift half grid
         sinG = np.sin(lats)
-        asin = _R_earth * sinG
-        acos = _R_earth * cosG
+        asin = Rearth * sinG
+        acos = Rearth * cosG
         
         acos = xr.where(acos<0, -acos*0.1, acos) # ensure positive 0 at poles
         
         diff = xr.apply_ufunc(diff_2nd, M0, cosH,
-                              np.abs(lats[0]-lats[1])*_R_earth,
+                              np.abs(lats[0]-lats[1]) * Rearth,
                               dask='parallelized',
                               vectorize=True,
                               input_core_dims=[[dims[0]], [dims[0]], []],
                               output_core_dims=[[dims[0]]])
         
         A = zero + 1.0 / cosH
-        B = zero - C0 * maskF * asin  / (np.pi * _g * acos**3.0)
-        F = zero - (asin * C0**2.0 / (2.0 * np.pi * _g * acos**3.0)) + \
-                   (2.0 * np.pi * _omega**2.0 * asin * acos) / _g - diff
+        B = zero - C0 * maskF * asin  / (np.pi * g* acos**3.0)
+        F = zero - (asin * C0**2.0 / (2.0 * np.pi * g* acos**3.0)) + \
+                   (2.0 * np.pi * Omega**2.0 * asin * acos) / g - diff
     
     elif coords.lower() == 'cartesian': # dims[0] is θ, dims[1] is r
         raise Exception('not supported for cartesian coordinates')
@@ -1498,12 +1515,14 @@ def __coeffs_Eliassen(force, dims, coords, mParams, iParams, icbc):
     return F, initS, (A, B, C)
 
 
-def __coeffs_GillMatsuno(Q, dims, coords, mParam, iParams, icbc):
+def __coeffs_GillMatsuno(Q, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Gill-Matsuno model."""
-    Phi     = mParam['Phi' ]
-    epsilon = mParam['epsilon']
-    f0      = mParam['f0'  ]
-    beta    = mParam['beta']
+    Phi     = mParams['Phi' ]
+    epsilon = mParams['epsilon']
+    f0      = mParams['f0'  ]
+    beta    = mParams['beta']
+    Omega   = mParams['Omega']
+    Rearth  = mParams['Rearth']
     
     maskF, initS, zero = __mask_FS(Q, dims, iParams, icbc)
     
@@ -1511,17 +1530,17 @@ def __coeffs_GillMatsuno(Q, dims, coords, mParam, iParams, icbc):
         lats = np.deg2rad(Q[dims[0]])
         cosL = np.cos(lats)
         
-        f = 2.0 * _omega * np.sin(lats)
+        f = 2.0 * Omega * np.sin(lats)
         
         c1 = epsilon / (epsilon**2. + f**2.)
         c2 = f       / (epsilon**2. + f**2.)
-        const = _R_earth / 180. * np.pi
+        deg2m = Rearth / 180. * np.pi
         
         A = zero + c1 * Phi
         B = zero
         C = zero + c1 * Phi / cosL**2.
-        D = zero + Phi *(c1.differentiate(dims[0]) / const + c1*np.tan(lats)/_R_earth)
-        E = zero - Phi * c2.differentiate(dims[0]) / const / cosL
+        D = zero + Phi *(c1.differentiate(dims[0]) / deg2m + c1*np.tan(lats)/Rearth)
+        E = zero - Phi * c2.differentiate(dims[0]) / deg2m / cosL
         F = zero - epsilon
         G = maskF.where(maskF!=_undeftmp, _undeftmp)
     
@@ -1547,12 +1566,13 @@ def __coeffs_GillMatsuno(Q, dims, coords, mParam, iParams, icbc):
     return G, initS, (A, B, C, D, E, F)
 
 
-def __coeffs_GillMatsuno_test(Q, dims, coords, mParam, iParams, icbc):
+def __coeffs_GillMatsuno_test(Q, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Gill-Matsuno model."""
-    Phi     = mParam['Phi' ]
-    epsilon = mParam['epsilon']
-    f0      = mParam['f0'  ]
-    beta    = mParam['beta']
+    Phi     = mParams['Phi' ]
+    epsilon = mParams['epsilon']
+    f0      = mParams['f0'  ]
+    beta    = mParams['beta']
+    Omega   = mParams['Omega']
     
     maskF, initS, zero = __mask_FS(Q, dims, iParams, icbc)
 
@@ -1561,8 +1581,8 @@ def __coeffs_GillMatsuno_test(Q, dims, coords, mParam, iParams, icbc):
         cosG = np.cos(lats)
         cosH = np.cos((lats+lats.shift({dims[0]:1}))/2.)
         
-        fG = 2. * _omega * np.sin(lats)
-        fH = 2. * _omega * np.sin((lats+lats.shift({dims[0]:1}))/2.)
+        fG = 2. * Omega * np.sin(lats)
+        fH = 2. * Omega * np.sin((lats+lats.shift({dims[0]:1}))/2.)
         
         c1G = epsilon / (epsilon**2. + fG**2.)
         c1H = epsilon / (epsilon**2. + fH**2.)
@@ -1598,12 +1618,14 @@ def __coeffs_GillMatsuno_test(Q, dims, coords, mParam, iParams, icbc):
     return F, initS, (A, B, C, D, E)
 
 
-def __coeffs_Stommel(curl, dims, coords, mParam, iParams, icbc):
+def __coeffs_Stommel(curl, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Stommel model."""
-    beta = mParam['beta']
-    R    = mParam['R'   ]
-    depth= mParam['D'   ]
-    rho0 = mParam['rho0']
+    beta   = mParams['beta']
+    R      = mParams['R'   ]
+    depth  = mParams['D'   ]
+    rho0   = mParams['rho0']
+    Rearth = mParams['Rearth']
+    Omega  = mParams['Omega']
     
     maskF, initS, zero = __mask_FS(curl, dims, iParams, icbc)
     
@@ -1615,7 +1637,7 @@ def __coeffs_Stommel(curl, dims, coords, mParam, iParams, icbc):
         B = zero
         C = zero - R / depth / cosL**2.
         D = zero
-        E = zero - 2. * _omega / _R_earth
+        E = zero - 2. * Omega / Rearth
         F = zero
         G = (-maskF / depth / rho0).where(maskF!=_undeftmp, _undeftmp)
     
@@ -1635,13 +1657,14 @@ def __coeffs_Stommel(curl, dims, coords, mParam, iParams, icbc):
     return G, initS, (A, B, C, D, E, F)
 
 
-def __coeffs_Stommel_test(curl, dims, coords, mParam, iParams, icbc):
+def __coeffs_Stommel_test(curl, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Stommel model."""
-    f0   = mParam['f0'  ]
-    beta = mParam['beta']
-    R    = mParam['R'   ]
-    depth= mParam['D'   ]
-    rho0 = mParam['rho0']
+    f0    = mParams['f0'  ]
+    beta  = mParams['beta']
+    R     = mParams['R'   ]
+    depth = mParams['D'   ]
+    rho0  = mParams['rho0']
+    Omega = mParams['Omega']
     
     maskF, initS, zero = __mask_FS(curl, dims, iParams, icbc)
     
@@ -1649,7 +1672,7 @@ def __coeffs_Stommel_test(curl, dims, coords, mParam, iParams, icbc):
         lats = np.deg2rad(curl[dims[0]])
         cosG = np.cos(lats)
         cosH = np.cos((lats+lats.shift({dims[0]:1}))/2.)
-        f    = 2. * _omega * np.sin(lats)
+        f    = 2. * Omega * np.sin(lats)
         
         A = zero - R / depth * cosH
         B = zero - f
@@ -1678,11 +1701,13 @@ def __coeffs_Stommel_test(curl, dims, coords, mParam, iParams, icbc):
 
 def __coeffs_StommelMunk(curl, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Stommel-Munk model."""
-    beta = mParams['beta']
-    A4   = mParams['A4'  ]
-    R    = mParams['R'   ]
-    depth= mParams['D'   ]
-    rho0 = mParams['rho0']
+    beta   = mParams['beta']
+    A4     = mParams['A4'  ]
+    R      = mParams['R'   ]
+    depth  = mParams['D'   ]
+    rho0   = mParams['rho0']
+    Omega  = mParams['Omega']
+    Rearth = mParams['Rearth']
     
     maskF, initS, zero = __mask_FS(curl, dims, iParams, icbc)
     
@@ -1697,7 +1722,7 @@ def __coeffs_StommelMunk(curl, dims, coords, mParams, iParams, icbc):
         E = zero
         F = zero - R / depth / cosL**2.
         G = zero
-        H = zero - 2. * _omega / _R_earth
+        H = zero - 2. * Omega / Rearth
         I = zero
         J = (-maskF / depth / rho0).where(maskF!=_undeftmp, _undeftmp)
     
@@ -1720,11 +1745,13 @@ def __coeffs_StommelMunk(curl, dims, coords, mParams, iParams, icbc):
     return J, initS, (A, B, C, D, E, F, G, H, I)
 
 
-def __coeffs_StommelArons(Q, dims, coords, mParam, iParams, icbc):
+def __coeffs_StommelArons(Q, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Stommel-Arons model."""
-    epsilon = mParam['epsilon']
-    f0      = mParam['f0']
-    beta    = mParam['beta']
+    epsilon = mParams['epsilon']
+    f0      = mParams['f0']
+    beta    = mParams['beta']
+    Omega   = mParams['Omega']
+    Rearth  = mParams['Rearth']
     
     maskF, initS, zero = __mask_FS(Q, dims, iParams, icbc)
     
@@ -1732,17 +1759,17 @@ def __coeffs_StommelArons(Q, dims, coords, mParam, iParams, icbc):
         lats = np.deg2rad(Q[dims[0]])
         cosL = np.cos(lats)
         
-        f = 2.0 * _omega * np.sin(lats)
+        f = 2.0 * Omega * np.sin(lats)
         
         c1 = epsilon / (epsilon**2. + f**2.)
         c2 = f       / (epsilon**2. + f**2.)
-        const = _R_earth / 180. * np.pi
+        deg2m = Rearth / 180. * np.pi
         
         A = zero + c1
         B = zero
         C = zero + c1 / cosL**2.
-        D = zero + (c1.differentiate(dims[0]) / const + c1*np.tan(lats)/_R_earth)
-        E = zero - c2.differentiate(dims[0]) / const / cosL
+        D = zero + (c1.differentiate(dims[0]) / deg2m + c1*np.tan(lats)/Rearth)
+        E = zero - c2.differentiate(dims[0]) / deg2m / cosL
         F = zero
         G = maskF.where(maskF!=_undeftmp, _undeftmp)
     
@@ -1770,8 +1797,9 @@ def __coeffs_StommelArons(Q, dims, coords, mParam, iParams, icbc):
 
 def __coeffs_geostrophic(lapPhi, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for geostrophic equation."""
-    f0   = mParams['f0']
-    beta = mParams['beta']
+    f0    = mParams['f0']
+    beta  = mParams['beta']
+    Omega = mParams['Omega']
     
     maskF, initS, zero = __mask_FS(lapPhi, dims, iParams, icbc)
 
@@ -1783,8 +1811,8 @@ def __coeffs_geostrophic(lapPhi, dims, coords, mParams, iParams, icbc):
         cosG = np.cos(lats)
         cosH = np.cos((lats+lats.shift({dims[0]:1}))/2.)
         
-        fH = 2. * _omega * sinH
-        fG = 2. * _omega * sinG
+        fH = 2. * Omega * sinH
+        fG = 2. * Omega * sinG
         
         # regulation for near-zero f
         fH = xr.where(np.abs(fH)<2e-05, fH*1.5, fH)
@@ -1814,10 +1842,11 @@ def __coeffs_geostrophic(lapPhi, dims, coords, mParams, iParams, icbc):
 
 def __coeffs_Bretherton(h, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Bretherton-Haiduogel equation."""
-    f0   = mParams['f0']
-    beta = mParams['beta']
-    depth= mParams['D']
-    lamb = mParams['lambda']
+    f0    = mParams['f0']
+    beta  = mParams['beta']
+    depth = mParams['D']
+    lamb  = mParams['lambda']
+    Omega = mParams['Omega']
     
     maskF, initS, zero = __mask_FS(h, dims, iParams, icbc)
     
@@ -1825,7 +1854,7 @@ def __coeffs_Bretherton(h, dims, coords, mParams, iParams, icbc):
         lats = np.deg2rad(maskF[dims[0]])
         cosG = np.cos(lats)
         cosH = np.cos((lats+lats.shift({dims[0]:1}))/2.0) # shift half grid
-        f    = 2. * _omega * np.sin(lats)
+        f    = 2. * Omega * np.sin(lats)
         
         A = zero + cosH
         B = zero
@@ -1854,10 +1883,11 @@ def __coeffs_Bretherton(h, dims, coords, mParams, iParams, icbc):
 
 def __coeffs_Fofonoff(f, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Bretherton-Haiduogel equation."""
-    f0   = mParams['f0']
-    beta = mParams['beta']
-    c0   = mParams['c0']
-    c1   = mParams['c1']
+    f0    = mParams['f0']
+    beta  = mParams['beta']
+    c0    = mParams['c0']
+    c1    = mParams['c1']
+    Omega = mParams['Omega']
     
     maskF, initS, zero = __mask_FS(f, dims, iParams, icbc)
     
@@ -1865,7 +1895,7 @@ def __coeffs_Fofonoff(f, dims, coords, mParams, iParams, icbc):
         lats = np.deg2rad(maskF[dims[0]])
         cosG = np.cos(lats)
         cosH = np.cos((lats+lats.shift({dims[0]:1}))/2.0) # shift half grid
-        f    = 2. * _omega * np.sin(lats)
+        f    = 2. * Omega * np.sin(lats)
         
         A = zero + cosH
         B = zero
@@ -1892,11 +1922,12 @@ def __coeffs_Fofonoff(f, dims, coords, mParams, iParams, icbc):
     return F, initS, (A, B, C, D, E)
 
 
-def __coeffs_Omega(force, dims, coords, mParams, iParams, icbc):
+def __coeffs_omega(force, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for QG omega equation."""
-    f0   = mParams['f0']
-    beta = mParams['beta']
-    N2   = mParams['N2']
+    f0    = mParams['f0']
+    beta  = mParams['beta']
+    N2    = mParams['N2']
+    Omega = mParams['Omega']
     
     maskF, initS, zero = __mask_FS(force, dims, iParams, icbc)
 
@@ -1906,7 +1937,7 @@ def __coeffs_Omega(force, dims, coords, mParams, iParams, icbc):
         cosH = np.cos((lats+lats.shift({dims[1]:1}))/2.)
         cosG = np.cos(lats)
         
-        f = 2. * _omega * np.sin(lats)
+        f = 2. * Omega * np.sin(lats)
         
         A = zero + f**2 * cosG
         B = zero + N2*cosH
@@ -1937,6 +1968,8 @@ def __coeffs_3DOcean(force, dims, coords, mParams, iParams, icbc):
     epsilon = mParams['epsilon']
     N2      = mParams['N2']
     k       = mParams['k']
+    Omega   = mParams['Omega']
+    Rearth  = mParams['Rearth']
     
     maskF, initS, zero = __mask_FS(force, dims, iParams, icbc)
     
@@ -1944,19 +1977,19 @@ def __coeffs_3DOcean(force, dims, coords, mParams, iParams, icbc):
         lats = np.deg2rad(force[dims[1]])
         cosL = np.cos(lats)
         
-        f = 2. * _omega * np.sin(lats)
+        f = 2. * Omega * np.sin(lats)
         
         c1 = epsilon / (epsilon**2. + f**2.)
         c2 = f       / (epsilon**2. + f**2.)
         c3 = maskF[dims[0]] - maskF[dims[0]] + k / N2
-        const = _R_earth / 180. * np.pi
+        deg2m = Rearth / 180. * np.pi
         
         A = zero + c3
         B = zero + c1
         C = zero + c1 / cosL**2.
         D = zero + c3.differentiate(dims[0])
-        E = zero +(c1.differentiate(dims[1]) / const - c1*np.tan(lats)/_R_earth)
-        F = zero - c2.differentiate(dims[1]) / const / cosL
+        E = zero +(c1.differentiate(dims[1]) / deg2m - c1*np.tan(lats)/Rearth)
+        F = zero - c2.differentiate(dims[1]) / deg2m / cosL
         G = zero
         H = maskF.where(maskF!=_undeftmp, _undeftmp)
     
@@ -1967,6 +2000,7 @@ def __coeffs_3DOcean(force, dims, coords, mParams, iParams, icbc):
         c1 = epsilon / (epsilon**2. + f**2.)
         c2 = f       / (epsilon**2. + f**2.)
         c3 = maskF[dims[0]] - maskF[dims[0]] + k / N2
+        const = 1 # check this
         
         A = zero + c3
         B = zero + c1
@@ -2034,7 +2068,8 @@ def __mask_FS(F, dims, iParams, icbc):
     return maskF, initS.load(), zero
 
 
-def __cal_params3D(dim3_var, dim2_var, dim1_var, coords, debug=False):
+def __cal_params3D(dim3_var, dim2_var, dim1_var, coords,
+                   Rearth=default_mParams['Rearth'], debug=False):
     r"""Pre-calculate some parameters needed in SOR for the 3D cases.
 
     Parameters
@@ -2059,10 +2094,13 @@ def __cal_params3D(dim3_var, dim2_var, dim1_var, coords, debug=False):
     del3 = dim3_var.diff(dim3_var.name).values[0] # assumed uniform
     del2 = dim2_var.diff(dim2_var.name).values[0] # assumed uniform
     del1 = dim1_var.diff(dim1_var.name).values[0] # assumed uniform
+    __uniform_interval(dim3_var, del3)
+    __uniform_interval(dim2_var, del2)
+    __uniform_interval(dim1_var, del1)
     
     if coords.lower() == 'lat-lon':
-        del2 = np.deg2rad(del2) * _R_earth # convert lat to m
-        del1 = np.deg2rad(del1) * _R_earth # convert lon to m
+        del2 = np.deg2rad(del2) * Rearth # convert lat to m
+        del1 = np.deg2rad(del1) * Rearth # convert lon to m
     elif coords.lower() == 'cartesian':
         pass
     else:
@@ -2113,7 +2151,7 @@ def __cal_params3D(dim3_var, dim2_var, dim1_var, coords, debug=False):
     return re
 
 
-def __cal_params2D(dim2_var, dim1_var, coords):
+def __cal_params2D(dim2_var, dim1_var, coords, Rearth=default_mParams['Rearth']):
     r"""Pre-calculate some parameters needed in SOR.
 
     Parameters
@@ -2134,14 +2172,16 @@ def __cal_params2D(dim2_var, dim1_var, coords):
     gc1  = len(dim1_var)
     del2 = dim2_var.diff(dim2_var.name).values[0] # assumed uniform
     del1 = dim1_var.diff(dim1_var.name).values[0] # assumed uniform
+    __uniform_interval(dim2_var, del2)
+    __uniform_interval(dim1_var, del1)
     
     if coords.lower() == 'lat-lon':
-        del2 = np.deg2rad(del2) * _R_earth # convert lat to m
-        del1 = np.deg2rad(del1) * _R_earth # convert lon to m
+        del2 = np.deg2rad(del2) * Rearth # convert lat to m
+        del1 = np.deg2rad(del1) * Rearth # convert lon to m
     elif coords.lower() == 'z-lat':
-        del1 = np.deg2rad(del1) * _R_earth # convert lat to m
+        del1 = np.deg2rad(del1) * Rearth # convert lat to m
     elif coords.lower() == 'z-lon':
-        del1 = np.deg2rad(del1) * _R_earth # convert lon to m
+        del1 = np.deg2rad(del1) * Rearth # convert lon to m
     elif coords.lower() == 'cartesian':
         pass
     else:
@@ -2182,7 +2222,7 @@ def __cal_params2D(dim2_var, dim1_var, coords):
     return re
 
 
-def __cal_params1D(dim1_var, coords):
+def __cal_params1D(dim1_var, coords, Rearth=default_mParams['Rearth']):
     r"""Pre-calculate some parameters needed in SOR.
 
     Parameters
@@ -2199,9 +2239,10 @@ def __cal_params1D(dim1_var, coords):
     """
     gc1  = len(dim1_var)
     del1 = dim1_var.diff(dim1_var.name).values[0] # assumed uniform
+    __uniform_interval(dim1_var, del1)
     
     if coords.lower() == 'lat':
-        del1 = np.deg2rad(del1) * _R_earth # convert lon to m
+        del1 = np.deg2rad(del1) * Rearth # convert lon to m
     else:
         raise Exception('unsupported coords for 2D case: ' + coords +
                         ', should be [lat-lon, cartesian]')
@@ -2240,6 +2281,9 @@ def __update(default, users, valid=None):
     
     return default
 
+def __uniform_interval(coord1D, value):
+    if not np.isclose(coord1D.diff(coord1D.name), value).all():
+        raise Exception(f'coordinate {coord1D.name} is non-uniform:\n{coord1D}')
 
 def __print_params(params):
     """Print parameters for debugging."""
