@@ -96,7 +96,6 @@ def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results of the SOR inversion.
     """
-    print(mParams)
     return __template(__coeffs_Poisson, inv_standard2D, 2, F, dims, coords,
                       icbc, ['g', 'Omega', 'Rearth'], mParams, iParams)
 
