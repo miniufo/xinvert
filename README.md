@@ -1,5 +1,6 @@
 # xinvert
 
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/2d92e483747643ac8ab206582df80d0d)](https://app.codacy.com/gh/miniufo/xinvert?utm_source=github.com&utm_medium=referral&utm_content=miniufo/xinvert&utm_campaign=Badge_Grade)
 [![DOI](https://zenodo.org/badge/323045845.svg)](https://zenodo.org/badge/latestdoi/323045845)
 ![GitHub](https://img.shields.io/github/license/miniufo/xinvert)
 [![Documentation Status](https://readthedocs.org/projects/xinvert/badge/?version=latest)](https://xinvert.readthedocs.io/en/latest/?badge=latest)
