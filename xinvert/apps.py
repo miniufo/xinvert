@@ -145,6 +145,52 @@ def invert_RefState(PV, dims, coords='z-lat', icbc=None,
                       icbc, ['Ang0', 'Gamma', 'g', 'Omega', 'Rearth'], mParams, iParams)
 
 
+def invert_GeoAdjustment(h0, dims, coords='lat', icbc=None,
+                         mParams=default_mParams, iParams=default_iParams):
+    r"""(PV) inversion for a geostrophic adjustment model.
+
+    The balanced free surface satisfies:
+
+    .. math::
+
+         \frac{\partial}{\partial y}\left(A\frac{\partial h}{\partial y}\right)
+         +B h &= F
+    
+    where
+    
+    .. math::
+         
+         A = \cos\phi / f
+         B = - f / g / h0
+         F = - f \cos\phi / g
+    
+    Invert this equation for geostrophically adjusted free surface :math:`h` given
+    the initial free surface distribution.
+    
+    Parameters
+    ----------
+    h0: xarray.DataArray
+        Initial free surface.
+    dims: list
+        Dimension combination for the inversion e.g., ['lat', 'lon'].
+    coords: {'lat-lon', 'cartesian'}, optional
+        Coordinate combinations in which inversion is performed.
+    icbc: xarray.DataArray, optional
+        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+    mParams: dict
+        No explicit model parameters are required here.
+    iParams: dict, optional
+        Iteration parameters.
+    
+    Returns
+    -------
+    xarray.DataArray
+        Results (angular momentum Λ) of the SOR inversion.
+    """
+    return __template(__coeffs_GeoAdjustment, inv_standard1D, 1, h0, dims, coords,
+                      icbc, ['g', 'Rearth', 'Omega'], mParams, iParams)
+
+
 def invert_RefStateSWM(Q, dims, coords='lat', icbc=None,
                        mParams=default_mParams, iParams=default_iParams):
     r"""(PV) inversion for a steady state of shallow-water model.
@@ -1476,6 +1522,35 @@ def __coeffs_RefStateSWM(Q, dims, coords, mParams, iParams, icbc):
                         ', should be in [z-lat, cartesian]')
     
     return F, initS, (A, B)
+
+
+def __coeffs_GeoAdjustment(h0, dims, coords, mParams, iParams, icbc):
+    """Calculating coefficients for geostrophic adjustment model."""
+    g     = mParams['g']
+    Omega = mParams['Omega']
+    
+    maskF, initS, zero = __mask_FS(h0, dims, iParams, icbc)
+    
+    if coords.lower() == 'lat': # dims[0] is θ, dims[1] is lat
+        lats = np.deg2rad(maskF[dims[0]])
+        cosG = np.cos(lats)
+        cosH = np.cos((lats+lats.shift({dims[0]:1}))/2.0) # shift half grid
+        f    = 2 * Omega * np.sin(lats)
+        fH   = 2 * Omega * np.sin((lats+lats.shift({dims[0]:1}))/2.0)
+        
+        A = zero + cosH / fH
+        B = zero - f * cosG / g / h0
+        F = zero - f * cosG / g
+    
+    elif coords.lower() == 'cartesian': # dims[0] is θ, dims[1] is r
+        raise Exception('not supported for cartesian coordinates')
+
+    else:
+        raise Exception('unsupported coords ' + coords +
+                        ', should be in [lat, cartesian]')
+    
+    return F, initS, (A, B)
+    
 
 
 def __coeffs_PV2D(PV, dims, coords, mParams, iParams, icbc):

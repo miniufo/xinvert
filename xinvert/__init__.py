@@ -23,6 +23,7 @@ from .apps import invert_Poisson, \
                   invert_omega, \
                   invert_PV2D, \
                   invert_RefStateSWM, \
+                  invert_GeoAdjustment, \
                   invert_RefState, \
                   invert_3DOcean, \
                   animate_iteration, cal_flow
@@ -31,4 +32,4 @@ from .utils import loop_noncore
 
 from .finitediffs import FiniteDiff, deriv, deriv2, padBCs
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
