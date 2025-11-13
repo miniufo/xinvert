@@ -70,6 +70,7 @@ This is a list of the problems that can be solved by `xinvert`:
 | <img src="./pics/Gallery_SWMReference.png" width="380"><br/>[invert PV balance equation for<br/> steady reference state](./docs/source/notebooks/05_reference_SWM.ipynb)| <img src="./pics/Gallery_GillMatsuno.png" width="380"><br/>[invert Gill-Matsuno model for<br/> wind and mass fields](./docs/source/notebooks/07_Gill_Matsuno_model.ipynb) |
 | <img src="./pics/Gallery_StommelMunk.png" width="380"><br/>[invert Stommel-Munk model for<br/> wind-driven ocean circulation](./docs/source/notebooks/08_Stommel_Munk_model.ipynb) | <img src="./pics/Gallery_Fofonoff.png" width="380"><br/>[invert Fofonoff model for<br/> inviscid/adiabatic steady state](./docs/source/notebooks/09_Fofonoff_flow.ipynb) |
 | <img src="./pics/Gallery_Bretherton.png" width="380"><br/>[invert Bretherton model for<br/> steady flow over topography](./docs/source/notebooks/10_Bretherton_flow_over_topography.ipynb) | <img src="./pics/Gallery_Omega.png" width="380"><br/>[invert Omega equation for<br/> QG vertical velocity](./docs/source/notebooks/11_Omega_equation.ipynb) |
+| <img src="./pics/Gallery_GeoAdjust.png" width="380"><br/>[invert geostrophic-adjustment problem](./docs/source/notebooks/12_GeostrophicAdjustment.ipynb) | ... add more examples ... |
 
 
 

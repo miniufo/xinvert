@@ -694,7 +694,7 @@ def deriv2(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1):
          Second-order derivative along the dimension
     """
     pad = padBCs(v, dim, BCs, fill)
-    lap = pad.diff(dim, 2, 'lower') / pad[dim].diff(dim) ** 2 / scale ** 2
+    lap = pad.diff(dim, n=2, label='lower') / pad[dim].diff(dim) ** 2 / scale ** 2
     lap[dim] = v[dim]
     
     return lap
