@@ -38,7 +38,7 @@ def test_adjustment():
 	h  = invert_GeoAdjustment(h0, dims=['lat'], coords='lat', iParams=iParams)
 	u  = - h.differentiate('lat') / deg2m * g / f
 	PV = (f - u.differentiate('lat') / deg2m) / h
-    
-    assert h.dims  == h0.dims
-    assert h.shape == h0.shape
+
+	assert h.dims  == h0.dims
+	assert h.shape == h0.shape
 
