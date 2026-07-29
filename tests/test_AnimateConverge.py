@@ -13,7 +13,7 @@ from xinvert import animate_iteration
 def test_animate():
     ds = xr.open_dataset('./Data/Helmholtz_atmos.nc')
     
-    assert ds.dims == {'time': 2, 'lat': 73, 'lon': 144}
+    assert ds.sizes == {'time': 2, 'lat': 73, 'lon': 144}
     
     vor = ds.vor[0].rename('vorticity')
     

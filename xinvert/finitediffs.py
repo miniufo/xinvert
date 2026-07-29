@@ -97,17 +97,17 @@ class FiniteDiff(object):
             for dim in dim_mapping:
                 BCs[dim] = ('extend', 'extend')
         
-        elif type(BCs) == str:
+        elif isinstance(BCs, str):
             BC  = BCs
             BCs = {}
             for dim in dim_mapping:
                 BCs[dim] = (BC, BC)
         
-        elif type(BCs) == dict:
+        elif isinstance(BCs, dict):
             for dim in dim_mapping:
                 if not dim in BCs:
                     BCs[dim] = ('extend', 'extend')
-                elif type(BCs[dim]) == str:
+                elif isinstance(BCs[dim], str):
                     BCs[dim] = (BCs[dim], BCs[dim])
                     
         # Align dims and fill with default one (0).
@@ -116,13 +116,13 @@ class FiniteDiff(object):
             for dim in dim_mapping:
                 fill[dim] = (0, 0)
         
-        elif type(fill) in [float, int]:
+        elif isinstance(fill, (float, int)):
             fil  = fill
             fill = {}
             for dim in dim_mapping:
                 fill[dim] = (fil, fil)
         
-        elif type(fill) == dict:
+        elif isinstance(fill, dict):
             for dim in dim_mapping:
                 if not dim in fill:
                     fill[dim] = (0, 0)
@@ -241,10 +241,10 @@ class FiniteDiff(object):
         fill = _overwriteFills(fill, self.fill)
         llc  = self.coords == 'lat-lon'
         
-        if type(dims) is str:
+        if isinstance(dims, str):
             dims = [dims]
         
-        if type(vector) is xr.DataArray:
+        if isinstance(vector, xr.DataArray):
             vector = [vector]
         
         if len(vector) != len(dims):
@@ -322,7 +322,7 @@ class FiniteDiff(object):
         llc  = self.coords == 'lat-lon'
         dims = self.dmap
         
-        if type(components) is str:
+        if isinstance(components, str):
             components = [components]
         
         if llc:
@@ -485,7 +485,7 @@ class FiniteDiff(object):
             shear strain.
         """
         # defined at vorticity point
-        return self.vort(u=v, v=-u, dims=dims, BCs=BCs, fill=fill)
+        return self.vort(u=v, v=-u, components='k', BCs=BCs, fill=fill)
     
     def deformation_rate(self, u, v, dims=['X', 'Y'], BCs=None, fill=None):
         """Calculate sqrt(tension^2+shear^2).
@@ -513,7 +513,7 @@ class FiniteDiff(object):
         tension = self.tension_strain(u, v, dims, BCs, fill)
         shear   = self.shear_strain  (u, v, dims, BCs, fill)
         
-        return np.hypot(tension + shear)
+        return np.hypot(tension, shear)
     
     def Okubo_Weiss(self, u, v, dims=['X', 'Y'], BCs=None, fill=None):
         """Calculate Okubo-Weiss parameter.
@@ -539,7 +539,7 @@ class FiniteDiff(object):
             Okubo-Weiss parameter.
         """
         deform = self.deformation_rate(u, v, dims, BCs, fill)
-        curlZ  = self.vort(u=v, v=u, components='j', dims=dims, BCs=BCs, fill=fill)
+        curlZ  = self.vort(u=v, v=u, components='k', BCs=BCs, fill=fill)
         
         return deform**2.0 - curlZ**2.0
 
@@ -574,7 +574,7 @@ def padBCs(v, dim, BCs, fill=(0,0)):
     p: xarray.DataArray
         Padded array.
     """
-    if type(BCs) == str:
+    if isinstance(BCs, str):
         BCs = (BCs, BCs)
     
     p = v
@@ -708,7 +708,7 @@ def _dimsBCs(dims, BCs):
     """
     Align dims and BCs with default one ('extend').
     """
-    if type(dims) == str:
+    if isinstance(dims, str):
         dims = [dims]
         
     if BCs is None:
@@ -716,13 +716,13 @@ def _dimsBCs(dims, BCs):
         for dim in dims:
             BCs[dim] = ('extend', 'extend')
     
-    elif type(BCs) == str:
+    elif isinstance(BCs, str):
         BC  = BCs
         BCs = {}
         for dim in dims:
             BCs[dim] = (BC, BC)
     
-    elif type(BCs) == dict:
+    elif isinstance(BCs, dict):
         for dim in dims:
             if not dim in BCs:
                 BCs[dim] = ('extend', 'extend')
@@ -735,16 +735,16 @@ def _overwriteBCs(BCsNew, BCsOld):
     
     BCs = BCsOld.copy()
     
-    if type(BCsNew) == str:
+    if isinstance(BCsNew, str):
         BC = BCsNew
         
         for B in BCsOld:
             BCs[B] = (BC, BC)
     
-    elif type(BCsNew) == dict:
+    elif isinstance(BCsNew, dict):
         for B in BCsNew:
             if B in BCsOld:
-                if type(BCsNew[B]) == str:
+                if isinstance(BCsNew[B], str):
                     BCs[B] = (BCsNew[B], BCsNew[B])
                 else:
                     BCs[B] = BCsNew[B]
@@ -757,13 +757,13 @@ def _overwriteFills(fillsNew, fillsOld):
     
     fills = fillsOld.copy()
     
-    if type(fillsNew) in [float, int]:
+    if isinstance(fillsNew, (float, int)):
         fill = fillsNew
         
         for f in fillsOld:
             fills[f] = (fill, fill)
     
-    elif type(fillsNew) == dict:
+    elif isinstance(fillsNew, dict):
         for f in fillsNew:
             if f in fillsOld:
                 fills[f] = fillsNew[f]

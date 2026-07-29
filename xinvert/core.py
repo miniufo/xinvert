@@ -5,6 +5,9 @@ Created on 2020.12.09
 @author: MiniUFO
 Copyright 2018. All rights reserved. Use is subject to license terms.
 """
+import numpy as np
+import xarray as xr
+import sys
 from .numbas import invert_standard_3D, invert_standard_2D, invert_standard_1D,\
                     invert_general_3D, invert_general_2D, \
                     invert_general_bih_2D, invert_standard_2D_test
@@ -55,34 +58,28 @@ def inv_standard3D(A, B, C, F, S, dims, iParams):
     """
     if len(dims) != 3:
         raise Exception('3 dimensions are needed for inversion')
-        
-    for selDict in loop_noncore(F, dims):
-        invert_standard_3D(S.loc[selDict].values, A.loc[selDict].values,
-                           B.loc[selDict].values, C.loc[selDict].values,
-                           F.loc[selDict].values,
-                           iParams['gc3' ], iParams['gc2' ], iParams['gc1' ],
-                           iParams['del3'], iParams['del2'], iParams['del1'],
-                           iParams['BCs'][0], iParams['BCs'][1], iParams['BCs'][2],
-                           iParams['del1Sqr'],
-                           iParams['ratio2Sqr'], iParams['ratio1Sqr'],
-                           iParams['optArg'], _undeftmp, iParams['flags'],
-                           iParams['mxLoop'], iParams['tolerance'])
-        
-        info = str(selDict).replace('numpy.datetime64(', '') \
-                           .replace('numpy.timedelta64(', '') \
-                           .replace(')', '') \
-                           .replace('\'', '') \
-                           .replace('.000000000', '')
-        
-        if iParams['printInfo']:
-            if iParams['flags'][0]:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
-            else:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
+
+    # get info for print and non-core dimensions
+    info, ncdims = _get_info(F, dims)
     
-    return S
+    grid_args = [
+        iParams['gc3'], iParams['gc2'], iParams['gc1'],
+        iParams['BCs'][0], iParams['BCs'][1], iParams['BCs'][2],
+        iParams['del1Sqr'], iParams['ratio2Sqr'], iParams['ratio1Sqr'],
+    ]
+    _kernel_ = _make_kernel(invert_standard_3D, grid_args, iParams)
+    
+    re = xr.apply_ufunc(
+        _kernel_, S, A, B, C, F, info,
+        input_core_dims=[dims, dims, dims, dims, dims, []],
+        output_core_dims=[dims],
+        dask='parallelized',
+        dask_gufunc_kwargs={'allow_rechunk': True},
+        vectorize=True,
+        output_dtypes=[S.dtype],
+    )
+    
+    return re
 
 
 def inv_standard2D(A, B, C, F, S, dims, iParams):
@@ -125,34 +122,28 @@ def inv_standard2D(A, B, C, F, S, dims, iParams):
     """
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
+
+    # get info for print and non-core dimensions
+    info, ncdims = _get_info(F, dims)
     
-    for selDict in loop_noncore(F, dims):
-        invert_standard_2D(S.loc[selDict].values,
-                           A.loc[selDict].values,
-                           B.loc[selDict].values, C.loc[selDict].values,
-                           F.loc[selDict].values,
-                           iParams['gc2' ], iParams['gc1' ],
-                           iParams['del2'], iParams['del1'],
-                           iParams['BCs'][0], iParams['BCs'][1], iParams['del1Sqr'],
-                           iParams['ratioQtr'], iParams['ratioSqr'],
-                           iParams['optArg'], _undeftmp, iParams['flags'],
-                           iParams['mxLoop'], iParams['tolerance'])
-        
-        info = str(selDict).replace('numpy.datetime64(', '') \
-                           .replace('numpy.timedelta64(', '') \
-                           .replace(')', '') \
-                           .replace('\'', '') \
-                           .replace('.000000000', '')
-        
-        if iParams['printInfo']:
-            if iParams['flags'][0]:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
-            else:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
+    grid_args = [
+        iParams['gc2'], iParams['gc1'],
+        iParams['BCs'][0], iParams['BCs'][1], iParams['del1Sqr'],
+        iParams['ratioQtr'], iParams['ratioSqr'],
+    ]
+    _kernel_ = _make_kernel(invert_standard_2D, grid_args, iParams)
     
-    return S
+    re = xr.apply_ufunc(
+        _kernel_, S, A, B, C, F, info,
+        input_core_dims=[dims, dims, dims, dims, dims, []],
+        output_core_dims=[dims],
+        dask='parallelized',
+        dask_gufunc_kwargs={'allow_rechunk': True},
+        vectorize=True,
+        output_dtypes=[S.dtype],
+    )
+    
+    return re
 
 
 
@@ -200,35 +191,28 @@ def inv_standard2D_test(A, B, C, D, E, F, S, dims, iParams):
     """
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
+
+    # get info for print and non-core dimensions
+    info, ncdims = _get_info(F, dims)
     
-    for selDict in loop_noncore(F, dims):
-        invert_standard_2D_test(S.loc[selDict].values,
-                           A.loc[selDict].values,
-                           B.loc[selDict].values, C.loc[selDict].values,
-                           D.loc[selDict].values, E.loc[selDict].values,
-                           F.loc[selDict].values,
-                           iParams['gc2' ], iParams['gc1' ],
-                           iParams['del2'], iParams['del1'],
-                           iParams['BCs'][0], iParams['BCs'][1], iParams['del1Sqr'],
-                           iParams['ratioQtr'], iParams['ratioSqr'],
-                           iParams['optArg'], _undeftmp, iParams['flags'],
-                           iParams['mxLoop'], iParams['tolerance'])
-        
-        info = str(selDict).replace('numpy.datetime64(', '') \
-                           .replace('numpy.timedelta64(', '') \
-                           .replace(')', '') \
-                           .replace('\'', '') \
-                           .replace('.000000000', '')
-        
-        if iParams['printInfo']:
-            if iParams['flags'][0]:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
-            else:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
+    grid_args = [
+        iParams['gc2'], iParams['gc1'],
+        iParams['BCs'][0], iParams['BCs'][1], iParams['del1Sqr'],
+        iParams['ratioQtr'], iParams['ratioSqr'],
+    ]
+    _kernel_ = _make_kernel(invert_standard_2D_test, grid_args, iParams)
     
-    return S
+    re = xr.apply_ufunc(
+        _kernel_, S, A, B, C, D, E, F, info,
+        input_core_dims=[dims, dims, dims, dims, dims, dims, dims, []],
+        output_core_dims=[dims],
+        dask='parallelized',
+        dask_gufunc_kwargs={'allow_rechunk': True},
+        vectorize=True,
+        output_dtypes=[S.dtype],
+    )
+    
+    return re
 
 
 def inv_standard1D(A, B, F, S, dims, iParams):
@@ -264,31 +248,26 @@ def inv_standard1D(A, B, F, S, dims, iParams):
     """
     if len(dims) != 1:
         raise Exception('1 dimensions are needed for inversion')
+
+    # get info for print and non-core dimensions
+    info, ncdims = _get_info(F, dims)
     
-    for selDict in loop_noncore(F, dims):
-        invert_standard_1D(S.loc[selDict].values,
-                           A.loc[selDict].values, B.loc[selDict].values,
-                           F.loc[selDict].values,
-                           iParams['gc1']   , iParams['del1'],
-                           iParams['BCs'][0], iParams['del1Sqr'],
-                           iParams['optArg'], _undeftmp, iParams['flags'],
-                           iParams['mxLoop'], iParams['tolerance'])
-        
-        info = str(selDict).replace('numpy.datetime64(', '') \
-                           .replace('numpy.timedelta64(', '') \
-                           .replace(')', '') \
-                           .replace('\'', '') \
-                           .replace('.000000000', '')
-        
-        if iParams['printInfo']:
-            if iParams['flags'][0]:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
-            else:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
+    grid_args = [
+        iParams['gc1'], iParams['BCs'][0], iParams['del1Sqr'],
+    ]
+    _kernel_ = _make_kernel(invert_standard_1D, grid_args, iParams)
     
-    return S
+    re = xr.apply_ufunc(
+        _kernel_, S, A, B, F, info,
+        input_core_dims=[dims, dims, dims, dims, []],
+        output_core_dims=[dims],
+        dask='parallelized',
+        dask_gufunc_kwargs={'allow_rechunk': True},
+        vectorize=True,
+        output_dtypes=[S.dtype],
+    )
+    
+    return re
 
 
 def inv_general3D(A, B, C, D, E, F, G, H, S, dims, iParams):
@@ -339,36 +318,30 @@ def inv_general3D(A, B, C, D, E, F, G, H, S, dims, iParams):
     """
     if len(dims) != 3:
         raise Exception('3 dimensions are needed for inversion')
+
+    # get info for print and non-core dimensions
+    info, ncdims = _get_info(F, dims)
     
-    for selDict in loop_noncore(F, dims):
-        invert_general_3D(S.loc[selDict].values, A.loc[selDict].values,
-                          B.loc[selDict].values, C.loc[selDict].values,
-                          D.loc[selDict].values, E.loc[selDict].values,
-                          F.loc[selDict].values, G.loc[selDict].values,
-                          H.loc[selDict].values,
-                          iParams['gc3' ], iParams['gc2' ], iParams['gc1' ],
-                          iParams['del3'], iParams['del2'], iParams['del1'],
-                          iParams['BCs'][0], iParams['BCs'][1], iParams['BCs'][2],
-                          iParams['del1Sqr'], iParams['ratio2'], iParams['ratio1'],
-                          iParams['ratio2Sqr'], iParams['ratio1Sqr'],
-                          iParams['optArg'], _undeftmp, iParams['flags'],
-                          iParams['mxLoop'], iParams['tolerance'])
-        
-        info = str(selDict).replace('numpy.datetime64(', '') \
-                           .replace('numpy.timedelta64(', '') \
-                           .replace(')', '') \
-                           .replace('\'', '') \
-                           .replace('.000000000', '')
-        
-        if iParams['printInfo']:
-            if iParams['flags'][0]:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
-            else:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
+    grid_args = [
+        iParams['gc3'], iParams['gc2'], iParams['gc1'], iParams['del1'],
+        iParams['BCs'][0], iParams['BCs'][1], iParams['BCs'][2],
+        iParams['del1Sqr'], iParams['ratio2'], iParams['ratio1'],
+        iParams['ratio2Sqr'], iParams['ratio1Sqr'],
+    ]
+    _kernel_ = _make_kernel(invert_general_3D, grid_args, iParams)
     
-    return S
+    re = xr.apply_ufunc(
+        _kernel_, S, A, B, C, D, E, F, G, H, info,
+        input_core_dims=[dims, dims, dims, dims, dims,
+                         dims, dims, dims, dims, []],
+        output_core_dims=[dims],
+        dask='parallelized',
+        dask_gufunc_kwargs={'allow_rechunk': True},
+        vectorize=True,
+        output_dtypes=[S.dtype],
+    )
+    
+    return re
 
 
 def inv_general2D(A, B, C, D, E, F, G, S, dims, iParams):
@@ -414,34 +387,29 @@ def inv_general2D(A, B, C, D, E, F, G, S, dims, iParams):
     """
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
+
+    # get info for print and non-core dimensions
+    info, ncdims = _get_info(F, dims)
     
-    for selDict in loop_noncore(F, dims):
-        invert_general_2D(S.loc[selDict].values, A.loc[selDict].values,
-                          B.loc[selDict].values, C.loc[selDict].values,
-                          D.loc[selDict].values, E.loc[selDict].values,
-                          F.loc[selDict].values, G.loc[selDict].values,
-                          iParams['gc2' ], iParams['gc1' ],
-                          iParams['del2'], iParams['del1'],
-                          iParams['BCs'][0], iParams['BCs'][1], iParams['del1Sqr'],
-                          iParams['ratio'], iParams['ratioQtr'], iParams['ratioSqr'],
-                          iParams['optArg'], _undeftmp, iParams['flags'],
-                          iParams['mxLoop'], iParams['tolerance'])
-        
-        info = str(selDict).replace('numpy.datetime64(', '') \
-                           .replace('numpy.timedelta64(', '') \
-                           .replace(')', '') \
-                           .replace('\'', '') \
-                           .replace('.000000000', '')
-        
-        if iParams['printInfo']:
-            if iParams['flags'][0]:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
-            else:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
+    grid_args = [
+        iParams['gc2'], iParams['gc1'], iParams['del1'],
+        iParams['BCs'][0], iParams['BCs'][1], iParams['del1Sqr'],
+        iParams['ratio'], iParams['ratioQtr'], iParams['ratioSqr'],
+    ]
+    _kernel_ = _make_kernel(invert_general_2D, grid_args, iParams)
     
-    return S
+    re = xr.apply_ufunc(
+        _kernel_, S, A, B, C, D, E, F, G, info,
+        input_core_dims=[dims, dims, dims, dims, dims,
+                         dims, dims, dims, []],
+        output_core_dims=[dims],
+        dask='parallelized',
+        dask_gufunc_kwargs={'allow_rechunk': True},
+        vectorize=True,
+        output_dtypes=[S.dtype],
+    )
+    
+    return re
 
 
 def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, iParams):
@@ -498,42 +466,98 @@ def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, iParams):
     """
     if len(dims) != 2:
         raise Exception('2 dimensions are needed for inversion')
+
+    # get info for print and non-core dimensions
+    info, ncdims = _get_info(F, dims)
     
-    for selDict in loop_noncore(F, dims):
-        invert_general_bih_2D(S.loc[selDict].values, A.loc[selDict].values,
-                              B.loc[selDict].values, C.loc[selDict].values,
-                              D.loc[selDict].values, E.loc[selDict].values,
-                              F.loc[selDict].values, G.loc[selDict].values,
-                              H.loc[selDict].values, I.loc[selDict].values,
-                              J.loc[selDict].values,
-                              iParams['gc2' ], iParams['gc1' ],
-                              iParams['del2'], iParams['del1'],
-                              iParams['BCs'][0], iParams['BCs'][1],
-                              iParams['del1SSr'], iParams['del1Tr'], iParams['del1Sqr'],
-                              iParams['ratio'   ], iParams['ratioSSr'],
-                              iParams['ratioQtr'], iParams['ratioSqr'],
-                              iParams['optArg'], _undeftmp, iParams['flags'],
-                              iParams['mxLoop'], iParams['tolerance'])
-        
-        info = str(selDict).replace('numpy.datetime64(', '') \
-                           .replace('numpy.timedelta64(', '') \
-                           .replace(')', '') \
-                           .replace('\'', '') \
-                           .replace('.000000000', '')
-        
-        if iParams['printInfo']:
-            if iParams['flags'][0]:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e} (overflows!)'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
-            else:
-                print(info + ' loops {0:4.0f} and tolerance is {1:e}'
-                      .format(iParams['flags'][2], iParams['flags'][1]))
+    grid_args = [
+        iParams['gc2'], iParams['gc1'],
+        iParams['BCs'][0], iParams['BCs'][1],
+        iParams['del1SSr'], iParams['del1Tr'], iParams['del1Sqr'],
+        iParams['ratio'], iParams['ratioSSr'],
+        iParams['ratioQtr'], iParams['ratioSqr'],
+    ]
+    _kernel_ = _make_kernel(invert_general_bih_2D, grid_args, iParams)
     
-    return S
+    re = xr.apply_ufunc(
+        _kernel_, S, A, B, C, D, E, F, G, H, I, J, info,
+        input_core_dims=[dims, dims, dims, dims, dims, dims,
+                         dims, dims, dims, dims, dims, []],
+        output_core_dims=[dims],
+        dask='parallelized',
+        dask_gufunc_kwargs={'allow_rechunk': True},
+        vectorize=True,
+        output_dtypes=[S.dtype],
+    )
+    
+    return re
 
 
 """
 Below are the helper methods of xinvert
 """
+def _get_info(F, dims):
+    info = []
+    for selDict in loop_noncore(F, dims):
+        parts = []
+        for k, v in selDict.items():
+            if isinstance(v, (np.datetime64, np.timedelta64)):
+                s = str(v).split('.')[0] if '.' in str(v) else str(v)
+            elif isinstance(v, (np.floating, np.integer)):
+                s = str(v.item())
+            else:
+                s = str(v)
+            parts.append(f'{k}: {s}')
+        info.append('{' + ', '.join(parts) + '}' if parts else '{}')
+    ncdims = list(selDict.keys()) # non-core dimensions
+    
+    if ncdims == []:
+        info = '{}'
+    else:
+        info = xr.DataArray(np.array(info), dims=ncdims, coords={dim: F[dim] for dim in ncdims})
+    
+    return info, ncdims
 
+
+def _make_kernel(numba_func, grid_args, iParams):
+    """Create a kernel function for xr.apply_ufunc that wraps a numba SOR function.
+
+    The numba function is called as:
+        numba_func(o, *coeffs, info, *grid_args,
+                   optArg, _undeftmp, flags, mxLoop, tolerance)
+
+    Parameters
+    ----------
+    numba_func : callable
+        The numba-compiled inversion function.
+    grid_args : list
+        Pre-extracted grid/BC parameters from iParams, passed between
+        the info array and optArg in the numba function call.
+    iParams : dict
+        Inversion parameters.
+
+    Returns
+    -------
+    callable
+        A kernel function suitable for xr.apply_ufunc.
+    """
+    def _kernel_(s, *args):
+        *coeffs, info = args
+        s.setflags(write=1)
+        o = s
+        flags = np.array([0, 0, 0], dtype='float64')
+
+        numba_func(o, *coeffs, info, *grid_args,
+                   iParams['optArg'], _undeftmp, flags,
+                   iParams['mxLoop'], iParams['tolerance'])
+
+        if iParams['printInfo']:
+            msg = f'{info} loops {flags[2]:4.0f}, tolerance is {flags[1]:e}'
+            if flags[0]:
+                msg = msg + ' (overflow!)'
+            print(msg, file=sys.stderr, flush=True)
+
+        return o
+
+    return _kernel_
 

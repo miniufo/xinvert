@@ -12,9 +12,9 @@ import numba as nb
 """
 Below are the numba functions
 """
-@nb.jit(nopython=True, cache=False)
-def invert_standard_3D(S, A, B, C, F,
-                       zc, yc, xc, delz, dely, delx, BCz, BCy, BCx, delxSqr,
+@nb.njit(cache=False, nogil=True)
+def invert_standard_3D(S, A, B, C, F, info,
+                       zc, yc, xc, BCz, BCy, BCx, delxSqr,
                        ratio2Sqr, ratio1Sqr, optArg, undef, flags,
                        mxLoop, tolerance):
     r"""Inverting a 3D volume of elliptic equation in standard form.
@@ -37,18 +37,14 @@ def invert_standard_3D(S, A, B, C, F,
         Coefficient for the second dimensional derivative.
     F: numpy.array
         Forcing function.
+    info: numpy.array
+        Information array for logging purpose.
     zc: int
         Number of grid point in z-dimension (e.g., Z or lev).
     yc: int
         Number of grid point in y-dimension (e.g., Y or lat).
     xc: int
         Number of grid point in x-dimension (e.g., X or lon).
-    delz: float
-        Increment (interval) in dimension z (unit of m or Pa).
-    dely: float
-        Increment (interval) in dimension y (unit of m, not degree).
-    delx: float
-        Increment (interval) in dimension x (unit of m, not degree).
     BCz: str
         Boundary condition for dimension z in ['fixed', 'extend'].
     BCy: str
@@ -81,6 +77,8 @@ def invert_standard_3D(S, A, B, C, F,
     loop = 0
     temp = 0.0
     normPrev = np.finfo(np.float64).max
+    overflow = False
+    error = 0.0
     
     while(True):
         # process boundaries
@@ -94,16 +92,18 @@ def invert_standard_3D(S, A, B, C, F,
                             S[k,-1,i]  = S[k,-2,i]
             else:
                 for k in range(1, zc-1):
+                    # north/south boundary (y-direction rows) for interior x
                     for i in range(1, xc-1):
                         if  S[k, 1,i] != undef:
                             S[k, 0,i]  = S[k, 1,i]
                         if  S[k,-2,i] != undef:
                             S[k,-1,i]  = S[k,-2,i]
-                    for i in range(1, xc-1):
-                        if  S[k, 1,i] != undef:
-                            S[k, 0,i]  = S[k, 1,i]
-                        if  S[k,-2,i] != undef:
-                            S[k,-1,i]  = S[k,-2,i]
+                    # east/west boundary (x-direction columns) for interior y
+                    for j in range(1, yc-1):
+                        if  S[k, j, 1] != undef:
+                            S[k, j, 0]  = S[k, j, 1]
+                        if  S[k, j,-2] != undef:
+                            S[k, j,-1]  = S[k, j,-2]
                     
                     if  S[k, 1, 1] != undef:
                         S[k, 0, 0] = S[k, 1, 1]
@@ -197,24 +197,27 @@ def invert_standard_3D(S, A, B, C, F,
         norm = absNorm3D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
-            flags[0] = True
+            overflow = True
             break
+
+        error = abs(norm - normPrev) / normPrev
         
-        flags[1] = abs(norm - normPrev) / normPrev
-        flags[2] = loop
-        
-        if flags[1] < tolerance or loop >= mxLoop:
+        if error < tolerance or loop >= mxLoop:
             break
         
         normPrev = norm
         loop += 1
         
+    flags[0] = overflow
+    flags[1] = error
+    flags[2] = loop
+
     return S
 
 
-@nb.jit(nopython=True, cache=False)
-def invert_standard_2D(S, A, B, C, F,
-                       yc, xc, dely, delx, BCy, BCx, delxSqr,
+@nb.njit(cache=False, nogil=True)
+def invert_standard_2D(S, A, B, C, F, info,
+                       yc, xc, BCy, BCx, delxSqr,
                        ratioQtr, ratioSqr, optArg, undef, flags,
                        mxLoop, tolerance):
     r"""Inverting a 2D slice of elliptic equation in standard form.
@@ -240,14 +243,12 @@ def invert_standard_2D(S, A, B, C, F,
         Coefficient for the second dimensional derivative.
     F: numpy.array
         Forcing function.
+    info: numpy.array
+        Information array for logging purpose.
     yc: int
         Number of grid point in y-dimension (e.g., Y or lat).
     xc: int
         Number of grid point in x-dimension (e.g., X or lon).
-    dely: float
-        Increment (interval) in dimension y (unit of m, not degree).
-    delx: float
-        Increment (interval) in dimension x (unit of m, not degree).
     BCy: str
         Boundary condition for dimension y in ['fixed', 'extend', 'periodic'].
     BCx: str
@@ -278,6 +279,8 @@ def invert_standard_2D(S, A, B, C, F,
     loop = 0
     temp = 0.0
     normPrev = np.finfo(np.float64).max
+    overflow = False
+    error = 0.0
     
     while(True):
         # process boundaries
@@ -289,16 +292,18 @@ def invert_standard_2D(S, A, B, C, F,
                     if  S[-2,i] != undef:
                         S[-1,i]  = S[-2,i]
             else:
+                # north/south boundary (y-direction rows) for interior x
                 for i in range(1, xc-1):
                     if  S[ 1,i] != undef:
                         S[ 0,i]  = S[ 1,i]
                     if  S[-2,i] != undef:
                         S[-1,i]  = S[-2,i]
-                for i in range(1, yc-1):
-                    if  S[ 1,i] != undef:
-                        S[ 0,i]  = S[ 1,i]
-                    if  S[-2,i] != undef:
-                        S[-1,i]  = S[-2,i]
+                # east/west boundary (x-direction columns) for interior y
+                for j in range(1, yc-1):
+                    if  S[ j, 1] != undef:
+                        S[ j, 0]  = S[ j, 1]
+                    if  S[ j,-2] != undef:
+                        S[ j,-1]  = S[ j,-2]
                 
                 if  S[ 1, 1] != undef:
                     S[ 0, 0] = S[ 1, 1]
@@ -401,25 +406,28 @@ def invert_standard_2D(S, A, B, C, F,
         norm = absNorm2D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
-            flags[0] = True
+            overflow = True
             break
         
-        flags[1] = abs(norm - normPrev) / normPrev
-        flags[2] = loop
+        error = abs(norm - normPrev) / normPrev
         
-        if flags[1] < tolerance or loop >= mxLoop or norm == 0:
+        if error < tolerance or loop >= mxLoop or norm == 0:
             break
         
         normPrev = norm
         loop += 1
         
+    flags[0] = overflow
+    flags[1] = error
+    flags[2] = loop
+        
     return S
 
 
 
-@nb.jit(nopython=True, cache=False)
-def invert_standard_2D_test(S, A, B, C, D, E, F,
-                       yc, xc, dely, delx, BCy, BCx, delxSqr,
+@nb.njit(cache=False, nogil=True)
+def invert_standard_2D_test(S, A, B, C, D, E, F, info,
+                       yc, xc, BCy, BCx, delxSqr,
                        ratioQtr, ratioSqr, optArg, undef, flags,
                        mxLoop, tolerance):
     r"""Inverting a 2D slice of elliptic equation in standard form.
@@ -450,14 +458,12 @@ def invert_standard_2D_test(S, A, B, C, D, E, F,
         Coefficient for the linear term.
     F: numpy.array
         Forcing function.
+    info: numpy.array
+        Information array for logging purpose.
     yc: int
         Number of grid point in y-dimension (e.g., Y or lat).
     xc: int
         Number of grid point in x-dimension (e.g., X or lon).
-    dely: float
-        Increment (interval) in dimension y (unit of m, not degree).
-    delx: float
-        Increment (interval) in dimension x (unit of m, not degree).
     BCy: str
         Boundary condition for dimension y in ['fixed', 'extend', 'periodic'].
     BCx: str
@@ -488,6 +494,8 @@ def invert_standard_2D_test(S, A, B, C, D, E, F,
     loop = 0
     temp = 0.0
     normPrev = np.finfo(np.float64).max
+    overflow = False
+    error = 0.0
     
     while(True):
         # process boundaries
@@ -499,16 +507,18 @@ def invert_standard_2D_test(S, A, B, C, D, E, F,
                     if  S[-2,i] != undef:
                         S[-1,i]  = S[-2,i]
             else:
+                # north/south boundary (y-direction rows) for interior x
                 for i in range(1, xc-1):
                     if  S[ 1,i] != undef:
                         S[ 0,i]  = S[ 1,i]
                     if  S[-2,i] != undef:
                         S[-1,i]  = S[-2,i]
-                for i in range(1, yc-1):
-                    if  S[ 1,i] != undef:
-                        S[ 0,i]  = S[ 1,i]
-                    if  S[-2,i] != undef:
-                        S[-1,i]  = S[-2,i]
+                # east/west boundary (x-direction columns) for interior y
+                for j in range(1, yc-1):
+                    if  S[ j, 1] != undef:
+                        S[ j, 0]  = S[ j, 1]
+                    if  S[ j,-2] != undef:
+                        S[ j,-1]  = S[ j,-2]
                 
                 if  S[ 1, 1] != undef:
                     S[ 0, 0] = S[ 1, 1]
@@ -614,24 +624,27 @@ def invert_standard_2D_test(S, A, B, C, D, E, F,
         norm = absNorm2D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
-            flags[0] = True
+            overflow = True
             break
         
-        flags[1] = abs(norm - normPrev) / normPrev
-        flags[2] = loop
-        
-        if flags[1] < tolerance or loop >= mxLoop or norm == 0:
+        error = abs(norm - normPrev) / normPrev
+
+        if error < tolerance or loop >= mxLoop or norm == 0:
             break
         
         normPrev = norm
         loop += 1
         
+    flags[0] = overflow
+    flags[1] = error
+    flags[2] = loop
+        
     return S
 
 
-@nb.jit(nopython=True, cache=False)
-def invert_standard_1D(S, A, B, F,
-                       xc, delx, BCx, delxSqr, optArg, undef, flags,
+@nb.njit(cache=False, nogil=True)
+def invert_standard_1D(S, A, B, F, info,
+                       xc, BCx, delxSqr, optArg, undef, flags,
                        mxLoop, tolerance):
     r"""Inverting a 1D series of elliptic equation in standard form.
 
@@ -651,10 +664,10 @@ def invert_standard_1D(S, A, B, F,
         Coefficient for the linear term.
     F: numpy.array
         Forcing function.
+    info: numpy.array
+        Information array for logging purpose.
     xc: int
         Number of grid point in x-dimension (e.g., X or lon).
-    delx: float
-        Increment (interval) in dimension x (unit of m, not degree).
     BCx: str
         Boundary condition for dimension x in ['fixed', 'extend', 'periodic'].
     delxSqr: float
@@ -679,6 +692,8 @@ def invert_standard_1D(S, A, B, F,
     loop = 0
     temp = 0.0
     normPrev = np.finfo(np.float64).max
+    overflow = False
+    error = 0.0
     
     while(True):
         # process boundaries
@@ -727,26 +742,29 @@ def invert_standard_1D(S, A, B, F,
         norm = absNorm1D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
-            flags[0] = True
+            overflow = True
             break
         
-        flags[1] = abs(norm - normPrev) / normPrev
-        flags[2] = loop
-        
-        if flags[1] < tolerance or loop >= mxLoop or norm == 0:
+        error = abs(norm - normPrev) / normPrev
+
+        if error < tolerance or loop >= mxLoop or norm == 0:
             break
         
         normPrev = norm
         loop += 1
         
+    flags[0] = overflow
+    flags[1] = error
+    flags[2] = loop
+        
     return S
 
 
-@nb.jit(nopython=True, cache=False)
-def invert_general_3D(S, A, B, C, D, E, F, G, H,
-                      zc, yc, xc, delz, dely, delx, BCz, BCy, BCx, delxSqr,
-                      ratio2, ratio1, ratio2Sqr, ratio1Sqr, optArg, undef, flags,
-                      mxLoop, tolerance):
+@nb.njit(cache=False, nogil=True)
+def invert_general_3D(S, A, B, C, D, E, F, G, H, info,
+                      zc, yc, xc, delx, BCz, BCy, BCx, delxSqr,
+                      ratio2, ratio1, ratio2Sqr, ratio1Sqr, optArg, undef,
+                      flags, mxLoop, tolerance):
     r"""Inverting a 3D volume of elliptic equation in the general form.
 
     .. math::
@@ -779,16 +797,14 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H,
         Coefficient for the seventh term.
     H: numpy.array
         A known forcing function.
+    info: numpy.array
+        Information array for logging purpose.
     zc: int
         Number of grid point in the z-dimension (e.g., Z or lev).
     yc: int
         Number of grid point in the y-dimension (e.g., Y or lat).
     xc: int
         Number of grid point in the x-dimension (e.g., X or lon).
-    delz: float
-        Increment (interval) in dimension z (unit of m, not degree).
-    dely: float
-        Increment (interval) in dimension y (unit of m, not degree).
     delx: float
         Increment (interval) in dimension x (unit of m, not degree).
     BCz: str
@@ -823,6 +839,8 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H,
     loop = 0
     temp = 0.0
     normPrev = np.finfo(np.float64).max
+    overflow = False
+    error = 0.0
     
     while(True):
         # process boundaries
@@ -836,16 +854,18 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H,
                             S[k,-1,i]  = S[k,-2,i]
             else:
                 for k in range(1, zc-1):
+                    # north/south boundary (y-direction rows) for interior x
                     for i in range(1, xc-1):
                         if  S[k, 1,i] != undef:
                             S[k, 0,i]  = S[k, 1,i]
                         if  S[k,-2,i] != undef:
                             S[k,-1,i]  = S[k,-2,i]
-                    for i in range(1, yc-1):
-                        if  S[k, 1,i] != undef:
-                            S[k, 0,i]  = S[k, 1,i]
-                        if  S[k,-2,i] != undef:
-                            S[k,-1,i]  = S[k,-2,i]
+                    # east/west boundary (x-direction columns) for interior y
+                    for j in range(1, yc-1):
+                        if  S[k, j, 1] != undef:
+                            S[k, j, 0]  = S[k, j, 1]
+                        if  S[k, j,-2] != undef:
+                            S[k, j,-1]  = S[k, j,-2]
                     
                     if  S[k, 1, 1] != undef:
                         S[k, 0, 0] = S[k, 1, 1]
@@ -860,7 +880,7 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H,
             for j in range(1, yc-1):
                 # for the west boundary iteration (i==0)
                 if BCx == 'periodic':
-                    cond = (G[k,j,0] != undef and G[k,j,0] != undef and
+                    cond = (G[k,j,0] != undef and H[k,j,0] != undef and
                             A[k,j,0] != undef and B[k,j,0] != undef and
                             C[k,j,0] != undef and D[k,j,0] != undef and
                             E[k,j,0] != undef and F[k,j,0] != undef)
@@ -896,7 +916,7 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H,
                 
                 # inner loop
                 for i in range(1, xc-1):
-                    cond = (H[k,j,i] != undef and G[k,j,i] != undef and
+                    cond = (G[k,j,i] != undef and H[k,j,i] != undef and
                             A[k,j,i] != undef and B[k,j,i] != undef and
                             C[k,j,i] != undef and D[k,j,i] != undef and
                             E[k,j,i] != undef and F[k,j,i] != undef)
@@ -969,26 +989,29 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H,
         norm = absNorm3D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
-            flags[0] = True
+            overflow = True
             break
-        
-        flags[1] = abs(norm - normPrev) / normPrev
-        flags[2] = loop
-        
-        if flags[1] < tolerance or loop >= mxLoop:
+
+        error = abs(norm - normPrev) / normPrev
+
+        if error < tolerance or loop >= mxLoop:
             break
         
         normPrev = norm
         loop += 1
         
+    flags[0] = overflow
+    flags[1] = error
+    flags[2] = loop
+        
     return S
 
 
-@nb.jit(nopython=True, cache=False)
-def invert_general_2D(S, A, B, C, D, E, F, G,
-                      yc, xc, dely, delx, BCy, BCx,
-                      delxSqr, ratio, ratioQtr, ratioSqr, optArg, undef, flags,
-                      mxLoop, tolerance):
+@nb.njit(cache=False, nogil=True)
+def invert_general_2D(S, A, B, C, D, E, F, G, info,
+                      yc, xc, delx, BCy, BCx,
+                      delxSqr, ratio, ratioQtr, ratioSqr, optArg, undef,
+                      flags, mxLoop, tolerance):
     r"""Inverting a 2D slice of elliptic equation in the general form.
 
     .. math::
@@ -1018,14 +1041,12 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
         Coefficient for the sixth term.
     G: numpy.array
         Known forcing function.
+    info: numpy.array
+        Information array for logging purpose.
     yc: int
         Number of grid point in the y-dimension (e.g., Y or lat).
     xc: int
         Number of grid point in the x-dimension (e.g., X or lon).
-    dely: float
-        Increment (interval) in dimension y (unit of m, not degree).
-    delx: float
-        Increment (interval) in dimension x (unit of m, not degree).
     BCy: str
         Boundary condition for dimension y in ['fixed', 'extend', 'periodic'].
     BCx: str
@@ -1058,6 +1079,8 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
     loop = 0
     temp = 0.0
     normPrev = np.finfo(np.float64).max
+    overflow = False
+    error = 0.0
     
     while(True):
         # process boundaries
@@ -1069,16 +1092,18 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
                     if  S[-2,i] != undef:
                         S[-1,i]  = S[-2,i]
             else:
+                # north/south boundary (y-direction rows) for interior x
                 for i in range(1, xc-1):
                     if  S[ 1,i] != undef:
                         S[ 0,i]  = S[ 1,i]
                     if  S[-2,i] != undef:
                         S[-1,i]  = S[-2,i]
-                for i in range(1, yc-1):
-                    if  S[ 1,i] != undef:
-                        S[ 0,i]  = S[ 1,i]
-                    if  S[-2,i] != undef:
-                        S[-1,i]  = S[-2,i]
+                # east/west boundary (x-direction columns) for interior y
+                for j in range(1, yc-1):
+                    if  S[ j, 1] != undef:
+                        S[ j, 0]  = S[ j, 1]
+                    if  S[ j,-2] != undef:
+                        S[ j,-1]  = S[ j,-2]
                 
                 if  S[ 1, 1] != undef:
                     S[ 0, 0] = S[ 1, 1]
@@ -1186,24 +1211,27 @@ def invert_general_2D(S, A, B, C, D, E, F, G,
         norm = absNorm2D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
-            flags[0] = True
+            overflow = True
             break
         
-        flags[1] = abs(norm - normPrev) / normPrev
-        flags[2] = loop
+        error = abs(norm - normPrev) / normPrev
         
-        if flags[1] < tolerance or loop >= mxLoop:
+        if error < tolerance or loop >= mxLoop:
             break
         
         normPrev = norm
         loop += 1
         
+    flags[0] = overflow
+    flags[1] = error
+    flags[2] = loop
+        
     return S
 
 
-@nb.jit(nopython=True, cache=False)
-def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
-                          yc, xc, dely, delx, BCy, BCx,
+@nb.njit(cache=False, nogil=True)
+def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
+                          yc, xc, BCy, BCx,
                           delxSSr, delxTr, delxSqr,
                           ratio, ratioSSr, ratioQtr, ratioSqr,
                           optArg, undef, flags,
@@ -1247,14 +1275,12 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
         Coefficient for the ninth term.
     J: numpy.array
         Known forcing function.
+    info: numpy.array
+        Information array for logging purpose.
     yc: int
         Number of grid point in the y-dimension (e.g., Y or lat).
     xc: int
         Number of grid point in the x-dimension (e.g., X or lon).
-    dely: float
-        Increment (interval) in dimension y (unit of m, not degree).
-    delx: float
-        Increment (interval) in dimension x (unit of m, not degree).
     BCy: str
         Boundary condition for dimension y in ['fixed', 'extend', 'periodic'].
     BCx: str
@@ -1293,6 +1319,8 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
     loop = 0
     temp = 0.0
     normPrev = np.finfo(np.float64).max
+    overflow = False
+    error = 0.0
     
     while(True):
         # process boundaries
@@ -1313,13 +1341,13 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
                     if  S[-3,i] != undef:
                         S[-1,i]  = S[-3,i]
                         S[-2,i]  = S[-3,i]
-                for i in range(1, yc-1):
-                    if  S[ 2,i] != undef:
-                        S[ 0,i]  = S[ 2,i]
-                        S[ 1,i]  = S[ 2,i]
-                    if  S[-3,i] != undef:
-                        S[-1,i]  = S[-3,i]
-                        S[-2,i]  = S[-3,i]
+                for j in range(1, yc-1):
+                    if  S[ j, 2] != undef:
+                        S[ j, 0]  = S[ j, 2]
+                        S[ j, 1]  = S[ j, 2]
+                    if  S[ j,-3] != undef:
+                        S[ j,-1]  = S[ j,-3]
+                        S[ j,-2]  = S[ j,-3]
                 
                 if  S[ 2, 2] != undef:
                     S[ 0, 0] = S[ 2, 2]
@@ -1492,9 +1520,9 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
                             (S[j+2,-2] - 4.0*S[j+1,-2] + 6.0*S[j,-2]- 4.0*S[j-1,-2] + S[j-2,-2])
                         ) * ratioSSr +
                         B[j,-2] * (
-                            (    S[j+2,0] - 2.0*S[j+2,-2] +     S[j+2,i-4] +
-                            -2.0*S[j  ,0] + 4.0*S[j  ,-2] - 2.0*S[j  ,i-4] +
-                                 S[j-2,0] - 2.0*S[j-2,-2] +     S[j-2,i-4])
+                            (    S[j+2,0] - 2.0*S[j+2,-2] +     S[j+2,-4] +
+                            -2.0*S[j  ,0] + 4.0*S[j  ,-2] - 2.0*S[j  ,-4] +
+                                 S[j-2,0] - 2.0*S[j-2,-2] +     S[j-2,-4])
                         ) * ratioSqr / 16.0 +
                         C[j,-2] * (
                             (S[j,0] - 4.0*S[j,-1] + 6.0*S[j,-2] - 4.0*S[j,-3] + S[j,-4])
@@ -1537,9 +1565,9 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
                             (S[j+2,-1] - 4.0*S[j+1,-1] + 6.0*S[j,-1]- 4.0*S[j-1,-1] + S[j-2,-1])
                         ) * ratioSSr +
                         B[j,-1] * (
-                            (    S[j+2,1] - 2.0*S[j+2,-1] +     S[j+2,i-3] +
-                            -2.0*S[j  ,1] + 4.0*S[j  ,-1] - 2.0*S[j  ,i-3] +
-                                 S[j-2,1] - 2.0*S[j-2,-1] +     S[j-2,i-3])
+                            (    S[j+2,1] - 2.0*S[j+2,-1] +     S[j+2,-3] +
+                            -2.0*S[j  ,1] + 4.0*S[j  ,-1] - 2.0*S[j  ,-3] +
+                                 S[j-2,1] - 2.0*S[j-2,-1] +     S[j-2,-3])
                         ) * ratioSqr / 16.0 +
                         C[j,-1] * (
                             (S[j,1] - 4.0*S[j,0] + 6.0*S[j,-1] - 4.0*S[j,-2] + S[j,-3])
@@ -1571,22 +1599,25 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J,
         norm = absNorm2D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
-            flags[0] = True
+            overflow = True
             break
         
-        flags[1] = abs(norm - normPrev) / normPrev
-        flags[2] = loop
+        error = abs(norm - normPrev) / normPrev
         
-        if flags[1] < tolerance or loop >= mxLoop:
+        if error < tolerance or loop >= mxLoop:
             break
         
         normPrev = norm
         loop += 1
         
+    flags[0] = overflow
+    flags[1] = error
+    flags[2] = loop
+        
     return S
 
 
-@nb.jit(nopython=True, cache=False)
+@nb.njit(cache=False, nogil=True)
 def trace(a, b, c, d):
     r"""
     Trace method for solving tri-diagonal equation set.
@@ -1636,7 +1667,7 @@ def trace(a, b, c, d):
     return res
 
 
-@nb.jit(nopython=True, cache=False)
+@nb.njit(cache=False, nogil=True)
 def traceCyclic(a, b, c, d, a0, cn):
     r"""
     Trace method for solving tri-diagonal equation set with periodic BCs.
@@ -1686,7 +1717,7 @@ def traceCyclic(a, b, c, d, a0, cn):
 
 
 
-@nb.jit(nopython=True, cache=False)
+@nb.njit(cache=False, nogil=True)
 def absNorm3D(S, undef):
     r"""Sum up 3D absolute value S"""
     norm = 0.0
@@ -1707,7 +1738,7 @@ def absNorm3D(S, undef):
     
     return norm
 
-@nb.jit(nopython=True, cache=False)
+@nb.njit(cache=False, nogil=True)
 def absNorm2D(S, undef):
     r"""Sum up 2D absolute value S"""
     norm = 0.0
@@ -1727,7 +1758,7 @@ def absNorm2D(S, undef):
     
     return norm
 
-@nb.jit(nopython=True, cache=False)
+@nb.njit(cache=False, nogil=True)
 def absNorm1D(S, undef):
     r"""Sum up 1D absolute value S"""
     norm = 0.0

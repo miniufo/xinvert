@@ -42,7 +42,7 @@ def test_poisson_atmos():
 
 
 def test_poisson_ocean():
-    ds = xr.open_dataset('./Data/Helmholtz_ocean.nc')
+    ds = xr.open_dataset('./Data/Helmholtz_ocean.nc', decode_timedelta=True)
     
     vor = ds.vor[0]
     

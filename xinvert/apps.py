@@ -18,7 +18,7 @@ from .core import inv_standard3D, inv_standard2D, inv_standard1D,\
 _undeftmp = -9.99e8
 
 ###### default invert parameters. ######
-default_iParams = copy.deepcopy({
+default_iParams = {
     # boundary conditions for the 2D slice
     # if 3D, should be ['fixed', 'fixed', 'fixed']
     'BCs'      : ['fixed', 'fixed'],
@@ -35,11 +35,11 @@ default_iParams = copy.deepcopy({
     'printInfo': True,
     # Whether or not print out debug info.
     'debug'    : False,
-})
+}
 
 
 ###### default model parameters. ######
-default_mParams = copy.deepcopy({
+default_mParams = {
     'f0'     : 1e-5 , # Coriolis parameter at south BC on beta plane
     'beta'   : 2e-11, # meridional derivative of f
     'Phi'    : 1e4  , # background geopotential in Gill-Matsuno model
@@ -57,7 +57,7 @@ default_mParams = copy.deepcopy({
     'Rearth' : 6371200.0, # Radius of Earth
     'Omega'  : 7.292e-5 , # angular speed of Earth's rotation
     'g'      : 9.80665  , # gravitational acceleration
-})
+}
 
 
 
@@ -997,7 +997,7 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         validMPs  = ['f0', 'beta', 'N2', 'g', 'Omega', 'Rearth']
         
     elif app_name == '3Docean':
-        coef_func = __coeffs_omega
+        coef_func = __coeffs_3DOcean
         invt_func = inv_standard3D
         validMPs  = ['f0', 'beta', 'N2', 'epsilon', 'k', 'g', 'Omega', 'Rearth']
     else:
@@ -1021,6 +1021,13 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         raise Exception('dimension length should be one of [2, 3]')
     
     iParams = __update(ps, iParams)
+    
+    opt = iParams.get('optArg')
+    if opt is not None and not (1.0 <= opt <= 2.0):
+        raise ValueError(
+            f"iParams['optArg']={opt} is out of range, "
+            f"should be between 1 and 2 for SOR convergence"
+        )
     
     if iParams['debug']:
         __print_params(iParams)
@@ -1089,7 +1096,7 @@ def invert_MultiGrid(invert_func, *args, ratio=3, gridNo=3, **kwargs):
     xarray.DataArray
         The result, in which an extra dimension called `iter` will be added.
     """
-    from utils.XarrayUtils import coarsen
+    from .utils import coarsen
     
     ratios = [10, 6, 3, 1]
     
@@ -1140,7 +1147,7 @@ def _invert_omega_MG(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
                     undef=np.nan, mxLoop=5000, tolerance=1e-6,
                     optArg=None, printInfo=True, debug=False,
                     icbc=None, ratio=4, gridNo=3):
-    from utils.XarrayUtils import coarsen
+    from .utils import coarsen
     
     ratios = [10, 6, 3, 1]
     loops  = [mxLoop*ratio/30 for ratio in ratios]
@@ -1378,6 +1385,13 @@ def __template(coef_func, inv_func, dimLen,
         raise Exception('dimension length should be one of [2, 3]')
         
     iParams = __update(ps, iParams)
+    
+    opt = iParams.get('optArg')
+    if opt is not None and not (1.0 <= opt <= 2.0):
+        raise ValueError(
+            f"iParams['optArg']={opt} is out of range, "
+            f"should be between 1 and 2 for SOR convergence"
+        )
     
     if iParams['debug']:
         __print_params(iParams)
@@ -2155,8 +2169,9 @@ def __mask_FS(F, dims, iParams, icbc):
         
         initS = xr.where(mask, icbc, 0)
     
-    # loaded initS because dask cannot be modified
-    return maskF, initS.load(), zero
+    # # loaded initS because dask cannot be modified
+    # return maskF, initS.load(), zero
+    return maskF, initS, zero
 
 
 def __cal_params3D(dim3_var, dim2_var, dim1_var, coords,
@@ -2207,7 +2222,6 @@ def __cal_params3D(dim3_var, dim2_var, dim1_var, coords,
                  np.sin(np.pi/(2.0*gc2+2.0)) **2.0 +
                  np.sin(np.pi/(2.0*gc3+3.0)) **2.0)
     optArg    = 2.0 / (1.0 + np.sqrt((2.0 - epsilon) * epsilon))
-    flags     = np.array([0.0, 1.0, 0.0])
     
     if debug:
         print('dim3_var: ', dim3_var)
@@ -2234,10 +2248,6 @@ def __cal_params3D(dim3_var, dim2_var, dim1_var, coords,
     re['ratio2Sqr'] = ratio2Sqr # ratio ** 4
     re['del1Sqr'  ] = del1Sqr   # del1 ** 2
     re['optArg'   ] = optArg    # optimal argument for SOR
-    re['flags'    ] = flags     # outputs of the SOR iteration:
-                                #   [0] overflow or not
-                                #   [1] tolerance
-                                #   [2] loop count
     
     return re
 
@@ -2288,7 +2298,6 @@ def __cal_params2D(dim2_var, dim1_var, coords, Rearth=default_mParams['Rearth'])
     del1SSr  = del1 ** 4.0
     epsilon  = np.sin(np.pi/(2.0*gc1+2.0))**2 + np.sin(np.pi/(2.0*gc2+2.0))**2
     optArg   = 2.0 / (1.0 + np.sqrt((2.0 - epsilon) * epsilon))
-    flags    = np.array([0.0, 1.0, 0.0])
     
     # store all and return
     re = {}
@@ -2305,10 +2314,6 @@ def __cal_params2D(dim2_var, dim1_var, coords, Rearth=default_mParams['Rearth'])
     re['del1Tr'  ] = del1Tr    # del1 ** 3
     re['del1SSr' ] = del1SSr   # del1 ** 4
     re['optArg'  ] = optArg    # optimal argument for SOR
-    re['flags'   ] = flags     # outputs of the SOR iteration:
-                               #   [0] overflow or not
-                               #   [1] tolerance
-                               #   [2] loop count
     
     return re
 
@@ -2341,19 +2346,14 @@ def __cal_params1D(dim1_var, coords, Rearth=default_mParams['Rearth']):
     del1Sqr = del1 ** 2.0
     epsilon = np.sin(np.pi/(2.0*gc1+2.0))**2
     optArg  = 2.0 / (1.0 + np.sqrt((2.0 - epsilon) * epsilon))
-    flags   = np.array([0.0, 1.0, 0.0])
     
     # store all and return
     re = {}
     
-    re['gc1'     ] = gc1       # grid count in first  dimension (e.g., lon)
-    re['del1'    ] = del1      # distance in first  dimension (unit: m)
-    re['del1Sqr' ] = del1Sqr   # del1 ** 2
-    re['optArg'  ] = optArg    # optimal argument for SOR
-    re['flags'   ] = flags     # outputs of the SOR iteration:
-                               #   [0] overflow or not
-                               #   [1] tolerance
-                               #   [2] loop count
+    re['gc1'    ] = gc1       # grid count in first  dimension (e.g., lon)
+    re['del1'   ] = del1      # distance in first  dimension (unit: m)
+    re['del1Sqr'] = del1Sqr   # del1 ** 2
+    re['optArg' ] = optArg    # optimal argument for SOR
     
     return re
 
@@ -2375,7 +2375,7 @@ def __update(default, users, valid=None):
     return default_cp
 
 def __uniform_interval(coord1D, value):
-    if not np.isclose(coord1D.diff(coord1D.name), value).all():
+    if not np.isclose(coord1D.diff(coord1D.name), value, rtol=5e-04).all():
         raise Exception(f'coordinate {coord1D.name} is non-uniform:\n{coord1D}')
 
 def __print_params(params):

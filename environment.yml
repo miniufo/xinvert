@@ -10,7 +10,7 @@ dependencies:
   - scipy
   - netCDF4
   - numba
-  - proplot
+  - ultraplot
   - cartopy
   - pooch
   - ipykernel

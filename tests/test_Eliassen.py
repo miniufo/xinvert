@@ -20,7 +20,7 @@ def test_Hadley():
     dset = ds.interp({'LEV':np.linspace(1000, 100, 37)}).astype('f4')
     dset['LEV'] = dset['LEV'] * 100 # hPa changed to Pa
     
-    assert dset.dims == {'LEV': 37, 'lat': 72, 'lon': 288}
+    assert dset.sizes == {'LEV': 37, 'lat': 72, 'lon': 288}
     
     Re = 6371200
     Rd = 287.04
@@ -129,7 +129,7 @@ def test_Hadley():
 
     # dsnew.to_netcdf('./xinvert/Data/ZonalMean.nc')
     
-    assert dsnew.dims == {'lat': 72, 'LEV':37}
+    assert dsnew.sizes == {'lat': 72, 'LEV':37}
     
     
     # inversion here
@@ -152,7 +152,7 @@ def test_ideal_TC():
     # load a snapshot as a radius-vertical 2D structure
     ds = xr.open_dataset('./Data/TC2D.nc')
     
-    assert ds.dims == {'lev': 37, 'lat': 50}
+    assert ds.sizes == {'lev': 37, 'lat': 50}
     
     undef = 9.99e20
     
@@ -204,7 +204,7 @@ def test_ideal_TC():
 def test_real_TC():
     ds = xr.open_dataset('./Data/TC2D.nc')
     
-    assert ds.dims == {'lev': 37, 'lat': 50}
+    assert ds.sizes == {'lev': 37, 'lat': 50}
     
     undef = 9.99e20
     
