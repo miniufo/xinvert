@@ -29,8 +29,8 @@ setup(
     license='MIT',
 
     classifiers=[
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7'
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10'
     ],
 
     keywords='invert inversion atmosphere ocean SOR successive-overrelaxation-iteration',
