@@ -597,11 +597,11 @@ def padBCs(v, dim, BCs, fill=(0,0)):
                 raise Exception('unsupported BC: ' + str(BCs))
     
     # deal with extra (padded) coordinate values
-    coord = p[dim].values
+    coord = p[dim].values.copy()
     coord[ 0] = coord[ 1] * 2 - coord[ 2]
     coord[-1] = coord[-2] * 2 - coord[-3]
     
-    p[dim] = coord
+    p = p.assign_coords({dim: coord})
     
     return p
 
