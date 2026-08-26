@@ -1,6 +1,6 @@
 # xinvert
 
-[![DOI](https://zenodo.org/badge/323045845.svg)](https://zenodo.org/badge/latestdoi/323045845)
+[![DOI](https://zenodo.org/badge/323045845.svg)](https://doi.org/10.5281/zenodo.7801500)
 ![GitHub](https://img.shields.io/github/license/miniufo/xinvert)
 [![Documentation Status](https://readthedocs.org/projects/xinvert/badge/?version=latest)](https://xinvert.readthedocs.io/en/latest/?badge=latest)
 [![PyPI version](https://badge.fury.io/py/xinvert.svg)](https://badge.fury.io/py/xinvert)
