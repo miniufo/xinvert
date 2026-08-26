@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on 2022.04.13
+Apps module of xinvert: high-level inversion helpers.
 
-@author: MiniUFO
-Copyright 2018. All rights reserved. Use is subject to license terms.
+Provides user-facing wrappers (``invert_Poisson``, ``invert_GillMatsuno``,
+``invert_StommelMunk``, ``invert_omega``, ``invert_PV2D``, etc.) that assemble
+model parameters and call the SOR solvers in :mod:`xinvert.core`.
 """
 import numpy as np
 import xarray as xr

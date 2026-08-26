@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on 2021.01.03
+Utility module of xinvert: data preprocessing helpers.
 
-@author: MiniUFO
-Copyright 2018. All rights reserved. Use is subject to license terms.
+Provides ``loop_noncore`` for iterating over non-core dimensions,
+``smooth9`` for 9-point smoothing, and ``coarsen`` for block-averaging
+xarray DataArrays with flexible boundary handling.
 """
 import numba as nb
 

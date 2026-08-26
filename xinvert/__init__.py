@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Created on 2020.12.09
+xinvert: invert geophysical fluid dynamics problems using SOR iteration.
 
-@author: MiniUFO
-Copyright 2018. All rights reserved. Use is subject to license terms.
+Built on xarray and numba, this package solves classical elliptic PDEs
+(Poisson, Gill-Matsuno, Stommel-Munk, QG-omega, Eliassen, PV inversion,
+reference-state, etc.) via successive over-relaxation with spatially-varying
+coefficients and dask-enabled parallel computation.
 """
 from .core import inv_standard3D, \
                   inv_standard2D, inv_standard2D_test, \
@@ -32,4 +34,4 @@ from .utils import loop_noncore
 
 from .finitediffs import FiniteDiff, deriv, deriv2, padBCs
 
-__version__ = "0.1.9"
+__version__ = "0.2.0"

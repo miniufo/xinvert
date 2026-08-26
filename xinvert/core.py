@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Created on 2020.12.09
+Core module of xinvert: SOR iteration solvers for elliptic PDEs.
 
-@author: MiniUFO
-Copyright 2018. All rights reserved. Use is subject to license terms.
+Implements the low-level ``inv_standard3D`` / ``inv_general3D`` /
+``inv_general2D_bih`` solvers that dispatch to the numba-jitted kernels in
+:mod:`xinvert.numbas`, plus iteration-loop, convergence-check, and
+animation helpers used by the high-level wrappers in :mod:`xinvert.apps`.
 """
 import numpy as np
 import xarray as xr

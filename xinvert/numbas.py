@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on 2020.12.09
+Numbas module of xinvert: numba-jitted SOR iteration kernels.
 
-@author: MiniUFO
-Copyright 2018. All rights reserved. Use is subject to license terms.
+Contains the ``@nb.jit`` decorated inner loops (``invert_standard_3D``,
+``invert_general_3D``, ``invert_general_2D_bih``, etc.) for maximum iteration
+speed, called by the high-level solvers in :mod:`xinvert.core`.
 """
 import numpy as np
 import numba as nb

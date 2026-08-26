@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on 2021.01.03
+Finite-differences module of xinvert: xarray-aware derivative operators.
 
-@author: MiniUFO
-Copyright 2018. All rights reserved. Use is subject to license terms.
+Provides the ``FiniteDiff`` class and free functions ``deriv`` / ``deriv2`` /
+``padBCs`` for first- and second-order spatial derivatives with flexible
+boundary conditions, used by the inversion solvers.
 """
 #%%
 import numpy as np
