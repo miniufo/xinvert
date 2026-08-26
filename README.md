@@ -99,7 +99,7 @@ if you mention `xinvert` and cite our paper in JOSS:
     doi = {10.21105/joss.05510},
     url = {https://doi.org/10.21105/joss.05510},
     year = {2023},
-    publisher = {The Open Journal},
+    publisher = {Journal of Open Source Software},
     volume = {8},
     number = {89},
     pages = {5510},
