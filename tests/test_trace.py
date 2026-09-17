@@ -7,7 +7,7 @@ Copyright 2018. All rights reserved. Use is subject to license terms.
 """
 #%% test trace methods
 import numpy as np
-from xinvert.numbas import trace, traceCyclic
+from xinvert.cpus import trace, traceCyclic
 
 def test_trace():
     a = np.array([2., 2., 0.])

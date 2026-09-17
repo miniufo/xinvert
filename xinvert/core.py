@@ -4,16 +4,28 @@ Core module of xinvert: SOR iteration solvers for elliptic PDEs.
 
 Implements the low-level ``inv_standard3D`` / ``inv_general3D`` /
 ``inv_general2D_bih`` solvers that dispatch to the numba-jitted kernels in
-:mod:`xinvert.numbas`, plus iteration-loop, convergence-check, and
+:mod:`xinvert.cpus`, plus iteration-loop, convergence-check, and
 animation helpers used by the high-level wrappers in :mod:`xinvert.apps`.
 """
 import numpy as np
 import xarray as xr
 import sys
-from .numbas import invert_standard_3D, invert_standard_2D, invert_standard_1D,\
+from .cpus import invert_standard_3D, invert_standard_2D, invert_standard_1D,\
                     invert_general_3D, invert_general_2D, \
                     invert_general_bih_2D, invert_standard_2D_test
 from .utils import loop_noncore
+
+# ---------------------------------------------------------------------------
+# GPU kernel registry: maps CPU numba kernel → GPU equivalent
+# Populated lazily; if numba.cuda is unavailable the dict stays empty and
+# only the CPU path is functional.
+# ---------------------------------------------------------------------------
+_gpu_kernel_map = {}
+try:
+    from .gpus import invert_standard_2D_gpu
+    _gpu_kernel_map[invert_standard_2D] = invert_standard_2D_gpu
+except Exception:
+    pass  # CUDA not available or GPU module not yet implemented
 
 
 # default undefined value
@@ -521,37 +533,61 @@ def _get_info(F, dims):
     return info, ncdims
 
 
-def _make_kernel(numba_func, grid_args, iParams):
-    """Create a kernel function for xr.apply_ufunc that wraps a numba SOR function.
+def _make_kernel(kernel_func, grid_args, iParams):
+    """Create a kernel function for xr.apply_ufunc that wraps an SOR function.
 
-    The numba function is called as:
-        numba_func(o, *coeffs, info, *grid_args,
-                   optArg, _undeftmp, flags, mxLoop, tolerance)
+    Dispatches to a CPU (numba) or GPU (cuda) kernel based on
+    ``iParams['architect']`` (default ``'cpu'``).
+
+    Both CPU and GPU kernels share the same call signature::
+
+        func(o, *coeffs, info, *grid_args,
+             optArg, _undeftmp, flags, mxLoop, tolerance)
 
     Parameters
     ----------
-    numba_func : callable
-        The numba-compiled inversion function.
+    kernel_func : callable
+        The numba-compiled CPU inversion function (e.g. ``invert_standard_2D``).
+        When ``architect == 'gpu'`` this is used as a lookup key to find the
+        GPU equivalent in :data:`_gpu_kernel_map`.
     grid_args : list
         Pre-extracted grid/BC parameters from iParams, passed between
-        the info array and optArg in the numba function call.
+        the info array and optArg in the kernel call.
     iParams : dict
-        Inversion parameters.
+        Inversion parameters (must contain ``'architect'``).
 
     Returns
     -------
     callable
-        A kernel function suitable for xr.apply_ufunc.
+        A kernel function suitable for ``xr.apply_ufunc``.
     """
+    architect = iParams.get('architect', 'cpu')
+
+    if architect == 'cpu':
+        func = kernel_func
+    elif architect == 'gpu':
+        func = _gpu_kernel_map.get(kernel_func)
+        if func is None:
+            raise NotImplementedError(
+                f"GPU kernel not implemented for '{kernel_func.__name__}', "
+                f"available: {[k.__name__ for k in _gpu_kernel_map]}")
+        # Inject per-call GPU block config from iParams (None = auto/env default)
+        from functools import partial
+        func = partial(func,
+                       block_2d=iParams.get('gpu_block2d'))
+    else:
+        raise ValueError(
+            f"unsupported architect '{architect}', should be 'cpu' or 'gpu'")
+
     def _kernel_(s, *args):
         *coeffs, info = args
         s.setflags(write=1)
         o = s
         flags = np.array([0, 0, 0], dtype='float64')
 
-        numba_func(o, *coeffs, info, *grid_args,
-                   iParams['optArg'], _undeftmp, flags,
-                   iParams['mxLoop'], iParams['tolerance'])
+        func(o, *coeffs, info, *grid_args,
+             iParams['optArg'], _undeftmp, flags,
+             iParams['mxLoop'], iParams['tolerance'])
 
         if iParams['printInfo']:
             msg = f'{info} loops {flags[2]:4.0f}, tolerance is {flags[1]:e}'

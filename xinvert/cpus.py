@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Numbas module of xinvert: numba-jitted SOR iteration kernels.
+CPUs module of xinvert: numba-jitted SOR iteration kernels.
 
 Contains the ``@nb.jit`` decorated inner loops (``invert_standard_3D``,
 ``invert_general_3D``, ``invert_general_2D_bih``, etc.) for maximum iteration

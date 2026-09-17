@@ -26,10 +26,18 @@ xinvert.finitediffs module
    :undoc-members:
    :show-inheritance:
 
-xinvert.numbas module
----------------------
+xinvert.cpus module
+-------------------
 
-.. automodule:: xinvert.numbas
+.. automodule:: xinvert.cpus
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+xinvert.gpus module
+-------------------
+
+.. automodule:: xinvert.gpus
    :members:
    :undoc-members:
    :show-inheritance:
