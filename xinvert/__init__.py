@@ -34,4 +34,4 @@ from .utils import loop_noncore
 
 from .finitediffs import FiniteDiff, deriv, deriv2, padBCs
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"

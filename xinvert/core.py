@@ -10,10 +10,53 @@ animation helpers used by the high-level wrappers in :mod:`xinvert.apps`.
 import numpy as np
 import xarray as xr
 import sys
+import threading
 from .cpus import invert_standard_3D, invert_standard_2D, invert_standard_1D,\
                     invert_general_3D, invert_general_2D, \
                     invert_general_bih_2D, invert_standard_2D_test
 from .utils import loop_noncore
+
+# Diagnostic printInfo output: live, thread-safe, distribution-safe.
+#
+# With dask='parallelized' the per-time-step inversions run concurrently
+# in dask worker threads (the numba kernels release the GIL via
+# nogil=True), and each call prints its line as soon as it finishes.
+# Two pitfalls are handled in :func:`_print_live`:
+#
+# 1. Line splicing: ipykernel's OutStream buffers writes and flushes on
+#    newline, so a thread split across two ``write`` calls (as ``print``
+#    does: msg, then '\n') can be spliced by a concurrent thread into a
+#    corrupted line.  We therefore emit each line as ONE atomic write.
+#
+# 2. Output misattribution: ipykernel binds each NEW thread to the parent
+#    header (i.e. the cell) that spawned it.  dask reuses its worker pool
+#    across cells, so on a re-run those threads still carry the previous
+#    cell's parent header and their output is attributed to a finished
+#    cell -- the current cell shows nothing.  Before writing we drop this
+#    thread's stale registration so the header falls back to ipykernel's
+#    global, which is always the *currently executing* cell.
+#
+# dask.distributed serialisation: the ``_kernel_`` closure only ever
+# references this module-level *function* (transferred by reference by
+# cloudpickle), never a lock or buffer, so the graph stays picklable and
+# worker processes print to their own stdout (visible in worker logs).
+def _print_live(msg):
+    """Print one diagnostic line atomically and immediately.
+
+    Safe to call from any thread; only touches ipykernel internals when
+    they exist (no-op under a plain Python interpreter).
+    """
+    out = sys.stdout
+    ident = threading.get_ident()
+    for attr in ('_thread_to_parent', '_thread_to_parent_header'):
+        reg = getattr(out, attr, None)
+        if reg is not None:
+            try:
+                reg.pop(ident, None)
+            except Exception:
+                pass
+    out.write(msg + '\n')   # single write => atomic line
+    out.flush()
 
 # ---------------------------------------------------------------------------
 # GPU kernel registry: maps CPU numba kernel → GPU equivalent
@@ -593,7 +636,9 @@ def _make_kernel(kernel_func, grid_args, iParams):
             msg = f'{info} loops {flags[2]:4.0f}, tolerance is {flags[1]:e}'
             if flags[0]:
                 msg = msg + ' (overflow!)'
-            print(msg, file=sys.stderr, flush=True)
+            # module-level function => transferred by reference by
+            # cloudpickle, keeping the closure picklable
+            _print_live(msg)
 
         return o
 

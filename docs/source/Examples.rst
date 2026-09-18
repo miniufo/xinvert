@@ -25,4 +25,5 @@ problems can be found at `this notebook <https://github.com/miniufo/xinvert/blob
    notebooks/09_Fofonoff_flow
    notebooks/10_Bretherton_flow_over_topography
    notebooks/11_Omega_equation
+   notebooks/Parallel_inversions
   

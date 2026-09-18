@@ -72,6 +72,13 @@ exclude_patterns = [
 ]
 
 
+# -- Options for nbsphinx ----------------------------------------------------
+# Do not execute notebooks during the docs build: the examples need the
+# bundled ``Data/`` directory (absent on ReadTheDocs) and some of them need a
+# CUDA GPU.  The stored outputs are used verbatim.
+nbsphinx_execute = 'never'
+
+
 # -- Options for HTML output -------------------------------------------------
 
 # Logo

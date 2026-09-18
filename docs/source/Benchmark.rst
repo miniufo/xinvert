@@ -162,6 +162,39 @@ Round 3 — boundary-kernel consolidation & block configurability
 * Made the 2-D thread-block shape configurable via the
   ``XINVERT_GPU_BLOCK2D`` env var, read at call time (no module reload).
 
+Round 4 — adaptive 1-D block size (simplification)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The 1-D boundary/norm kernels previously took a user-configurable block
+size via the ``XINVERT_GPU_BSIZE1D`` env var (default 256) and a matching
+``gpu_bsize1d`` ``iParams`` entry.  Since these kernels are **not** on the
+hot loop (the 2-D SOR iteration dominates total time), the 1-D block size
+has negligible effect on runtime.  The env var and the ``iParams`` entry
+were removed in favour of an internal adaptive selector,
+``_auto_bsize_1d(n)``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 20 40
+
+   * - Boundary extent *n*
+     - Block size
+     - Rationale
+   * - ``n < 64``
+     - 32
+     - single warp; avoids grid = 1 under-utilisation
+   * - ``64 ≤ n < 512``
+     - 128
+     - 2–4 blocks, SMs start to fill
+   * - ``n ≥ 512``
+     - 256
+     - sweet spot for all larger sizes
+
+Each boundary kernel now picks its block size from the extent it actually
+sweeps (``xc`` for the y-boundary kernel, ``yc`` for the x-boundary kernel).
+Users no longer need to tune a 1-D block parameter — the only remaining
+GPU tuning knob is ``gpu_block2d`` (and its ``XINVERT_GPU_BLOCK2D`` env var).
+
 Thread-block shape sweep
 ------------------------
 
@@ -223,6 +256,115 @@ Reproduce the sweep::
 
     python tests/benchmark_blocks.py 128 256 512 1024 2048 4096
 
+Axis-mapping (coalescing) experiment
+-------------------------------------
+
+The 2-D SOR stencil reads ``S[j, i]`` and its eight neighbours.  Because
+the array is C-contiguous (row-major), a warp whose ``threadIdx.x`` maps to
+``j`` (the default ``j, i = cuda.grid(2)``) reads with stride ``xc`` —
+*uncoalesced*.  A flipped mapping (``i, j = cuda.grid(2)``) makes
+``threadIdx.x`` map to ``i``, the contiguous axis, so a warp's reads of
+``S[j, i]`` become consecutive addresses — fully *coalesced*.  Coalescing
+theory predicts the flipped mapping should be faster for memory-bound
+stencils.
+
+A benchmark compared the two mappings through the real ``invert_Poisson``
+path, isolating coalescing as the only variable (identical kernel body,
+only the ``grid()`` unpack order differs):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 20 20 18
+
+   * - Grid
+     - Original (s)
+     - Flipped (s)
+     - Speedup
+   * - 256×256
+     - 0.0796
+     - 0.0760
+     - 1.05×
+   * - 512×512
+     - 0.1252
+     - 0.1240
+     - 1.01×
+   * - 1024×1024
+     - 0.4412
+     - 0.4369
+     - 1.01×
+   * - 2048×2048
+     - 1.7213
+     - 1.7275
+     - 1.00×
+   * - 4096×4096
+     - 6.9480
+     - 6.9340
+     - 1.00×
+
+**Finding**: at large grids (the bandwidth-bound regime) the flipped, coalesced
+mapping gives **~0 % speedup** — fully on par with the original strided
+mapping.  The small gain at 256² is within measurement noise.
+
+**Why theory and practice diverge**: the strided reads do waste bytes per
+cache line (8 of 128 bytes used per warp), but the 9-point stencil has
+*extremely high spatial locality* — neighbouring warps access overlapping
+cache lines, so the L2 cache (6 MB on the RTX 3090) absorbs nearly all of
+the "wasted" traffic.  This also explains why the block-shape sweep above
+found only a ~3 % gap between ``(16,16)`` and ``(32,8)``.
+
+**Conclusion**: the flipped mapping was **not** adopted — it adds code
+complexity (an unintuitive ``i, j = cuda.grid(2)``) for zero measurable
+benefit.  The real bottleneck is the stencil's low arithmetic intensity
+(~0.3 FLOP/byte), which no thread mapping can fix — see the next experiment
+for why shared-memory tiling does not help either.
+
+Shared-memory tiling experiment
+--------------------------------
+
+The classic next step after coalescing is shared-memory tiling: cooperatively
+load a 16×16 computation tile plus a 1-cell halo (18×18) into shared memory,
+then read S neighbours from shared memory, cutting global S reads from ~9×
+to ~1× per point (coefficients A/B/C/F stay in global).  A prototype tiled
+Red-Black kernel ran through the real ``invert_Poisson`` path against the
+production plain kernel:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 20 20 18
+
+   * - Grid
+     - Plain (s)
+     - Tiled (s)
+     - Speedup
+   * - 1024×1024
+     - 0.4399
+     - 0.4454
+     - 0.99×
+   * - 4096×4096
+     - 6.8561
+     - 7.0152
+     - 0.98×
+
+**Finding**: tiling is *slightly slower* than the plain kernel (within ~2 %).
+Correctness was verified first — the tiled result is bit-identical to the
+plain kernel (max diff 0.0 at 256², 1000 iterations).
+
+**Why the textbook optimisation fails here**: the L2 cache is already doing
+the job tiling was meant to do.  The 9-point stencil reads each point up to
+9 times, but with ~89 % effective L2 hit rate (neighbouring warps request
+overlapping cache lines), the *actual* global traffic is already ~1× per
+point.  Shared memory would only move reuse that L2 has already absorbed,
+while adding its own costs: halo-loading branches, ``syncthreads``, and
+reduced scheduling flexibility.
+
+**Conclusion**: tiling was **not** adopted.  Combined with the coalescing
+experiment above, the picture is clear: on this hardware, **memory-access
+optimisations of any kind are already saturated by the L2 cache** for this
+stencil pattern.  Remaining performance directions are algorithmic —
+multigrid or preconditioned solvers that reduce the *iteration count*
+rather than the per-iteration cost — or offloading to a mature library
+(e.g. AMGX).
+
 Numba performance warnings
 --------------------------
 
@@ -251,13 +393,14 @@ Future optimisation directions
    * - Block-level norm reduction
      - medium
      - reduces atomic contention on large grids; benefits 3-D even more
-   * - Shared-memory tiling for SOR
+   * - Multigrid / preconditioned solver
      - high
-     - reduces global-memory traffic; Red-Black halves utilisation, needs
-       benchmarking
-   * - Block-size auto-tuning
+     - algorithmic: cuts iteration count, not per-iteration cost — the only
+       direction not saturated by the L2 cache (see experiments above)
+   * - Block-size auto-tuning (2-D)
      - low–medium
-     - pick block shape from grid size / CC at call time
+     - 1-D boundary blocks now auto-selected (Round 4); 2-D shape still
+       manual via ``XINVERT_GPU_BLOCK2D``
    * - Pinned-memory host buffers
      - low
      - faster ``copy_to_host``

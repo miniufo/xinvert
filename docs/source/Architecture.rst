@@ -14,23 +14,23 @@ Three-layer design
 
 ::
 
-    ┌─────────────────────────────────────────────────────────────┐
-    │  apps.py  — top layer: physical-model layer                 │
-    │  invert_Poisson / invert_omega / invert_GillMatsuno / ...   │
+    ┌──────────────────────────────────────────────────────────────┐
+    │  apps.py  — top layer: physical-model layer                  │
+    │  invert_Poisson / invert_omega / invert_GillMatsuno / ...    │
     │    responsibility: compute coefficients A/B/C/F for a given  │
     │    physical equation, then delegate to the core layer        │
-    ├─────────────────────────────────────────────────────────────┤
+    ├──────────────────────────────────────────────────────────────┤
     │  core.py  — middle layer: xarray bridge layer                │
-    │  inv_standard2D / inv_standard3D / inv_general2D / ...      │
-    │    responsibility: schedule non-core dims via xr.apply_ufunc│
-    │    and call a low-level kernel; _make_kernel() is the ONLY  │
+    │  inv_standard2D / inv_standard3D / inv_general2D / ...       │
+    │    responsibility: schedule non-core dims via xr.apply_ufunc │
+    │    and call a low-level kernel; _make_kernel() is the ONLY   │
     │    architecture dispatch point                               │
-    ├─────────────────────────────────────────────────────────────┤
+    ├──────────────────────────────────────────────────────────────┤
     │  cpus.py  — bottom layer: CPU kernels (numba @njit)          │
-    │  gpus.py  — bottom layer: GPU kernels (numba @cuda.jit)     │
-    │    responsibility: pure numpy arrays + scalar parameters,   │
+    │  gpus.py  — bottom layer: GPU kernels (numba @cuda.jit)      │
+    │    responsibility: pure numpy arrays + scalar parameters,    │
     │    execute the SOR iteration loop                            │
-    └─────────────────────────────────────────────────────────────┘
+    └──────────────────────────────────────────────────────────────┘
 
 Data flow
 ---------
@@ -49,7 +49,7 @@ Using ``invert_Poisson`` as an example::
       │  1. assemble grid_args = [gc2, gc1, BCy, BCx, del1Sqr, ratioQtr, ratioSqr]
       │  2. _make_kernel(kernel_func, grid_args, iParams)
       │     ├─ iParams['architect'] == 'cpu' → use cpus.invert_standard_2D
-      │  └─ iParams['architect'] == 'gpu' → use gpus.invert_standard_2D_gpu
+      │     └─ iParams['architect'] == 'gpu' → use gpus.invert_standard_2D_gpu
       │  3. xr.apply_ufunc(_kernel_, S, A, B, C, F, info, ...)
       ▼
     cpus.py / gpus.py: kernel(S, A, B, C, F, info, *grid_args, optArg, undef, flags, mxLoop, tolerance)
@@ -226,6 +226,69 @@ access is two-dimensional and square blocks give better cache locality.
 
     # tune block shape without recompiling kernels
     XINVERT_GPU_BLOCK2D=32,8 python tests/benchmark_cpu_gpu.py
+
+The 1-D boundary/norm kernels have **no user-facing block parameter**: their
+block size is chosen adaptively by ``_auto_bsize_1d(n)`` from the extent each
+kernel actually sweeps (32 for *n* < 64, 128 for *n* < 512, else 256).  Since
+these kernels are off the hot loop, the block size has negligible effect on
+total runtime, so the parameter was removed to keep the API surface small.
+The only remaining GPU tuning knob is ``gpu_block2d`` in ``iParams`` (or its
+``XINVERT_GPU_BLOCK2D`` env var).
+
+Live ``printInfo`` output under parallelism
+-------------------------------------------
+
+With ``dask='parallelized'`` the per-time-step inversions run concurrently in
+dask worker threads (the numba kernels release the GIL via ``nogil=True``), and
+each call prints its diagnostic line as soon as it finishes.  Plain ``print``
+does not survive this setting, for two reasons:
+
+**1. Line splicing.**  ``print(msg)`` issues *two* ``write`` calls — ``msg``,
+then ``'\n'``.  ipykernel's ``OutStream`` flushes on newline, so a concurrent
+thread can interleave between the two writes and splice two messages into one
+corrupted line.
+
+**2. Output misattribution.**  ipykernel binds each *new* thread to the parent
+header (the cell) that spawned it.  dask reuses its worker pool across cells,
+so on a re-run those threads still carry the *previous* cell's parent header
+and their output is attributed to a finished cell — the current cell appears to
+produce nothing.
+
+``core._print_live`` handles both:
+
+.. code-block:: python
+
+    def _print_live(msg):
+        out   = sys.stdout
+        ident = threading.get_ident()
+        # drop this thread's stale parent-header registration so the header
+        # falls back to ipykernel's global = the *currently executing* cell
+        for attr in ('_thread_to_parent', '_thread_to_parent_header'):
+            reg = getattr(out, attr, None)
+            if reg is not None:
+                try:
+                    reg.pop(ident, None)
+                except Exception:
+                    pass
+        out.write(msg + '\n')   # single write => one atomic line
+        out.flush()
+
+Notes:
+
+* It is a **module-level function**, not a closure.  The ``_kernel_`` closure
+  only ever *references* it, and cloudpickle transfers referenced module-level
+  functions **by reference** — so the dask graph stays picklable.  Capturing a
+  lock or buffer in the closure would break ``dask.distributed``.
+* It only touches ipykernel internals **when they exist**; under a plain Python
+  interpreter both ``getattr`` calls return ``None`` and the function degrades
+  to a normal atomic ``print``.
+* Under ``dask.distributed`` the worker processes print to their own stdout,
+  visible in the worker logs rather than in the client notebook.
+
+Regression checks live in ``tests/repro_jupyter_print.py`` (executes a real
+2-cell notebook through ``nbclient`` and asserts every cell sees all 12 lines)
+and ``tests/test_distributed.py`` (asserts the graph serialises and solves
+correctly under a real ``distributed.Client``).
 
 How to add a new GPU kernel
 ---------------------------
