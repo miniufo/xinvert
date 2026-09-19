@@ -643,7 +643,14 @@ def deriv(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1,
          First-order derivative along the dimension
     """
     if   scheme == 'center':
-        pad = padBCs(v, dim, BCs, fill).chunk({dim:len(v[dim])+2})
+        pad = padBCs(v, dim, BCs, fill)
+        # rechunk to a single chunk along dim ONLY when dask-backed:
+        # np.gradient (used by .differentiate) has no halo exchange, so
+        # chunk seams along dim would produce wrong derivatives at chunk
+        # boundaries.  For numpy-backed input, calling .chunk() would
+        # needlessly convert the data to dask.
+        if pad.chunks is not None:
+            pad = pad.chunk({dim: len(v[dim]) + 2})
         grd = pad.differentiate(dim).isel({dim:slice(1,-1)})
         
     elif scheme == 'forward':
