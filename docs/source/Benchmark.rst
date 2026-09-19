@@ -210,10 +210,60 @@ in VRAM.  GPU solves are therefore bounded to one at a time
 .. figure:: _static/gpu_overheads_dask.png
    :align: center
 
+Per-slice time decomposition for the SODA case
+----------------------------------------------
+
+The notebook case (``SODA_curl.nc``, 300x720, 12 timesteps) is inverted at
+``mxLoop=20000``, ``tolerance=1e-15``.  Instrumenting a single GPU slice
+(``tests/benchmark_gpu_scaling.py``) shows where the 1.68 s goes:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 20 46
+
+   * - stage
+     - time
+     - note
+   * - ``to_device`` x5 (upload)
+     - 1.4 ms
+     - 5 buffers x 864 kB
+   * - SOR loop
+     - 1.674 s
+     - 20000 iterations, 83.7 us/iter
+   * - convergence checks
+     - 0.127 s
+     - 200 checks (0.63 ms each, blocking D2H + reduction)
+   * - ``copy_to_host``
+     - 0.11 ms
+     - one 864 kB buffer
+   * - **total**
+     - **1.676 s**
+     -
+
+Data movement is negligible (1.5 ms, 0.1 % of the total): the solve is
+entirely loop-bound.  Within the loop, the dominant fixed cost is
+**kernel launch**: 3 launches per iteration (2 Red-Black SOR + 1 boundary
+extend) over 20000 iterations is 60200 launches, and at the ~9.4 us measured
+launch cost that is ~0.57 s -- **roughly 34 % of the loop time**, i.e. the
+GPU is only ~2/3 busy.
+
+Sweeping ``mxLoop`` gives a clean linear fit with a **16.8 ms intercept**
+(``82.5 us`` per extra iteration, matching the 83.7 us/iter above), so any
+problem whose iteration count is small is dominated by that fixed cost --
+the same conclusion as the micro-benchmark above, reached from the
+application side.
+
+Reducing this needs fewer, larger launches rather than faster arithmetic:
+processing several timesteps per kernel launch, or fusing the boundary
+extend into the SOR kernel.  It does not show up as a win on the large
+benchmark grids (where the loop runs long enough to amortise it), but it is
+the main lever for small or short-running problems.
+
 Benchmark and regression scripts live in ``tests/``:
 ``benchmark_cpu_gpu.py``, ``benchmark_blocks.py``, ``benchmark_convergence.py``,
-``benchmark_gpu_overheads.py``, ``test_distributed.py`` (dask.distributed
-serialisation), ``test_jupyter_printinfo.py`` (Jupyter printInfo regression).
+``benchmark_gpu_overheads.py``, ``benchmark_gpu_scaling.py``,
+``test_distributed.py`` (dask.distributed serialisation),
+``test_jupyter_printinfo.py`` (Jupyter printInfo regression).
 ``plot_benchmarks.py`` regenerates the figures in this document from
 ``tests/results/*.json``.
 
