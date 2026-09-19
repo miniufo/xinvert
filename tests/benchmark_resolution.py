@@ -47,19 +47,14 @@ def main():
             share = 100 * d['n_launches'] * 9.4e-6 / d['t_loop_s']
             print(f"  GPU decomp: {d['t_total_s']:.3f}s, "
                   f"launch share {share:.0f}%")
-        for arch in ('gpu', 'cpu') if gpu_ok else ('cpu',):
-            ip = {'BCs': ['extend', 'periodic'], 'undef': np.nan,
-                  'mxLoop': 5000, 'tolerance': 0.0, 'printInfo': False,
-                  'architect': arch}
-            t0 = time.perf_counter()
-            invert_Poisson(curl, dims=['lat', 'lon'], coords='lat-lon',
-                           iParams=ip).compute()
-            key = f't_{arch}_12slices'
-            out[key] = time.perf_counter() - t0
-            print(f"  {arch} 12 slices: {out[key]:.2f} s")
-        if gpu_ok:
-            out['speedup'] = out['t_cpu_12slices'] / out['t_gpu_12slices']
-            print(f"  speedup: {out['speedup']:.2f}x")
+        ip = {'BCs': ['extend', 'periodic'], 'undef': np.nan,
+              'mxLoop': 5000, 'tolerance': 0.0, 'printInfo': False,
+              'architect': 'gpu'}
+        t0 = time.perf_counter()
+        invert_Poisson(curl, dims=['lat', 'lon'], coords='lat-lon',
+                       iParams=ip).compute()
+        out['t_gpu_12slices'] = time.perf_counter() - t0
+        print(f"  GPU 12 slices (sequential): {out['t_gpu_12slices']:.2f} s")
         results.append(out)
     json.dump(results, open(os.path.join(RESULTS,
               'resolution_scaling.json'), 'w'), indent=1)

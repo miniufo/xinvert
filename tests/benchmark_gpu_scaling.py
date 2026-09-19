@@ -89,7 +89,8 @@ def decompose(p, mxLoop, tol):
     from xinvert.gpus import (_sor_2d_rb, _extend_y_boundary,
                               _abs_norm_2d, _auto_bsize_1d,
                               _compute_check_interval, _evaluate_gpu_norm)
-    blocks = (16, 16)
+    blocks = ((yc + 15) // 16, (xc + 15) // 16)
+    threads = (16, 16)
     bs1d = _auto_bsize_1d(xc)
     bcx = max((xc + 15) // 16, 1)
     d_norm = cuda.device_array(2, dtype=np.float64)
@@ -103,7 +104,7 @@ def decompose(p, mxLoop, tol):
     while True:
         _extend_y_boundary[bcx, bs1d](d_S, yc, xc, p['undef'])
         for color in (0, 1):
-            _sor_2d_rb[blocks, blocks](d_S, d_A, d_B, d_C, d_F, yc, xc,
+            _sor_2d_rb[blocks, threads](d_S, d_A, d_B, d_C, d_F, yc, xc,
                                        True, p['delxSqr'], p['ratioQtr'],
                                        p['ratioSqr'], p['optArg'],
                                        p['undef'], color)
@@ -112,7 +113,7 @@ def decompose(p, mxLoop, tol):
             ts = time.perf_counter()
             d_norm[0] = 0.0
             d_norm[1] = 0.0
-            _abs_norm_2d[blocks, blocks](d_S, p['undef'], d_norm)
+            _abs_norm_2d[blocks, threads](d_S, p['undef'], d_norm)
             norm_h = d_norm.copy_to_host()
             norm, error, overflow = _evaluate_gpu_norm(
                 norm_h[0], norm_h[1], norm_prev, True, tol)
