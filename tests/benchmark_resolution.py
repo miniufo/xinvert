@@ -30,7 +30,14 @@ def main():
     curl12 = xr.open_dataset(DATA).curl
     results = []
     for factor in (1, 2, 4):
-        curl = curl12 if factor == 1 else upsample(curl12, factor)
+        if factor == 1:
+            curl = curl12
+        else:
+            up = upsample(curl12, factor)
+            # interp output is not C-contiguous -> rewrap
+            curl = xr.DataArray(np.ascontiguousarray(up.values),
+                                dims=up.dims, coords=up.coords,
+                                name=up.name)
         nlat, nlon = curl.shape[1:]
         print(f'=== {nlat}x{nlon} (x{factor}) ===')
         out = {'factor': factor, 'nlat': nlat, 'nlon': nlon}
