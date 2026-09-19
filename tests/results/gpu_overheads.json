@@ -1,0 +1,73 @@
+{
+ "micro_bench_us": {
+  "to_device_alloc_us": 364.4750453531742,
+  "copy_to_device_us": 193.62704828381538,
+  "copy_to_host_us": 176.236592233181,
+  "kernel_launch_us": 10.780023410916328
+ },
+ "dask_submission": [
+  {
+   "nt": 48,
+   "grid": 64,
+   "schedulers": {
+    "single-threaded": 0.7537385709583759,
+    "threads": 1.1464861072599888
+   },
+   "speedup_threads_vs_single": 0.6574336716209772
+  },
+  {
+   "nt": 48,
+   "grid": 128,
+   "schedulers": {
+    "single-threaded": 0.771396953612566,
+    "threads": 1.128865011036396
+   },
+   "speedup_threads_vs_single": 0.6833385268131897
+  },
+  {
+   "nt": 48,
+   "grid": 256,
+   "schedulers": {
+    "single-threaded": 0.8484707102179527,
+    "threads": 1.0973158814013004
+   },
+   "speedup_threads_vs_single": 0.773223758626763
+  },
+  {
+   "nt": 15,
+   "grid": 512,
+   "schedulers": {
+    "single-threaded": 0.45458273589611053,
+    "threads": 0.5032915510237217
+   },
+   "speedup_threads_vs_single": 0.9032194857463137
+  },
+  {
+   "nt": 4,
+   "grid": 1024,
+   "schedulers": {
+    "single-threaded": 0.44555438309907913,
+    "threads": 0.41098636761307716
+   },
+   "speedup_threads_vs_single": 1.0841098834658818
+  },
+  {
+   "nt": 4,
+   "grid": 2048,
+   "schedulers": {
+    "single-threaded": 1.7542469203472137,
+    "threads": 1.533309444785118
+   },
+   "speedup_threads_vs_single": 1.1440919028533463
+  },
+  {
+   "nt": 4,
+   "grid": 4096,
+   "schedulers": {
+    "single-threaded": 7.112416330724955,
+    "threads": 6.162707731127739
+   },
+   "speedup_threads_vs_single": 1.1541057342051535
+  }
+ ]
+}

@@ -43,4 +43,12 @@ setup(
         "dask",
         "numba",
     ],
+
+    extras_require={
+        # netCDF backend for xr.open_dataset / to_netcdf
+        "io": ["netCDF4", "scipy"],
+        # packages needed to run the notebooks in docs/source/notebooks
+        "notebooks": ["ultraplot", "pooch", "cartopy", "notebook",
+                      "ipykernel", "netCDF4"],
+    },
 )

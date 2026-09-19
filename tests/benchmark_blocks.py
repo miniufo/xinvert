@@ -13,9 +13,9 @@ Block configs tested:
   - (64, 4): 256 threads, 2 warps wide in x → coalesced
   - (16,32): 512 threads, uncoalesced
 
-The block shape is read from the XINVERT_GPU_BLOCK2D env var at *call time*
-(see gpus._block_2d), so no module reload is needed — each config reuses the
-same compiled kernels and only changes the launch grid.
+The block shape is passed per call via ``iParams['gpu_block2d']`` (see
+gpus._DEFAULT_BLOCK_2D), so no module reload is needed — each config reuses
+the same compiled kernels and only changes the launch grid.
 
 Run:  python tests/benchmark_blocks.py
       python tests/benchmark_blocks.py 128 256 512 1024 2048 4096
@@ -54,26 +54,26 @@ def _make_poisson_problem(n):
     return da_F, psi_true
 
 
-def _solve(da_F, architect):
+def _solve(da_F, architect, block2d=None):
     ip = {'BCs': ['fixed', 'fixed'], 'undef': np.nan,
           'mxLoop': 1000, 'tolerance': 0.0, 'printInfo': False,
-          'debug': False, 'architect': architect}
+          'debug': False, 'architect': architect,
+          'gpu_block2d': block2d}
     return invert_Poisson(da_F, dims=['y', 'x'], coords='cartesian', iParams=ip)
 
 
 def _time_gpu(da_F, block2d, repeat=3, warmup=1):
-    """Time GPU solve with a given block shape (set via env var, no reload)."""
+    """Time GPU solve with a given block shape (passed via iParams)."""
     n = da_F.shape[0]
     x = np.linspace(0, 1, n); y = np.linspace(0, 1, n)
     X, Y = np.meshgrid(x, y)
     psi_true = np.sin(np.pi * X) * np.sin(np.pi * Y)
-    os.environ['XINVERT_GPU_BLOCK2D'] = f'{block2d[0]},{block2d[1]}'
     for _ in range(warmup):
-        _solve(da_F, 'gpu')
+        _solve(da_F, 'gpu', block2d)
     times = []
     for _ in range(repeat):
         t0 = time.perf_counter()
-        S = _solve(da_F, 'gpu')
+        S = _solve(da_F, 'gpu', block2d)
         times.append(time.perf_counter() - t0)
     err = float(np.nanmax(np.abs(S.values - psi_true)))
     return float(np.median(times)), err

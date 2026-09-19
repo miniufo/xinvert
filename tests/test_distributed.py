@@ -1,40 +1,66 @@
 # -*- coding: utf-8 -*-
-"""Verify invert_Poisson works under dask.distributed Client (serialization)."""
-import os, sys, time
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import numpy as np
-import xarray as xr
+"""Regression: invert_Poisson works under a dask.distributed Client.
+
+Guards against the serialisation regression: with a distributed Client
+the task graph (including the ``_kernel_`` closure) is pickled and sent
+to worker processes; referencing unpicklable objects (e.g. a
+``threading.Lock``) directly from the closure breaks every distributed
+run.  Also verifies the result matches the analytic solution.
+
+Run:  pytest tests/test_distributed.py -v
+"""
+import os
+import sys
+import time
+
+import pytest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, ROOT)
+
+np = pytest.importorskip('numpy')
+xr = pytest.importorskip('xarray')
+dask_dist = pytest.importorskip('dask.distributed')
 
 
-def main():
-    from dask.distributed import Client
+def _make(nt, n):
+    x = np.linspace(0, 1, n)
+    y = np.linspace(0, 1, n)
+    X, Y = np.meshgrid(x, y)
+    vor = np.stack([-2.0 * np.pi**2 * np.sin(np.pi * X) * np.sin(np.pi * Y)] * nt)
+    da = xr.DataArray(vor, dims=['time', 'y', 'x'],
+                      coords={'time': np.arange(nt), 'y': y, 'x': x}
+                      ).chunk({'time': 1})
+    return da
+
+
+@pytest.mark.slow
+def test_distributed_serialization():
     from xinvert import invert_Poisson
 
-    nt = 12
-    x = np.linspace(0, 1, 101); y = np.linspace(0, 1, 81); t = np.arange(nt)
-    X, Y = np.meshgrid(x, y)
-    vor3d = np.stack([-2.0*np.pi**2*np.sin(np.pi*X)*np.sin(np.pi*Y)]*nt)
-    psi_true = np.sin(np.pi*X)*np.sin(np.pi*Y)
+    da = _make(12, 101)
+    ip = {'BCs': ['fixed', 'fixed'], 'undef': np.nan, 'mxLoop': 200,
+          'tolerance': 0.0, 'printInfo': False, 'architect': 'cpu'}
 
-    da = xr.DataArray(vor3d, dims=['time', 'y', 'x'],
-                      coords={'time': t, 'y': y, 'x': x}).chunk({'time': 1})
+    client = dask_dist.Client(n_workers=1, threads_per_worker=4,
+                              dashboard_address=None)
+    try:
+        sf = invert_Poisson(da, dims=['y', 'x'], coords='cartesian',
+                            iParams=ip)
+        t0 = time.perf_counter()
+        re = sf.compute()
+        dt = time.perf_counter() - t0
+    finally:
+        client.close()
 
-    ip = {'BCs': ['fixed', 'fixed'], 'mxLoop': 200, 'tolerance': 0.0,
-          'printInfo': False, 'architect': 'cpu'}
-
-    print('--- starting distributed Client ---')
-    client = Client(n_workers=1, threads_per_worker=4, dashboard_address=None)
-
-    sf = invert_Poisson(da, dims=['y', 'x'], coords='cartesian', iParams=ip)
-    t0 = time.perf_counter()
-    re = sf.compute()
-    dt = time.perf_counter() - t0
-
-    err = max(float(np.nanmax(np.abs(re.isel(time=k).values - psi_true)))
-              for k in range(nt))
-    print(f'distributed compute OK: {dt:.2f} s, max err vs analytic = {err:.2e}')
-    client.close()
+    psi_true = (np.sin(np.pi * da['y'].values)[:, None]
+                * np.sin(np.pi * da['x'].values)[None, :])
+    err = float(np.nanmax(np.abs(re.values - psi_true)))
+    assert err < 1e-3, f'distributed result wrong: err={err:.2e}'
+    print(f'distributed compute OK: {dt:.2f} s, max err = {err:.2e}')
 
 
 if __name__ == '__main__':
-    main()
+    test_distributed_serialization()
+    print('OK')

@@ -6,6 +6,7 @@ Provides ``loop_noncore`` for iterating over non-core dimensions,
 ``smooth9`` for 9-point smoothing, and ``coarsen`` for block-averaging
 xarray DataArrays with flexible boundary handling.
 """
+import numpy as np
 import numba as nb
 
 
@@ -70,7 +71,7 @@ def smooth9(data, dims=None, times=1, BCx='fixed'):
         Dimension that is periodic e.g., 'lon'.
     
     Returns
-    ----------
+    -------
     re: xarray.DataArray
         Smoothed data.
     """
@@ -85,9 +86,81 @@ def smooth9(data, dims=None, times=1, BCx='fixed'):
     for selDict in loop_noncore(data, dims):
         _filter9(data.loc[selDict].values, re.loc[selDict].values,
                  times=times, BCx=BCx)
-    
+
     return re
 
+
+def pad_periodic(data, pad_widths):
+    """Circularly (wrap) pad the given periodic dimensions.
+
+    Data values are wrapped around (``np.pad`` style ``mode='wrap'``),
+    while coordinate labels are extended *linearly* so the index stays
+    monotonic (``xarray``'s own ``pad`` wraps the coords too, which would
+    break downstream ``.interp``).
+
+    Parameters
+    ----------
+    data: xarray.DataArray
+        A given gridded data.
+    pad_widths: dict {dim: int}
+        Number of cells to pad on **each** side of each dimension,
+        e.g. ``{'lon': 2}``.
+
+    Returns
+    -------
+    re: xarray.DataArray
+        Padded data (a shallow copy; original is untouched).
+    """
+    if not pad_widths:
+        return data
+
+    new = data.pad(pad_width={d: (n, n) for d, n in pad_widths.items()},
+                   mode='wrap')
+
+    # rebuild padded coordinates by linear extrapolation (monotonic)
+    for d, n in pad_widths.items():
+        c = np.asarray(data[d].values)
+        if c.size < 2:
+            continue
+        step = c[1] - c[0]
+        extended = np.concatenate([c[0] - step * np.arange(n, 0, -1),
+                                   c,
+                                   c[-1] + step * np.arange(1, n + 1)])
+        new = new.assign_coords({d: (d, extended)})
+
+    return new
+
+
+def smooth(data, dims=None, window=3):
+    """Boxcar-smooth along the given dimensions (centered rolling mean).
+
+    For periodic dimensions, call :func:`pad_periodic` beforehand (as
+    :func:`coarsen` does) so the mean wraps around; the padded rows are
+    never sampled by :func:`coarsen`'s interpolation, which only queries
+    the original coordinate range.
+
+    Parameters
+    ----------
+    data: xarray.DataArray
+        A given gridded data.
+    dims: list of str or None
+        Dimensions to smooth along; None means all dimensions.
+    window: int
+        Width of the smoothing window (odd values give a symmetric stencil).
+
+    Returns
+    -------
+    re: xarray.DataArray
+        Smoothed data.
+    """
+    if dims is None:
+        dims = list(data.dims)
+
+    re = data
+    for d in dims:
+        re = re.rolling({d: int(window)}, center=True, min_periods=1).mean()
+
+    return re
 
 
 def coarsen(data, dims=None, smooth_data=True, periodic=None, ratio=2):
@@ -103,12 +176,13 @@ def coarsen(data, dims=None, smooth_data=True, periodic=None, ratio=2):
     smooth_data: bool
         Smooth the data or not before coarsening.
     periodic: str or list of str
-        Periodic dimension and its period e.g., 'lon'.
+        Periodic dimension(s) e.g., ['lon']; circularly padded before
+        smoothing.
     ratio: int
         Ratio of grid points before and after the coarsening.
         
     Returns
-    ----------
+    -------
     re: xarray.DataArray
         Smoothed data.
     """

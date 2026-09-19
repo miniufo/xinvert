@@ -13,7 +13,31 @@ The GPU wrapper functions have the **same signature** as the numba kernels in
 ``architect`` dispatch in :mod:`xinvert.core._make_kernel`.
 """
 import numpy as np
+import threading
+import warnings
+
 from numba import cuda
+
+# Numba emits a ``NumbaPerformanceWarning`` at every kernel launch whose
+# grid is too small to fill the GPU ("Grid size N will likely result in
+# GPU under-utilization due to low occupancy").  In xinvert this can only
+# happen for SMALL problems (fewer blocks than the GPU has SMs), where
+# under-utilisation is inherent to the problem size rather than the
+# implementation; for large problems the warning never fires.  Silencing
+# it therefore loses no information.  Filter by message text because the
+# warning category's module path varies across numba / numba-cuda
+# versions, and it would otherwise fire thousands of times (once per
+# unique grid size) during a single solve.
+warnings.filterwarnings('ignore', message='.*GPU under-utilization.*')
+
+
+# Default 2D thread-block shape: 256 threads/block, square shape → best
+# cache locality for the 2-D stencil (neighbours in both x and y stay
+# within the block).  A block sweep (tests/benchmark_blocks.py) showed
+# (16,16) is ~3 % faster than (32,8) at 4096^2 despite the latter being
+# warp-coalesced, because stencil access is 2-D, not row-stride.
+# Override per call via ``iParams['gpu_block2d'] = (bx, by)``.
+_DEFAULT_BLOCK_2D = (16, 16)
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +54,27 @@ def _sor_2d_rb(S, A, B, C, F, yc, xc, bcx_periodic,
 
     The update formula matches the interior loop of
     :func:`xinvert.cpus.invert_standard_2D`.
+
+    Parameters
+    ----------
+    S : cuda.device_array (modified in-place)
+        Solution array, shape (yc, xc).
+    A, B, C : cuda.device_array
+        Coefficient arrays, same shape as S.
+    F : cuda.device_array
+        Forcing array, same shape as S.
+    yc, xc : int
+        Grid counts in y and x dimensions.
+    bcx_periodic : bool
+        True if the x boundary is periodic (neighbours wrap around).
+    delxSqr, ratioQtr, ratioSqr : float
+        Grid spacing parameters.
+    optArg : float
+        SOR relaxation factor omega (1 ~ 2).
+    undef : float
+        Undefined value (points needing undefined coefficients are skipped).
+    color : int
+        0 = update red points ((j+i) even), 1 = black points ((j+i) odd).
     """
     j, i = cuda.grid(2)
 
@@ -84,7 +129,17 @@ def _sor_2d_rb(S, A, B, C, F, yc, xc, bcx_periodic,
 
 @cuda.jit
 def _abs_norm_2d(S, undef, out):
-    """Compute sum(|S|) and count of non-undef points (atomic reduction)."""
+    """Compute sum(|S|) and count of non-undef points (atomic reduction).
+
+    Parameters
+    ----------
+    S : cuda.device_array
+        Solution array, shape (yc, xc).
+    undef : float
+        Undefined value (masked points are excluded from the norm).
+    out : cuda.device_array, shape (2,)
+        Atomic accumulators: out[0] = sum(|S|), out[1] = valid point count.
+    """
     j, i = cuda.grid(2)
     if j < S.shape[0] and i < S.shape[1]:
         if S[j, i] != undef:
@@ -94,7 +149,17 @@ def _abs_norm_2d(S, undef, out):
 
 @cuda.jit
 def _extend_y_boundary(S, yc, xc, undef):
-    """Extend BC: copy y-interior boundary to y-outer boundary."""
+    """Extend BC: copy y-interior boundary to y-outer boundary.
+
+    Parameters
+    ----------
+    S : cuda.device_array (modified in-place)
+        Solution array, shape (yc, xc).
+    yc, xc : int
+        Grid counts in y and x dimensions.
+    undef : float
+        Undefined value (undef cells are not overwritten).
+    """
     i = cuda.grid(1)
     if i < xc:
         if S[1, i] != undef:
@@ -110,6 +175,15 @@ def _extend_x_boundary(S, yc, xc, undef):
     Folding corner handling into this kernel avoids a separate 1-block
     launch (which triggers a ``Grid size 1`` under-utilization warning)
     and saves one kernel launch per iteration.
+
+    Parameters
+    ----------
+    S : cuda.device_array (modified in-place)
+        Solution array, shape (yc, xc).
+    yc, xc : int
+        Grid counts in y and x dimensions.
+    undef : float
+        Undefined value (undef cells are not overwritten).
     """
     j = cuda.grid(1)
     if j >= yc:
@@ -138,35 +212,18 @@ def _extend_x_boundary(S, yc, xc, undef):
 # Shared host-side helpers (reused by 2D/3D/general GPU wrappers)
 # ---------------------------------------------------------------------------
 
-import os
+def ensure_context():
+    """Initialise the CUDA context in the calling thread.
 
-
-def _parse_block_2d(default):
-    """Read 2D thread-block shape from ``XINVERT_GPU_BLOCK2D`` env var.
-
-    Accepts ``"32,8"`` or ``"32x8"``.  Falls back to *default* when unset or
-    malformed.  The x-dimension should be a multiple of the warp size (32)
-    for coalesced global-memory access.
+    numba-cuda manages contexts thread-locally.  When the input dataset is
+    dask-backed, ``dask='parallelized'`` runs each per-time-step solve in a
+    dask worker thread; if the context has never been created in the main
+    thread, the first launch inside a worker thread fails with
+    ``CUDA_ERROR_NOT_INITIALIZED``.  Call this once from the main thread
+    (``core._make_kernel`` does it when dispatching to GPU) before handing
+    GPU tasks to dask.
     """
-    raw = os.environ.get('XINVERT_GPU_BLOCK2D', '')
-    if raw:
-        try:
-            parts = [int(x) for x in raw.replace('x', ',').split(',')]
-            if len(parts) == 2 and all(p > 0 for p in parts):
-                return (parts[0], parts[1])
-        except ValueError:
-            pass
-    return default
-
-
-# Default (16, 16): 256 threads/block, square shape → best cache locality
-# for the 2-D stencil (neighbours in both x and y stay within the block).
-# A block sweep (tests/benchmark_blocks.py) showed (16,16) is ~3 % faster
-# than (32,8) at 4096^2 despite the latter being warp-coalesced, because
-# stencil access is 2-D, not row-stride.  Override via env var for tuning:
-#   XINVERT_GPU_BLOCK2D=32,8
-def _block_2d():
-    return _parse_block_2d((16, 16))
+    cuda.get_current_device()
 
 
 def _auto_bsize_1d(n):
@@ -183,6 +240,36 @@ def _auto_bsize_1d(n):
     if n < 512:
         return 128
     return 256
+
+
+# Max number of GPU solves running concurrently within one process.
+# Concurrent solves gain nothing (all kernels serialise on the default
+# stream, and the blocking convergence-check syncs create a convoy
+# effect -- measured ~0.4x on small grids) while each in-flight solve
+# holds ~5 device buffers, so VRAM grows linearly with concurrency.
+# One at a time is both the fastest and the lightest option; the dask
+# worker threads then pipeline disk I/O (e.g. to_netcdf) against the
+# GPU solves.
+_GPU_MAX_CONCURRENT = 1
+
+_GPU_SEM = None
+_GPU_SEM_INIT_LOCK = threading.Lock()  # only referenced inside _get_gpu_sem()
+
+
+def _get_gpu_sem():
+    """Return the per-process GPU concurrency semaphore (lazy singleton).
+
+    Accessed only through this module-level *function* so the semaphore
+    itself never travels through dask.distributed's serialisation -- each
+    worker process lazily creates its own (per-process is the correct
+    scope: every process has its own CUDA context anyway).
+    """
+    global _GPU_SEM
+    if _GPU_SEM is None:
+        with _GPU_SEM_INIT_LOCK:
+            if _GPU_SEM is None:
+                _GPU_SEM = threading.BoundedSemaphore(_GPU_MAX_CONCURRENT)
+    return _GPU_SEM
 
 
 def _compute_check_interval(mxLoop, tolerance):
@@ -219,8 +306,8 @@ def _evaluate_gpu_norm(norm_sum, norm_count, norm_prev,
     norm : float
         Mean absolute value of S (nan if no valid points).
     error : float
-        Relative change of the norm vs the previous check (0.0 on the
-        first check, when norm_prev is still unset).
+        Relative change of the norm vs the previous check (1.0 on the
+        first check, mirroring the CPU kernels -- see below).
     overflow : bool
         True if norm is nan or exceeds 1e100.
     """
@@ -234,7 +321,7 @@ def _evaluate_gpu_norm(norm_sum, norm_count, norm_prev,
     if need_convergence and norm_prev < np.finfo(np.float64).max:
         error = abs(norm - norm_prev) / norm_prev
     else:
-        error = 0.0
+        error = 1.0
 
     return norm, error, overflow
 
@@ -244,6 +331,27 @@ def _evaluate_gpu_norm(norm_sum, norm_count, norm_prev,
 # ---------------------------------------------------------------------------
 
 def invert_standard_2D_gpu(S, A, B, C, F, info,
+                           yc, xc, BCy, BCx, delxSqr,
+                           ratioQtr, ratioSqr, optArg, undef, flags,
+                           mxLoop, tolerance, block_2d=None):
+    r"""GPU implementation of ``invert_standard_2D`` using Red-Black SOR.
+
+    Thin wrapper that bounds the number of concurrent GPU solves to
+    ``_GPU_MAX_CONCURRENT``: when the input is dask-backed, each
+    per-time-step task runs in a dask worker thread, and unbounded
+    concurrency would hold ``num_workers`` x 5 device buffers in VRAM
+    for zero throughput gain (kernels serialise on the default stream
+    anyway).  See :func:`_solve_standard_2D_gpu` for the parameters.
+    """
+    with _get_gpu_sem():
+        return _solve_standard_2D_gpu(S, A, B, C, F, info,
+                                      yc, xc, BCy, BCx, delxSqr,
+                                      ratioQtr, ratioSqr, optArg, undef,
+                                      flags, mxLoop, tolerance,
+                                      block_2d=block_2d)
+
+
+def _solve_standard_2D_gpu(S, A, B, C, F, info,
                            yc, xc, BCy, BCx, delxSqr,
                            ratioQtr, ratioSqr, optArg, undef, flags,
                            mxLoop, tolerance, block_2d=None):
@@ -282,6 +390,10 @@ def invert_standard_2D_gpu(S, A, B, C, F, info,
         Maximum iteration count.
     tolerance : float
         Convergence tolerance.
+    block_2d : tuple of int, optional
+        2D thread-block shape ``(bx, by)`` for the SOR/norm kernels.
+        None = built-in default ``(16, 16)``.  Set per call via
+        ``iParams['gpu_block2d']``.
     """
     # --- transfer to GPU ---
     d_S = cuda.to_device(S)
@@ -294,8 +406,8 @@ def invert_standard_2D_gpu(S, A, B, C, F, info,
     bcy_extend = (BCy == 'extend')
 
     # --- thread / block config ---
-    # Block shape: per-call override (iParams['gpu_block2d']) > env var
-    # (XINVERT_GPU_BLOCK2D) > built-in default (16, 16).  Override per-call:
+    # Block shape: per-call override (iParams['gpu_block2d']) or the
+    # built-in default (16, 16).  Override per-call:
     #   iParams['gpu_block2d'] = (32, 8)   # warp-coalesced
     #
     # Axis mapping (CUDA):
@@ -303,7 +415,7 @@ def invert_standard_2D_gpu(S, A, B, C, F, info,
     #   i = cuda.grid(2)[1] = blockIdx.y*blockDim.y + threadIdx.y  (cols = xc)
     # so gridDim.x (blocks[0]) pairs with blockDim.x (bx) to cover yc, and
     # gridDim.y (blocks[1]) pairs with blockDim.y (by) to cover xc.
-    bx, by = block_2d if block_2d is not None else _block_2d()
+    bx, by = block_2d if block_2d is not None else _DEFAULT_BLOCK_2D
     threads = (bx, by)
     blocks = (max((yc + bx - 1) // bx, 1), max((xc + by - 1) // by, 1))
 

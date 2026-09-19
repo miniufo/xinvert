@@ -14,3 +14,9 @@ dependencies:
   - cartopy
   - pooch
   - ipykernel
+  # test-suite extras: nbclient/nbformat drive the Jupyter regression test,
+  # distributed drives the dask-client serialisation test (both use
+  # importorskip, so a missing package skips rather than fails)
+  - nbclient
+  - nbformat
+  - distributed

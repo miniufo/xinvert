@@ -216,24 +216,43 @@ kernel.
 Configurable thread-block shape
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The GPU thread-block shape is read from the ``XINVERT_GPU_BLOCK2D`` env var at
-**call time** (no module reload needed), defaulting to ``(16, 16)``.
+The GPU 2-D thread-block shape defaults to ``(16, 16)`` and can be overridden
+**per call** via ``iParams['gpu_block2d']`` (no module reload needed):
+
+.. code-block:: python
+
+    iParams['gpu_block2d'] = (32, 8)   # warp-coalesced thin block
+
 A block-shape sweep (see :doc:`Benchmark`) showed that square blocks are ~3 %
 faster than warp-coalesced thin blocks for the 2-D stencil, because stencil
 access is two-dimensional and square blocks give better cache locality.
-
-.. code-block:: bash
-
-    # tune block shape without recompiling kernels
-    XINVERT_GPU_BLOCK2D=32,8 python tests/benchmark_cpu_gpu.py
 
 The 1-D boundary/norm kernels have **no user-facing block parameter**: their
 block size is chosen adaptively by ``_auto_bsize_1d(n)`` from the extent each
 kernel actually sweeps (32 for *n* < 64, 128 for *n* < 512, else 256).  Since
 these kernels are off the hot loop, the block size has negligible effect on
 total runtime, so the parameter was removed to keep the API surface small.
-The only remaining GPU tuning knob is ``gpu_block2d`` in ``iParams`` (or its
-``XINVERT_GPU_BLOCK2D`` env var).
+``gpu_block2d`` in ``iParams`` is the only remaining GPU tuning knob.
+
+GPU with dask datasets
+~~~~~~~~~~~~~~~~~~~~~~
+
+When the input is dask-backed and ``architect='gpu'``, each time step
+becomes a dask task and the result stays **lazy** — compute is deferred
+until the user requests it (``.compute()``, ``.to_netcdf()``, plotting,
+...), so results can be streamed to disk chunk by chunk without ever
+holding the whole dataset in memory.
+
+GPU solves are bounded to one at a time per process
+(``gpus._GPU_MAX_CONCURRENT``): concurrent solves gain nothing (kernels
+serialise on the default stream, and the blocking convergence-check syncs
+create a convoy effect — measured ~0.4x on small grids), while each
+in-flight solve holds ~5 device buffers in VRAM.  With the semaphore in
+place, dask's worker threads simply pipeline disk I/O against the GPU
+solves.  Note that numba-cuda manages CUDA contexts thread-locally, so
+``gpus.ensure_context()`` is called once in the main thread at dispatch
+time; without it, dask worker threads would fail with
+``CUDA_ERROR_NOT_INITIALIZED`` on their first launch.
 
 Live ``printInfo`` output under parallelism
 -------------------------------------------
@@ -285,7 +304,7 @@ Notes:
 * Under ``dask.distributed`` the worker processes print to their own stdout,
   visible in the worker logs rather than in the client notebook.
 
-Regression checks live in ``tests/repro_jupyter_print.py`` (executes a real
+Regression checks live in ``tests/test_jupyter_printinfo.py`` (executes a real
 2-cell notebook through ``nbclient`` and asserts every cell sees all 12 lines)
 and ``tests/test_distributed.py`` (asserts the graph serialises and solves
 correctly under a real ``distributed.Client``).

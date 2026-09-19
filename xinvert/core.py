@@ -64,8 +64,9 @@ def _print_live(msg):
 # only the CPU path is functional.
 # ---------------------------------------------------------------------------
 _gpu_kernel_map = {}
+_ensure_cuda = None    # gpus.ensure_context, if the GPU module is available
 try:
-    from .gpus import invert_standard_2D_gpu
+    from .gpus import invert_standard_2D_gpu, ensure_context as _ensure_cuda
     _gpu_kernel_map[invert_standard_2D] = invert_standard_2D_gpu
 except Exception:
     pass  # CUDA not available or GPU module not yet implemented
@@ -604,7 +605,8 @@ def _make_kernel(kernel_func, grid_args, iParams):
     callable
         A kernel function suitable for ``xr.apply_ufunc``.
     """
-    architect = iParams.get('architect', 'cpu')
+    # case-insensitive (and whitespace-tolerant): 'GPU', ' GPU ' etc. all work
+    architect = str(iParams.get('architect', 'cpu')).strip().lower()
 
     if architect == 'cpu':
         func = kernel_func
@@ -614,13 +616,19 @@ def _make_kernel(kernel_func, grid_args, iParams):
             raise NotImplementedError(
                 f"GPU kernel not implemented for '{kernel_func.__name__}', "
                 f"available: {[k.__name__ for k in _gpu_kernel_map]}")
-        # Inject per-call GPU block config from iParams (None = auto/env default)
+        # Inject per-call GPU block config from iParams (None = auto default)
         from functools import partial
         func = partial(func,
                        block_2d=iParams.get('gpu_block2d'))
+        # Initialise the CUDA context in the main thread: numba-cuda manages
+        # contexts thread-locally, and dask worker threads would otherwise
+        # crash with CUDA_ERROR_NOT_INITIALIZED on their first launch.
+        if _ensure_cuda is not None:
+            _ensure_cuda()
     else:
         raise ValueError(
-            f"unsupported architect '{architect}', should be 'cpu' or 'gpu'")
+            f"unsupported architect '{architect}', should be 'cpu' or 'gpu' "
+            f"(case-insensitive)")
 
     def _kernel_(s, *args):
         *coeffs, info = args

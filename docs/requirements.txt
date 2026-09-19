@@ -4,3 +4,9 @@ dask
 nbsphinx
 numpydoc
 sphinx-rtd-theme
+
+# needed if notebooks are (re)executed during the doc build
+ultraplot
+netCDF4
+scipy
+ipykernel

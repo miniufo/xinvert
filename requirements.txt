@@ -4,3 +4,12 @@ scipy
 numba
 netCDF4
 
+# --- needed to run the notebooks in docs/source/notebooks/ ---
+# plotting library used by all notebooks
+ultraplot
+# data download / maps in some notebooks
+pooch
+cartopy
+# notebook runtime
+notebook
+ipykernel

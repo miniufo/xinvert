@@ -36,11 +36,14 @@ default_iParams = {
     'printInfo': True,
     # Whether or not print out debug info.
     'debug'    : False,
-    # computing architecture: 'cpu' (numba) or 'gpu' (cuda)
+    # computing architecture: 'cpu' (numba) or 'gpu' (cuda);
+    # case-insensitive, e.g. 'CPU', 'GPU', ' Gpu ' all work
     'architect': 'cpu',
-    # GPU thread-block shape for 2D kernels.  None = auto (env var or the
-    # built-in default (16,16)).  Override per-call, e.g. (32, 8) for
-    # warp-coalesced access.  Ignored when architect != 'gpu'.
+    # GPU thread-block shape for 2D kernels.  None = auto, i.e. the
+    # built-in default (16, 16), defined as gpus._DEFAULT_BLOCK_2D (same
+    # fallback applies when calling the GPU wrapper directly without
+    # iParams).  Override per-call, e.g. (32, 8) for warp-coalesced
+    # access.  Ignored when architect != 'gpu'.
     'gpu_block2d': None,
 }
 
@@ -1411,7 +1414,7 @@ def __template(coef_func, inv_func, dimLen,
         S = S.where(maskF!=_undeftmp, other=iParams['undef']).rename('inverted')
     else:
         S = S.rename('inverted')
-    
+
     return S
 
 
