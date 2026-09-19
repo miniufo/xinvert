@@ -1,1 +1,30 @@
+# Line-ending policy.
+#
+# `text=auto` normalizes text files to LF in the repository and lets git
+# decide per file (by content inspection) whether it is text or binary.
+# The working tree is left to `core.autocrlf`, so on Windows you still get
+# CRLF locally while the repository stores LF.
+#
+# Without this, autocrlf only renormalizes files that happen to be
+# re-committed, so the repository drifted into a CRLF/LF mix and every edit
+# to a CRLF-stored file produced a whole-file diff that hid the real change.
+* text=auto
+
+# Batch files must keep CRLF even in the working tree -- cmd.exe is not
+# reliable with LF-only .bat scripts.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Jupyter notebooks are demonstration material, not source code: keep them
+# out of GitHub's language statistics so the repo reads as Python.
 *.ipynb linguist-documentation
+
+# Binary assets: never touched by text conversion.
+*.png   binary
+*.gif   binary
+*.jpg   binary
+*.jpeg  binary
+*.pdf   binary
+*.nc    binary
+*.gz    binary
+*.zip   binary
