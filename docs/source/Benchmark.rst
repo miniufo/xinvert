@@ -210,6 +210,64 @@ in VRAM.  GPU solves are therefore bounded to one at a time
 .. figure:: _static/gpu_overheads_dask.png
    :align: center
 
+Resolution scaling (session 2026-09-19)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Upsampling the SODA curl field 2x and 4x (600x1440, 1200x2880;
+``tests/benchmark_resolution.py``, fixed 5000 iterations, 12 time steps)
+shows how the fixed launch overhead fades as grids grow:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 20 20 20
+
+   * - resolution
+     - per-iteration
+     - launch share
+     - GPU 12 slices
+   * - 300x720 (216k pts)
+     - 87 us
+     - 32%
+     - 4.91 s
+   * - 600x1440 (864k pts)
+     - 178 us
+     - 16%
+     - 10.75 s
+   * - 1200x2880 (3.46M pts)
+     - 641 us
+     - 4%
+     - 39.51 s
+
+Kernel execution grows with the point count while the launch cost stays
+fixed, so the launch share collapses from 1/3 to 1/25.  At the native SODA
+resolution the GPU spends a third of every iteration waiting for the host
+to issue the next kernel -- the worst case for the GPU, and the reason the
+sequential GPU only beats 12-core dask CPU by 1.58x (21.77 s vs 34.32 s at
+mxLoop=20000, tol=1e-15).
+
+Why one launch per timestep is not enough
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each SOR iteration needs a grid-wide synchronisation between the red and
+black updates (black reads the fresh red values), and between iterations.
+On the GPU that synchronisation is the kernel boundary itself -- hence
+3 launches per iteration (boundary + red + black) and 60200 launches for
+one 20000-iteration solve.  Alternatives, in order of practicality:
+
+1. **Relax the stopping criterion** -- tolerance=1e-15 forces the full
+   20000 iterations; the solution is already accurate to ~1e-6 by
+   iteration 6400.  Zero code, ~4x faster.
+2. **Time-batched kernel** -- one 3-D kernel covering all time steps per
+   colour: launch count divided by the number of time steps, and each
+   launch is large enough to fill the GPU.
+3. **CUDA graph capture** -- record the kernel sequence once, replay with
+   much lower per-launch cost.  Works with the existing kernels but needs
+   cuda-python plumbing.
+4. **Persistent kernel** -- launch once and iterate on-GPU with a
+   software grid barrier.  numba.cuda lacks cooperative groups, the
+   software barrier costs about as much as a launch, and the co-residency
+   deadlock risk makes this the least attractive option.
+
 Launch overhead vs resolution
 -----------------------------
 
