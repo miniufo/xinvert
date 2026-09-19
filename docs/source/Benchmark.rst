@@ -262,8 +262,8 @@ the main lever for small or short-running problems.
 Benchmark and regression scripts live in ``tests/``:
 ``benchmark_cpu_gpu.py``, ``benchmark_blocks.py``, ``benchmark_convergence.py``,
 ``benchmark_gpu_overheads.py``, ``benchmark_gpu_scaling.py``,
-``test_distributed.py`` (dask.distributed serialisation),
-``test_jupyter_printinfo.py`` (Jupyter printInfo regression).
+``benchmark_resolution.py``, ``test_distributed.py`` (dask.distributed
+serialisation), ``test_jupyter_printinfo.py`` (Jupyter printInfo regression).
 ``plot_benchmarks.py`` regenerates the figures in this document from
 ``tests/results/*.json``.
 

@@ -27,14 +27,22 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 RESULTS = os.path.join(HERE, 'results')
 DATA = os.path.join(HERE, '..', 'Data', 'SODA_curl.nc')
 
+# Fixed per-launch cost, measured by tests/benchmark_gpu_overheads.py (noop
+# kernel, 512x512 case): ~9.4 us.  Used to turn the launch *count* into a
+# share of the SOR loop, i.e. "how much of the GPU's time is spent not
+# computing".  Only meaningful on this hardware -- treat as an order-of-
+# magnitude estimate elsewhere.
+LAUNCH_COST_S = 9.4e-6
+
 
 def load_data(chunks=None):
     return xr.open_dataset(DATA, chunks=chunks)
 
 
-def capture_params():
+def capture_params(curl_1t=None):
     """Run one real inversion; capture the exact per-slice solver args."""
-    ds = load_data({'time': 1})
+    if curl_1t is None:
+        curl_1t = load_data({'time': 1}).curl
     ip = {'BCs': ['extend', 'periodic'], 'undef': np.nan, 'mxLoop': 100,
           'tolerance': 0.0, 'printInfo': False, 'debug': False,
           'architect': 'gpu'}
@@ -51,7 +59,7 @@ def capture_params():
 
     gpus._solve_standard_2D_gpu = spy
     try:
-        invert_Poisson(ds.curl, dims=['lat', 'lon'], coords='lat-lon',
+        invert_Poisson(curl_1t, dims=['lat', 'lon'], coords='lat-lon',
                        iParams=ip).compute()
     finally:
         gpus._solve_standard_2D_gpu = orig
@@ -59,7 +67,14 @@ def capture_params():
 
 
 def decompose(p, mxLoop, tol):
-    """Instrumented per-slice GPU solve: where does the time go?"""
+    """Instrumented per-slice GPU solve: where does the time go?
+
+    Returns a dict of stage timings.  ``launch_share`` is the estimated
+    percentage of the SOR loop spent in kernel *launch* rather than
+    execution: ``n_launches`` (2 Red-Black SOR + 1 boundary extend per
+    iteration, plus one norm reduction per convergence check) times the
+    measured per-launch cost.
+    """
     S, A, B, C, F = (np.ascontiguousarray(p[k].copy())
                      for k in ('S', 'A', 'B', 'C', 'F'))
     yc, xc = p['yc'], p['xc']
@@ -117,7 +132,9 @@ def decompose(p, mxLoop, tol):
             't_download_s': t_download,
             't_total_s': t_upload + t_loop + t_download,
             'per_iter_us': t_loop / loop * 1e6,
-            'n_launches': 3 * loop + n_sync}
+            'n_launches': 3 * loop + n_sync,
+            'launch_share': (100 * (3 * loop + n_sync) * LAUNCH_COST_S
+                             / t_loop)}
 
 
 def main():
@@ -132,8 +149,7 @@ def main():
     decomp = decompose(p, 20000, 1e-15)
     for k, v in decomp.items():
         print(f'  {k:14}: {v}')
-    share = 100 * decomp['n_launches'] * 9.4e-6 / decomp['t_loop_s']
-    print(f'  -> launch overhead ~{share:.0f}% of the SOR loop')
+    print(f"  -> launch overhead ~{decomp['launch_share']:.0f}% of the SOR loop")
 
     print('=== 3. scaling: per-solve time vs mxLoop ===')
     sweep = []
