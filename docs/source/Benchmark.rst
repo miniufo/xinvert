@@ -210,54 +210,68 @@ in VRAM.  GPU solves are therefore bounded to one at a time
 .. figure:: _static/gpu_overheads_dask.png
    :align: center
 
-Per-slice time decomposition for the SODA case
-----------------------------------------------
+Launch overhead vs resolution
+-----------------------------
 
-The notebook case (``SODA_curl.nc``, 300x720, 12 timesteps) is inverted at
-``mxLoop=20000``, ``tolerance=1e-15``.  Instrumenting a single GPU slice
-(``tests/benchmark_gpu_scaling.py``) shows where the 1.68 s goes:
+The micro-benchmark above measures launch cost in isolation; the question that
+matters for xinvert is how large a share of a real solve it is.  That depends
+entirely on the grid: each SOR iteration launches 3 kernels (2 Red-Black SOR +
+1 boundary extend), so the fixed cost per iteration does not change with grid
+size while the arithmetic does.
+
+``tests/benchmark_resolution.py`` upsamples the SODA curl 1x/2x/4x and
+instruments a single slice at each resolution (``mxLoop=5000``,
+``tolerance=0``, 20 convergence checks), giving
+``tests/results/resolution_scaling.json``:
 
 .. list-table::
    :header-rows: 1
-   :widths: 34 20 46
+   :widths: 22 16 18 20 22
 
-   * - stage
-     - time
-     - note
-   * - ``to_device`` x5 (upload)
-     - 1.4 ms
-     - 5 buffers x 864 kB
-   * - SOR loop
-     - 1.674 s
-     - 20000 iterations, 83.7 us/iter
-   * - convergence checks
-     - 0.127 s
-     - 200 checks (0.63 ms each, blocking D2H + reduction)
-   * - ``copy_to_host``
-     - 0.11 ms
-     - one 864 kB buffer
-   * - **total**
-     - **1.676 s**
-     -
+   * - grid
+     - points
+     - us / iteration
+     - launch share
+     - convergence checks
+   * - 300 x 720
+     - 216 k
+     - 87.0
+     - **32.5 %**
+     - 0.024 s
+   * - 600 x 1440
+     - 864 k
+     - 177.7
+     - **15.9 %**
+     - 0.500 s
+   * - 1200 x 2880
+     - 3.46 M
+     - 639.6
+     - **4.4 %**
+     - 2.825 s
 
-Data movement is negligible (1.5 ms, 0.1 % of the total): the solve is
-entirely loop-bound.  Within the loop, the dominant fixed cost is
-**kernel launch**: 3 launches per iteration (2 Red-Black SOR + 1 boundary
-extend) over 20000 iterations is 60200 launches, and at the ~9.4 us measured
-launch cost that is ~0.57 s -- **roughly 34 % of the loop time**, i.e. the
-GPU is only ~2/3 busy.
+The launch share is ``n_launches x 9.4 us / loop time``, i.e. the fraction of
+the loop that the GPU spends launching rather than executing.  It falls from
+**a third to under 5 %** as the grid grows: at 216 k points a kernel runs at
+roughly the same scale as its own launch cost, so launch overhead is a real
+constraint, while by 3.46 M points the kernels are long enough that it no
+longer matters.
 
-Sweeping ``mxLoop`` gives a clean linear fit with a **16.8 ms intercept**
-(``82.5 us`` per extra iteration, matching the 83.7 us/iter above), so any
-problem whose iteration count is small is dominated by that fixed cost --
-the same conclusion as the micro-benchmark above, reached from the
-application side.
+Per-iteration cost grows only **7.4x for a 16x increase in points**, so the
+kernels are not scaling with the work they do -- at this size they are
+execution-bound (memory bandwidth), not launch-bound.
 
-Reducing this needs fewer, larger launches rather than faster arithmetic:
-processing several timesteps per kernel launch, or fusing the boundary
-extend into the SOR kernel.  It does not show up as a win on the large
-benchmark grids (where the loop runs long enough to amortise it), but it is
-the main lever for small or short-running problems.
+Note on the last column: the convergence check is a *blocking* device-to-host
+read, so it is also the point at which the asynchronous launch queue drains.
+As kernels get longer the queue backs up between checks, and the check absorbs
+more of the wall time -- 5 % of the loop at 216 k points versus 88 % at
+3.46 M.  That is a consequence of the drain, not of the reduction kernel being
+slow; ``t_sync`` = ``t_loop`` means the GPU was saturated the whole time.
+
+Practical consequence: for the small grids where launch overhead bites, the
+lever is **fewer, larger launches** -- processing several timesteps per kernel
+launch, or fusing the boundary extend into the SOR kernel.  For large grids the
+lever is reducing the *iteration count* (multigrid, preconditioning), which is
+the algorithmic direction noted below.
 
 Benchmark and regression scripts live in ``tests/``:
 ``benchmark_cpu_gpu.py``, ``benchmark_blocks.py``, ``benchmark_convergence.py``,
