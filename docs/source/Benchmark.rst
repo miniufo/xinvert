@@ -103,17 +103,6 @@ synchronisation, data transfer).
     for parallelism).  Both converge to the same fixed point; small
     per-iteration differences exist but the final result agrees.
 
-Correctness verification
-------------------------
-
-``tests/test_CpuGpuConsistency.py`` verifies CPU↔GPU consistency on a
-51×41 Poisson problem (``mxLoop=20000``, ``tolerance=1e-10``)::
-
-    CPU  max error vs analytic: 4.216179e-04
-    GPU  max error vs analytic: 4.216176e-04
-    CPU-GPU max diff:           9.367749e-10
-    RESULT: PASS
-
 Convergence: CPU (lexicographic) vs GPU (red-black)
 ---------------------------------------------------
 
@@ -210,41 +199,6 @@ in VRAM.  GPU solves are therefore bounded to one at a time
 .. figure:: _static/gpu_overheads_dask.png
    :align: center
 
-Resolution scaling (session 2026-09-19)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Upsampling the SODA curl field 2x and 4x (600x1440, 1200x2880;
-``tests/benchmark_resolution.py``, fixed 5000 iterations, 12 time steps)
-shows how the fixed launch overhead fades as grids grow:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 20 20 20
-
-   * - resolution
-     - per-iteration
-     - launch share
-     - GPU 12 slices
-   * - 300x720 (216k pts)
-     - 87 us
-     - 32%
-     - 4.91 s
-   * - 600x1440 (864k pts)
-     - 178 us
-     - 16%
-     - 10.75 s
-   * - 1200x2880 (3.46M pts)
-     - 641 us
-     - 4%
-     - 39.51 s
-
-Kernel execution grows with the point count while the launch cost stays
-fixed, so the launch share collapses from 1/3 to 1/25.  At the native SODA
-resolution the GPU spends a third of every iteration waiting for the host
-to issue the next kernel -- the worst case for the GPU, and the reason the
-sequential GPU only beats 12-core dask CPU by 1.58x (21.77 s vs 34.32 s at
-mxLoop=20000, tol=1e-15).
-
 Why one launch per timestep is not enough
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -284,28 +238,32 @@ instruments a single slice at each resolution (``mxLoop=5000``,
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 16 18 20 22
+   :widths: 16 12 14 16 20 16
 
    * - grid
      - points
      - us / iteration
      - launch share
      - convergence checks
+     - 12-slice GPU
    * - 300 x 720
      - 216 k
      - 87.0
      - **32.5 %**
      - 0.024 s
+     - 4.91 s
    * - 600 x 1440
      - 864 k
      - 177.7
      - **15.9 %**
      - 0.500 s
+     - 10.75 s
    * - 1200 x 2880
      - 3.46 M
      - 639.6
      - **4.4 %**
      - 2.825 s
+     - 39.51 s
 
 The launch share is ``n_launches x 9.4 us / loop time``, i.e. the fraction of
 the loop that the GPU spends launching rather than executing.  It falls from
@@ -318,7 +276,17 @@ Per-iteration cost grows only **7.4x for a 16x increase in points**, so the
 kernels are not scaling with the work they do -- at this size they are
 execution-bound (memory bandwidth), not launch-bound.
 
-Note on the last column: the convergence check is a *blocking* device-to-host
+The 12-slice column is the same sweep wrapped in the 12-time-step SODA solve.
+At the native 300 x 720 resolution the fixed costs dominate enough that a
+sequential GPU run only beats a 12-core dask CPU run by ~1.6x (21.3 s vs
+33.3 s for 12 time steps; :doc:`notebooks/Parallel_inversions`, Demos 2 and 5),
+even though the single-timestep comparison at the same resolution shows
+**17.3x** (1.73 s vs 29.99 s on one core).  The gap between those two numbers
+is the point: coarse-grained CPU parallelism is nearly free at 12 time steps,
+while the GPU must issue ~60200 launches *per time step* and ~722400 for the
+whole 12-step solve, and that fixed cost does not shrink with the time axis.
+
+Note on the convergence-check column: that check is a *blocking* device-to-host
 read, so it is also the point at which the asynchronous launch queue drains.
 As kernels get longer the queue backs up between checks, and the check absorbs
 more of the wall time -- 5 % of the loop at 216 k points versus 88 % at
@@ -328,8 +296,7 @@ slow; ``t_sync`` = ``t_loop`` means the GPU was saturated the whole time.
 Practical consequence: for the small grids where launch overhead bites, the
 lever is **fewer, larger launches** -- processing several timesteps per kernel
 launch, or fusing the boundary extend into the SOR kernel.  For large grids the
-lever is reducing the *iteration count* (multigrid, preconditioning), which is
-the algorithmic direction noted below.
+lever is reducing the *iteration count* (multigrid, preconditioning).
 
 Benchmark and regression scripts live in ``tests/``:
 ``benchmark_cpu_gpu.py``, ``benchmark_blocks.py``, ``benchmark_convergence.py``,
@@ -339,68 +306,25 @@ serialisation), ``test_jupyter_printinfo.py`` (Jupyter printInfo regression).
 ``plot_benchmarks.py`` regenerates the figures in this document from
 ``tests/results/*.json``.
 
+CPU/GPU agreement for every equation type is covered by ``test_GpuStandard1D.py``,
+``test_GpuStandard2DFull.py``, ``test_GpuStandard3D.py``, ``test_GpuGeneral2D.py``,
+``test_GpuGeneral3D.py`` and ``test_GpuGeneralBih2D.py``; each asserts the
+analytic solution where one exists and CPU/GPU consistency otherwise, and skips
+its GPU cases when no CUDA device is present.
+
 Optimisations applied
 ---------------------
 
-The GPU wrapper went through several optimisation rounds.  All changes are
-in ``xinvert/gpus.py``.
-
-Round 1 — sparse convergence checking
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-On non-check iterations only the Red + Black update kernels run; the norm
-reduction kernel and host sync are skipped.  This cut the host-device
-synchronisation cost dramatically.
-
-Round 2 — adaptive check interval
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``_compute_check_interval(mxLoop, tolerance)`` scales the check interval with
-the total iteration budget so the number of host-device synchronisations
-stays roughly constant regardless of problem size:
-
-- ``tolerance > 0`` (real convergence): ``clamp(mxLoop/50, 10, 100)``
-- ``tolerance ≤ 0`` (fixed-iter / benchmark): ``clamp(mxLoop/20, 50, 500)``
-
-This benefits large iteration counts the most — e.g. 10000 iterations need
-only ~20 synchronisations (same as 1000), so the speedup grows with
-iteration count:
-
-.. list-table::
-   :header-rows: 1
-
-   * - mxLoop (512², tol=0)
-     - CPU (s)
-     - GPU (s)
-     - Speedup
-   * - 1000
-     - 1.69
-     - 0.14
-     - 11.9×
-   * - 10000
-     - 16.96
-     - 0.99
-     - 17.1×
-
-Round 2 also extracted the convergence-evaluation logic into
-``_evaluate_gpu_norm(...)`` and the interval logic into
-``_compute_check_interval(...)``, both dimension-agnostic, so future 3-D /
-general / biharmonic GPU wrappers can reuse the same loop skeleton.
-
-Round 3 — boundary-kernel consolidation & block configurability
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-* Folded the four-corner handling into ``_extend_x_boundary``, removing a
-  separate single-block kernel launch (which emitted a ``Grid size 1``
-  under-utilisation warning) and saving one kernel launch per iteration.
-* Made the 2-D thread-block shape configurable per call (originally via the
-  ``XINVERT_GPU_BLOCK2D`` env var, since removed — now via
-  ``iParams['gpu_block2d']``).
-
-Round 4 — adaptive 1-D block size (simplification)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The 1-D boundary/norm kernels previously took a user-configurable block
+The GPU wrapper went through several optimisation rounds: sparse
+convergence checking (skipping the norm reduction and host sync on
+non-check iterations), an adaptive check interval
+(``_compute_check_interval``) with a dimension-agnostic convergence
+evaluator (``_evaluate_gpu_norm``), boundary-kernel consolidation
+(folding corner handling into ``_extend_x_boundary``), and per-call
+configuration of the 2-D thread-block shape
+(``iParams['gpu_block2d']``).  All changes are in ``xinvert/gpus.py``.
+The latest round simplified the block-size configuration: the 1-D
+boundary/norm kernels previously took a user-configurable block
 size via the ``XINVERT_GPU_BSIZE1D`` env var (default 256) and a matching
 ``gpu_bsize1d`` ``iParams`` entry.  Since these kernels are **not** on the
 hot loop (the 2-D SOR iteration dominates total time), the 1-D block size
@@ -493,159 +417,3 @@ Reproduce the sweep::
 
     python tests/benchmark_blocks.py 128 256 512 1024 2048 4096
 
-Axis-mapping (coalescing) experiment
--------------------------------------
-
-The 2-D SOR stencil reads ``S[j, i]`` and its eight neighbours.  Because
-the array is C-contiguous (row-major), a warp whose ``threadIdx.x`` maps to
-``j`` (the default ``j, i = cuda.grid(2)``) reads with stride ``xc`` —
-*uncoalesced*.  A flipped mapping (``i, j = cuda.grid(2)``) makes
-``threadIdx.x`` map to ``i``, the contiguous axis, so a warp's reads of
-``S[j, i]`` become consecutive addresses — fully *coalesced*.  Coalescing
-theory predicts the flipped mapping should be faster for memory-bound
-stencils.
-
-A benchmark compared the two mappings through the real ``invert_Poisson``
-path, isolating coalescing as the only variable (identical kernel body,
-only the ``grid()`` unpack order differs):
-
-.. list-table::
-   :header-rows: 1
-   :widths: 22 20 20 18
-
-   * - Grid
-     - Original (s)
-     - Flipped (s)
-     - Speedup
-   * - 256×256
-     - 0.0796
-     - 0.0760
-     - 1.05×
-   * - 512×512
-     - 0.1252
-     - 0.1240
-     - 1.01×
-   * - 1024×1024
-     - 0.4412
-     - 0.4369
-     - 1.01×
-   * - 2048×2048
-     - 1.7213
-     - 1.7275
-     - 1.00×
-   * - 4096×4096
-     - 6.9480
-     - 6.9340
-     - 1.00×
-
-**Finding**: at large grids (the bandwidth-bound regime) the flipped, coalesced
-mapping gives **~0 % speedup** — fully on par with the original strided
-mapping.  The small gain at 256² is within measurement noise.
-
-**Why theory and practice diverge**: the strided reads do waste bytes per
-cache line (8 of 128 bytes used per warp), but the 9-point stencil has
-*extremely high spatial locality* — neighbouring warps access overlapping
-cache lines, so the L2 cache (6 MB on the RTX 3090) absorbs nearly all of
-the "wasted" traffic.  This also explains why the block-shape sweep above
-found only a ~3 % gap between ``(16,16)`` and ``(32,8)``.
-
-**Conclusion**: the flipped mapping was **not** adopted — it adds code
-complexity (an unintuitive ``i, j = cuda.grid(2)``) for zero measurable
-benefit.  The real bottleneck is the stencil's low arithmetic intensity
-(~0.3 FLOP/byte), which no thread mapping can fix — see the next experiment
-for why shared-memory tiling does not help either.
-
-Shared-memory tiling experiment
---------------------------------
-
-The classic next step after coalescing is shared-memory tiling: cooperatively
-load a 16×16 computation tile plus a 1-cell halo (18×18) into shared memory,
-then read S neighbours from shared memory, cutting global S reads from ~9×
-to ~1× per point (coefficients A/B/C/F stay in global).  A prototype tiled
-Red-Black kernel ran through the real ``invert_Poisson`` path against the
-production plain kernel:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 22 20 20 18
-
-   * - Grid
-     - Plain (s)
-     - Tiled (s)
-     - Speedup
-   * - 1024×1024
-     - 0.4399
-     - 0.4454
-     - 0.99×
-   * - 4096×4096
-     - 6.8561
-     - 7.0152
-     - 0.98×
-
-**Finding**: tiling is *slightly slower* than the plain kernel (within ~2 %).
-Correctness was verified first — the tiled result is bit-identical to the
-plain kernel (max diff 0.0 at 256², 1000 iterations).
-
-**Why the textbook optimisation fails here**: the L2 cache is already doing
-the job tiling was meant to do.  The 9-point stencil reads each point up to
-9 times, but with ~89 % effective L2 hit rate (neighbouring warps request
-overlapping cache lines), the *actual* global traffic is already ~1× per
-point.  Shared memory would only move reuse that L2 has already absorbed,
-while adding its own costs: halo-loading branches, ``syncthreads``, and
-reduced scheduling flexibility.
-
-**Conclusion**: tiling was **not** adopted.  Combined with the coalescing
-experiment above, the picture is clear: on this hardware, **memory-access
-optimisations of any kind are already saturated by the L2 cache** for this
-stencil pattern.  Remaining performance directions are algorithmic —
-multigrid or preconditioned solvers that reduce the *iteration count*
-rather than the per-iteration cost — or offloading to a mature library
-(e.g. AMGX).
-
-Numba performance warnings
---------------------------
-
-numba-cuda emits ``NumbaPerformanceWarning: Grid size N will likely result
-in GPU under-utilization`` when the launched grid has fewer blocks than the
-GPU has SMs (82 on the RTX 3090).  This is **expected and correct** for
-small grids and for the boundary kernels — it reflects the problem size,
-not the implementation, and for large grids the warning never fires.
-
-``gpus.py`` therefore suppresses this warning once at import time (by
-message text — the warning category lives in a different module path
-depending on the numba / numba-cuda version, so category-based filtering
-is unreliable).  The benchmark scripts apply the same filter defensively::
-
-    warnings.filterwarnings('ignore', message='.*under-utilization.*')
-
-Future optimisation directions
-------------------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 35 15 50
-
-   * - Direction
-     - Gain
-     - Notes
-   * - Block-level norm reduction
-     - medium
-     - reduces atomic contention on large grids; benefits 3-D even more
-   * - Multigrid / preconditioned solver
-     - high
-     - algorithmic: cuts iteration count, not per-iteration cost — the only
-       direction not saturated by the L2 cache (see experiments above)
-   * - Block-size auto-tuning (2-D)
-     - low–medium
-     - 1-D boundary blocks now auto-selected (Round 4); 2-D shape still
-       manual via ``iParams['gpu_block2d']``
-   * - Pinned-memory host buffers
-     - low
-     - faster ``copy_to_host``
-   * - Coefficient caching across solves
-     - high
-     - reuse A/B/C/F device buffers for animation / frame-by-frame solves
-       (needs API change)
-   * - max|update| lightweight convergence signal
-     - medium
-     - replaces the full-array norm; especially useful for 3-D

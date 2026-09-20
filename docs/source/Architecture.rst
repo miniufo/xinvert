@@ -110,14 +110,29 @@ module-load time:
     # top of core.py
     _gpu_kernel_map = {}
     try:
-        from .gpus import invert_standard_2D_gpu
+        from .gpus import (invert_standard_2D_gpu,
+                           invert_standard_2D_full_gpu,
+                           invert_standard_1D_gpu,
+                           invert_standard_3D_gpu,
+                           invert_general_2D_gpu,
+                           invert_general_3D_gpu,
+                           invert_general_bih_2D_gpu)
         _gpu_kernel_map[invert_standard_2D] = invert_standard_2D_gpu
+        _gpu_kernel_map[invert_standard_2D_full] = invert_standard_2D_full_gpu
+        _gpu_kernel_map[invert_standard_1D] = invert_standard_1D_gpu
+        _gpu_kernel_map[invert_standard_3D] = invert_standard_3D_gpu
+        _gpu_kernel_map[invert_general_2D] = invert_general_2D_gpu
+        _gpu_kernel_map[invert_general_3D] = invert_general_3D_gpu
+        _gpu_kernel_map[invert_general_bih_2D] = invert_general_bih_2D_gpu
     except Exception:
         pass  # silently fall back to CPU-only when CUDA is unavailable
 
-When the user requests ``architect='gpu'`` but no GPU kernel is implemented
-for the requested equation, it raises:
-``NotImplementedError: GPU kernel not implemented for invert_standard_2D``
+Every kernel in ``cpus.py`` has a registered GPU counterpart, and the ``except``
+clause keeps the package importable on machines without CUDA.  Should a kernel
+ever be added without a GPU version, requesting ``architect='gpu'`` for it
+raises::
+
+    NotImplementedError: GPU kernel not implemented for invert_standard_2D
 
 CPU vs GPU implementation comparison
 -------------------------------------
@@ -209,9 +224,12 @@ into a convergence signal that mirrors the CPU ``absNorm*`` metric:
     \text{norm} = \frac{1}{N}\sum |S|,\qquad
     \text{error} = \frac{|\text{norm} - \text{norm}_{prev}|}{\text{norm}_{prev}}
 
-These two helpers are dimension-agnostic, so future 3-D / general / biharmonic
-GPU wrappers can reuse the same loop skeleton and only need their own update
-kernel.
+These two helpers are dimension-agnostic and are shared by every GPU wrapper
+except the 1-D one.  The 2-D family (standard, full, general, biharmonic) runs
+through ``_run_sor_2d_loop`` and the 3-D family (standard, general) through
+``_run_sor_3d_loop``, so each wrapper only supplies its own update kernel;
+``invert_standard_1D_gpu`` keeps its own inline loop, since a 1-D sweep has no
+row-structured boundary handling to share.
 
 Configurable thread-block shape
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -373,12 +391,15 @@ File structure
     ├── utils.py         # utility functions
     └── finitediffs.py   # finite-difference utilities
 
-Current GPU implementation status
-----------------------------------
+GPU implementation status
+-------------------------
+
+Every CPU kernel now has a GPU counterpart, so ``architect='gpu'`` works for
+all equation types:
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 30 30 10
+   :widths: 26 30 32 12
 
    * - Equation type
      - CPU kernel
@@ -388,27 +409,31 @@ Current GPU implementation status
      - ``invert_standard_2D``
      - ``invert_standard_2D_gpu``
      - ✅ implemented
-   * - standard 3D (omega etc.)
-     - ``invert_standard_3D``
-     - —
-     - TODO
-   * - general 2D (GillMatsuno etc.)
-     - ``invert_general_2D``
-     - —
-     - TODO
-   * - general 3D (3DOcean etc.)
-     - ``invert_general_3D``
-     - —
-     - TODO
-   * - general 2D bih (StommelMunk etc.)
-     - ``invert_general_bih_2D``
-     - —
-     - TODO
-   * - standard 2D test
-     - ``invert_standard_2D_test``
-     - —
-     - TODO
+   * - standard 2D full (flux form)
+     - ``invert_standard_2D_full``
+     - ``invert_standard_2D_full_gpu``
+     - ✅ implemented
    * - standard 1D
      - ``invert_standard_1D``
-     - —
-     - TODO
+     - ``invert_standard_1D_gpu``
+     - ✅ implemented
+   * - standard 3D (omega etc.)
+     - ``invert_standard_3D``
+     - ``invert_standard_3D_gpu``
+     - ✅ implemented
+   * - general 2D (GillMatsuno etc.)
+     - ``invert_general_2D``
+     - ``invert_general_2D_gpu``
+     - ✅ implemented
+   * - general 3D (3DOcean etc.)
+     - ``invert_general_3D``
+     - ``invert_general_3D_gpu``
+     - ✅ implemented
+   * - general 2D bih (StommelMunk etc.)
+     - ``invert_general_bih_2D``
+     - ``invert_general_bih_2D_gpu``
+     - ✅ implemented
+
+Correctness of each pair is checked by the matching ``tests/test_Gpu*.py``
+script, which compares the analytic solution and the CPU result against the
+GPU result (``pytest`` skips the GPU cases when no CUDA device is present).
