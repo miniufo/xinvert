@@ -427,7 +427,7 @@ def invert_standard_2D(S, A, B, C, F, info,
 
 
 @nb.njit(cache=False, nogil=True)
-def invert_standard_2D_test(S, A, B, C, D, E, F, info,
+def invert_standard_2D_full(S, A, B, C, D, E, F, info,
                        yc, xc, BCy, BCx, delxSqr,
                        ratioQtr, ratioSqr, optArg, undef, flags,
                        mxLoop, tolerance):

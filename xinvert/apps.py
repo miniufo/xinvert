@@ -12,7 +12,7 @@ import copy
 from .utils import loop_noncore
 from .core import inv_standard3D, inv_standard2D, inv_standard1D,\
                   inv_general3D, inv_general2D,\
-                  inv_general2D_bih, inv_standard2D_test
+                  inv_general2D_bih, inv_standard2D_full
 
 
 # default undefined value
@@ -404,9 +404,9 @@ def invert_GillMatsuno(Q, dims, coords='lat-lon', icbc=None,
                       mParams, iParams)
 
 
-def invert_GillMatsuno_test(Q, dims, coords='lat-lon', icbc=None, 
+def invert_GillMatsunoFlux(Q, dims, coords='lat-lon', icbc=None, 
                        mParams=default_mParams, iParams=default_iParams):
-    r"""Inverting Gill-Matsuno model (test use only).
+    r"""Inverting Gill-Matsuno model (flux-form discretization).
 
     The Gill-Matsuno model is given as:
 
@@ -447,7 +447,7 @@ def invert_GillMatsuno_test(Q, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results (mass distribution) of the SOR inversion.
     """
-    return __template(__coeffs_GillMatsuno_test, inv_standard2D_test, 2, Q, dims, coords,
+    return __template(__coeffs_GillMatsunoFlux, inv_standard2D_full, 2, Q, dims, coords,
                       icbc, ['f0', 'beta', 'epsilon', 'Phi', 'g', 'Omega', 'Rearth'],
                       mParams, iParams)
 
@@ -498,9 +498,9 @@ def invert_Stommel(curl, dims, coords='lat-lon', icbc=None,
                       mParams, iParams)
 
 
-def invert_Stommel_test(curl, dims, coords='lat-lon', icbc=None,
+def invert_StommelFlux(curl, dims, coords='lat-lon', icbc=None,
                    mParams=default_mParams, iParams=default_iParams):
-    r"""Inverting Stommel model (test used only).
+    r"""Inverting Stommel model (flux-form discretization).
 
     The Stommel model is given as:
 
@@ -539,7 +539,7 @@ def invert_Stommel_test(curl, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results (streamfunction) of the SOR inversion.
     """
-    return __template(__coeffs_Stommel_test, inv_standard2D_test, 2, curl, dims, coords,
+    return __template(__coeffs_StommelFlux, inv_standard2D_full, 2, curl, dims, coords,
                       icbc, ['beta', 'R', 'D', 'rho0', 'g', 'Omega', 'Rearth'],
                       mParams, iParams)
 
@@ -723,7 +723,7 @@ def invert_BrethertonHaidvogel(h, dims, coords='cartesian', icbc=None,
     xarray.DataArray
         Results (geostrophic streamfunction) of the SOR inversion.
     """
-    return __template(__coeffs_Bretherton, inv_standard2D_test, 2, h, dims, coords,
+    return __template(__coeffs_Bretherton, inv_standard2D_full, 2, h, dims, coords,
                       icbc, ['f0', 'beta', 'D', 'lambda', 'g', 'Omega', 'Rearth'],
                       mParams, iParams)
 
@@ -768,7 +768,7 @@ def invert_Fofonoff(F, dims, coords='cartesian', icbc=None,
     xarray.DataArray
         Results of the SOR inversion.
     """
-    return __template(__coeffs_Fofonoff, inv_standard2D_test, 2, F, dims, coords,
+    return __template(__coeffs_Fofonoff, inv_standard2D_full, 2, F, dims, coords,
                       icbc, ['c0', 'c1', 'f0', 'beta', 'g', 'Omega', 'Rearth'],
                       mParams, iParams)
 
@@ -993,12 +993,12 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         
     elif app_name == 'brethertonhaidvogel':
         coef_func = __coeffs_Bretherton
-        invt_func = inv_standard2D_test
+        invt_func = inv_standard2D_full
         validMPs  = ['f0', 'beta', 'D', 'lambda', 'g', 'Omega', 'Rearth']
         
     elif app_name == 'fofonoff':
         coef_func = __coeffs_Fofonoff
-        invt_func = inv_standard2D_test
+        invt_func = inv_standard2D_full
         validMPs  = ['c0', 'c1', 'f0', 'beta', 'g', 'Omega', 'Rearth']
         
     elif app_name == 'omega':
@@ -1681,7 +1681,7 @@ def __coeffs_GillMatsuno(Q, dims, coords, mParams, iParams, icbc):
     return G, initS, (A, B, C, D, E, F)
 
 
-def __coeffs_GillMatsuno_test(Q, dims, coords, mParams, iParams, icbc):
+def __coeffs_GillMatsunoFlux(Q, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Gill-Matsuno model."""
     Phi     = mParams['Phi' ]
     epsilon = mParams['epsilon']
@@ -1772,7 +1772,7 @@ def __coeffs_Stommel(curl, dims, coords, mParams, iParams, icbc):
     return G, initS, (A, B, C, D, E, F)
 
 
-def __coeffs_Stommel_test(curl, dims, coords, mParams, iParams, icbc):
+def __coeffs_StommelFlux(curl, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Stommel model."""
     f0    = mParams['f0'  ]
     beta  = mParams['beta']

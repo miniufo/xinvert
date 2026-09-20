@@ -13,7 +13,7 @@ import sys
 import threading
 from .cpus import invert_standard_3D, invert_standard_2D, invert_standard_1D,\
                     invert_general_3D, invert_general_2D, \
-                    invert_general_bih_2D, invert_standard_2D_test
+                    invert_general_bih_2D, invert_standard_2D_full
 from .utils import loop_noncore
 
 # Diagnostic printInfo output: live, thread-safe, distribution-safe.
@@ -66,8 +66,18 @@ def _print_live(msg):
 _gpu_kernel_map = {}
 _ensure_cuda = None    # gpus.ensure_context, if the GPU module is available
 try:
-    from .gpus import invert_standard_2D_gpu, ensure_context as _ensure_cuda
+    from .gpus import (invert_standard_2D_gpu, invert_standard_2D_full_gpu,
+                       invert_standard_1D_gpu, invert_general_2D_gpu,
+                       invert_standard_3D_gpu, invert_general_3D_gpu,
+                       invert_general_bih_2D_gpu,
+                       ensure_context as _ensure_cuda)
     _gpu_kernel_map[invert_standard_2D] = invert_standard_2D_gpu
+    _gpu_kernel_map[invert_standard_2D_full] = invert_standard_2D_full_gpu
+    _gpu_kernel_map[invert_standard_1D] = invert_standard_1D_gpu
+    _gpu_kernel_map[invert_general_2D] = invert_general_2D_gpu
+    _gpu_kernel_map[invert_standard_3D] = invert_standard_3D_gpu
+    _gpu_kernel_map[invert_general_3D] = invert_general_3D_gpu
+    _gpu_kernel_map[invert_general_bih_2D] = invert_general_bih_2D_gpu
 except Exception:
     pass  # CUDA not available or GPU module not yet implemented
 
@@ -205,7 +215,7 @@ def inv_standard2D(A, B, C, F, S, dims, iParams):
 
 
 
-def inv_standard2D_test(A, B, C, D, E, F, S, dims, iParams):
+def inv_standard2D_full(A, B, C, D, E, F, S, dims, iParams):
     r"""Inverting equations in 2D standard form (test only).
 
     .. math::
@@ -258,7 +268,7 @@ def inv_standard2D_test(A, B, C, D, E, F, S, dims, iParams):
         iParams['BCs'][0], iParams['BCs'][1], iParams['del1Sqr'],
         iParams['ratioQtr'], iParams['ratioSqr'],
     ]
-    _kernel_ = _make_kernel(invert_standard_2D_test, grid_args, iParams)
+    _kernel_ = _make_kernel(invert_standard_2D_full, grid_args, iParams)
     
     re = xr.apply_ufunc(
         _kernel_, S, A, B, C, D, E, F, info,

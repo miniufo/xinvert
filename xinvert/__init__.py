@@ -8,15 +8,15 @@ reference-state, etc.) via successive over-relaxation with spatially-varying
 coefficients and dask-enabled parallel computation.
 """
 from .core import inv_standard3D, \
-                  inv_standard2D, inv_standard2D_test, \
+                  inv_standard2D, inv_standard2D_full, \
                   inv_general3D, \
                   inv_general2D,\
                   inv_general2D_bih
                   
 from .apps import invert_Poisson, \
-                  invert_GillMatsuno, invert_GillMatsuno_test, \
+                  invert_GillMatsuno, invert_GillMatsunoFlux, \
                   invert_geostrophic, \
-                  invert_Stommel, invert_Stommel_test, \
+                  invert_Stommel, invert_StommelFlux, \
                   invert_StommelMunk, \
                   invert_StommelArons, \
                   invert_Eliassen, \
@@ -34,4 +34,4 @@ from .utils import loop_noncore
 
 from .finitediffs import FiniteDiff, deriv, deriv2, padBCs
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
