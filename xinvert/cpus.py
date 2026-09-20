@@ -22,9 +22,9 @@ def invert_standard_3D(S, A, B, C, F, info,
 
     .. math::
 
-        \frac{1}{\partial z}\left(A\frac{\partial \omega}{\partial z}\right)+
-        \frac{1}{\partial y}\left(B\frac{\partial \omega}{\partial y}\right)+
-        \frac{1}{\partial x}\left(C\frac{\partial \omega}{\partial x}\right)=F
+        \frac{\partial}{\partial z}\left(A\frac{\partial \omega}{\partial z}\right)+
+        \frac{\partial}{\partial y}\left(B\frac{\partial \omega}{\partial y}\right)+
+        \frac{\partial}{\partial x}\left(C\frac{\partial \omega}{\partial x}\right)=F
     
     Parameters
     ----------
@@ -225,10 +225,10 @@ def invert_standard_2D(S, A, B, C, F, info,
 
     .. math::
 
-        \frac{1}{\partial y}\left(
+        \frac{\partial}{\partial y}\left(
         A\frac{\partial \psi}{\partial y} + 
         B\frac{\partial \psi}{\partial x} \right) +
-        \frac{1}{\partial x}\left(
+        \frac{\partial}{\partial x}\left(
         B\frac{\partial \psi}{\partial y} +
         C\frac{\partial \psi}{\partial x} \right) = F
     
@@ -435,10 +435,10 @@ def invert_standard_2D_full(S, A, B, C, D, E, F, info,
 
     .. math::
 
-        \frac{1}{\partial y}\left(
+        \frac{\partial}{\partial y}\left(
         A\frac{\partial \psi}{\partial y} + 
         B\frac{\partial \psi}{\partial x} \right) +
-        \frac{1}{\partial x}\left(
+        \frac{\partial}{\partial x}\left(
         C\frac{\partial \psi}{\partial y} +
         D\frac{\partial \psi}{\partial x} \right) + E\psi = F
     
@@ -651,7 +651,7 @@ def invert_standard_1D(S, A, B, F, info,
 
     .. math::
 
-        \frac{1}{\partial x}\left(
+        \frac{\partial}{\partial x}\left(
         A\frac{\partial \psi}{\partial x}\right) + B\psi = F
     
     Parameters

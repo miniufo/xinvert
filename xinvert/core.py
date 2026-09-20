@@ -93,9 +93,9 @@ def inv_standard3D(A, B, C, F, S, dims, iParams):
 
     .. math::
 
-        \frac{1}{\partial z}\left(A\frac{\partial \omega}{\partial z}\right)+
-        \frac{1}{\partial y}\left(B\frac{\partial \omega}{\partial y}\right)+
-        \frac{1}{\partial x}\left(C\frac{\partial \omega}{\partial x}\right)=F
+        \frac{\partial}{\partial z}\left(A\frac{\partial \omega}{\partial z}\right)+
+        \frac{\partial}{\partial y}\left(B\frac{\partial \omega}{\partial y}\right)+
+        \frac{\partial}{\partial x}\left(C\frac{\partial \omega}{\partial x}\right)=F
     
     Invert this equation using SOR iteration. If F = F['time', 'lev', 'lat',
     'lon'] and we invert for the 3D spatial distribution, then 3rd dim is 'lev',
@@ -155,10 +155,10 @@ def inv_standard2D(A, B, C, F, S, dims, iParams):
 
     .. math::
 
-        \frac{1}{\partial y}\left(
+        \frac{\partial}{\partial y}\left(
         A\frac{\partial \psi}{\partial y} + 
         B\frac{\partial \psi}{\partial x} \right) +
-        \frac{1}{\partial x}\left(
+        \frac{\partial}{\partial x}\left(
         B\frac{\partial \psi}{\partial y} +
         C\frac{\partial \psi}{\partial x} \right) = F
     
@@ -220,10 +220,10 @@ def inv_standard2D_full(A, B, C, D, E, F, S, dims, iParams):
 
     .. math::
 
-        \frac{1}{\partial y}\left(
+        \frac{\partial}{\partial y}\left(
         A\frac{\partial \psi}{\partial y} + 
         B\frac{\partial \psi}{\partial x} \right) +
-        \frac{1}{\partial x}\left(
+        \frac{\partial}{\partial x}\left(
         B\frac{\partial \psi}{\partial y} +
         C\frac{\partial \psi}{\partial x} \right) + E\psi= F
     
@@ -288,7 +288,7 @@ def inv_standard1D(A, B, F, S, dims, iParams):
 
     .. math::
 
-        \frac{1}{\partial x}\left(
+        \frac{\partial}{\partial x}\left(
         A\frac{\partial \psi}{\partial x} + B\psi\right)= F
     
     Invert this equation using SOR iteration. If F = F['time', 'lat'], then

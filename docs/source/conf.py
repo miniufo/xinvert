@@ -125,7 +125,13 @@ html_favicon = os.path.join('_static', 'xinvertIcon.ico')
 #    and the one ReadTheDocs serves -- aborts with
 #    "Erroneous nesting of equation structures" and renders nothing.
 #    A block that already carries an AMS environment needs no wrapper, so it is
-#    emitted verbatim.  Affects every multi-row equation in the notebooks.
+#    emitted verbatim.  A multi-row block that carries ``\tag`` *without* an
+#    environment of its own gets one supplied, because ``split`` also rejects
+#    ``\tag not allowed in split environment`` (MathJax 3 and 4 alike).
+#    Together these two branches mean notebook maths can be written in whatever
+#    style the author prefers.  Affects every multi-row equation in the
+#    notebooks -- 25 blocks across 10 files when this was written, not the two
+#    that had happened to be noticed.
 #
 # 2) `nbsphinx.pandoc` appends a hard-coded ``--columns=500`` to its
 #    json -> rst pass (nbsphinx/__init__.py, "Avoid breaks in tables, see
@@ -141,6 +147,9 @@ html_favicon = os.path.join('_static', 'xinvertIcon.ico')
 _AMS_ENV = re.compile(
     r'\\begin\{(?:align|alignat|flalign|gather|multline|eqnarray|equation)\*?\}'
 )
+
+#: ``\tag`` is rejected by ``split``/``aligned``; it needs a real AMS environment.
+_TAG = re.compile(r'\\tag\b')
 
 #: pandoc's table-cell wrapping width (upstream nbsphinx uses 500).
 PANDOC_COLUMNS = 1000
@@ -169,6 +178,13 @@ def _visit_displaymath(self, node):
     if _AMS_ENV.search(equation):
         # already an AMS environment -- the `split' wrapper below would nest it
         self.body.append(self.encode(equation))
+    elif r'\\' in equation and _TAG.search(equation):
+        # multi-line block carrying `\tag' but no environment of its own: the
+        # `split' wrapper rejects `\tag not allowed in split environment', so
+        # supply the align environment the numbering needs.
+        parts = [prt for prt in equation.split('\n\n') if prt.strip()]
+        joined = r' \\ '.join(parts)
+        self.body.append(r'\begin{align}' + self.encode(joined) + r'\end{align}')
     else:
         parts = [prt for prt in equation.split('\n\n') if prt.strip()]
         if len(parts) > 1:  # Add alignment if there are more than 1 equation

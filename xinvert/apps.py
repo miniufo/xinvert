@@ -647,8 +647,8 @@ def invert_geostrophic(lapPhi, dims, coords='lat-lon', icbc=None,
 
     .. math::
 
-        \frac{1}{\partial y}\left(f\frac{\partial \psi}{\partial y}\right)+
-        \frac{1}{\partial x}\left(f\frac{\partial \psi}{\partial x}\right)=\nabla^2 \Phi
+        \frac{\partial}{\partial y}\left(f\frac{\partial \psi}{\partial y}\right)+
+        \frac{\partial}{\partial x}\left(f\frac{\partial \psi}{\partial x}\right)=\nabla^2 \Phi
     
     Invert this equation for the geostrophic streamfunction :math:`\psi` given
     the Laplacian of geopotential field :math:`\nabla^2\Phi`.
@@ -789,9 +789,9 @@ def invert_omega(F, dims, coords='lat-lon', icbc=None,
 
     .. math::
 
-        \frac{1}{\partial z}\left(f^2\frac{\partial \omega}{\partial z}\right)+
-        \frac{1}{\partial y}\left(N^2\frac{\partial \omega}{\partial y}\right)+
-        \frac{1}{\partial x}\left(N^2\frac{\partial \omega}{\partial x}\right)=F
+        \frac{\partial}{\partial z}\left(f^2\frac{\partial \omega}{\partial z}\right)+
+        \frac{\partial}{\partial y}\left(N^2\frac{\partial \omega}{\partial y}\right)+
+        \frac{\partial}{\partial x}\left(N^2\frac{\partial \omega}{\partial x}\right)=F
 
     Invert this equation for the vertical velocity :math:`\omega` given
     the forcing function :math:`F`.
