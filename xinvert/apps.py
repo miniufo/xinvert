@@ -164,7 +164,7 @@ def invert_GeoAdjustment(PV0, dims, coords='lat', icbc=None,
     .. math::
 
          \frac{\partial}{\partial y}\left(A\frac{\partial h}{\partial y}\right)
-         +B h &= F
+         +B h = F
     
     where
     
@@ -210,7 +210,7 @@ def invert_RefStateSWM(Q, dims, coords='lat', icbc=None,
     .. math::
 
          \frac{\partial}{\partial y}\left(A\frac{\partial\Delta M}{\partial y}\right)
-         -B\Delta M &=F
+         -B\Delta M =F
     
     where
     

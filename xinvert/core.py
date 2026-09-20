@@ -289,7 +289,7 @@ def inv_standard1D(A, B, F, S, dims, iParams):
     .. math::
 
         \frac{1}{\partial x}\left(
-        A\frac{\partial \psi}{\partial x} + B\psi= F
+        A\frac{\partial \psi}{\partial x} + B\psi\right)= F
     
     Invert this equation using SOR iteration. If F = F['time', 'lat'], then
     for the meridional series, the 1st dim is 'lat' .
