@@ -6,6 +6,15 @@ Built on xarray and numba, this package solves classical elliptic PDEs
 (Poisson, Gill-Matsuno, Stommel-Munk, QG-omega, Eliassen, PV inversion,
 reference-state, etc.) via successive over-relaxation with spatially-varying
 coefficients and dask-enabled parallel computation.
+
+Notes on numerical precision
+----------------------------
+The whole inversion (coefficients, iteration, output) is carried out in
+the **dtype of the forcing array**: a float32 forcing is inverted entirely
+in float32, a float64 forcing in float64.  float32 roughly halves memory
+bandwidth (near-2x speedup of the memory-bound SOR sweep, more on GPU)
+at the cost of ~1e-7 relative residual accuracy.  When ``icbc`` is given,
+its dtype should match that of the forcing to avoid silent down-casting.
 """
 from .core import inv_standard3D, \
                   inv_standard2D, inv_standard2D_full, \
