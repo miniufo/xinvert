@@ -13,7 +13,9 @@ import time
 import numpy as np
 import xarray as xr
 import dask
-from dask.distributed import Client
+import pytest
+
+Client = pytest.importorskip('dask.distributed').Client
 
 from xinvert import invert_Poisson
 

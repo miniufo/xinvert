@@ -6,7 +6,6 @@
 [![PyPI version](https://badge.fury.io/py/xinvert.svg)](https://badge.fury.io/py/xinvert)
 ![Workflow](https://github.com/miniufo/xinvert/actions/workflows/python-publish.yml/badge.svg)
 [![pytest](https://github.com/miniufo/xinvert/actions/workflows/tests.yml/badge.svg)](https://github.com/miniufo/xinvert/actions/workflows/tests.yml)
-[![Build Status](https://app.travis-ci.com/miniufo/xinvert.svg?branch=master)](https://app.travis-ci.com/miniufo/xinvert)
 [![status](https://joss.theoj.org/papers/1fc4ac8f98c0778516971880727a3a94/status.svg)](https://joss.theoj.org/papers/1fc4ac8f98c0778516971880727a3a94)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/e6f6733ded33461993c1a9180826ce53)](https://app.codacy.com/gh/miniufo/xinvert/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 

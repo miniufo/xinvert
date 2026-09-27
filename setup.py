@@ -29,13 +29,18 @@ setup(
     license='MIT',
 
     classifiers=[
+        'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.9',
-        'Programming Language :: Python :: 3.10'
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
     ],
 
     keywords='invert inversion atmosphere ocean SOR successive-overrelaxation-iteration',
 
     packages=find_packages(exclude=['docs', 'tests', "notebooks", "pics"]),
+
+    python_requires='>=3.9',
 
     install_requires=[
         "numpy",
