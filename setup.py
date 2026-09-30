@@ -34,6 +34,7 @@ setup(
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12',
+        'Programming Language :: Python :: 3.13',
     ],
 
     keywords='invert inversion atmosphere ocean SOR successive-overrelaxation-iteration',
@@ -55,5 +56,7 @@ setup(
         # packages needed to run the notebooks in docs/source/notebooks
         "notebooks": ["ultraplot", "pooch", "cartopy", "notebook",
                       "ipykernel", "netCDF4"],
+        # Maintained CUDA target; an NVIDIA driver and runtime are required.
+        "gpu": ["numba-cuda"],
     },
 )
