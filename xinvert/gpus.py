@@ -3,7 +3,9 @@
 GPU module of xinvert: CUDA-accelerated SOR iteration kernels.
 
 Contains GPU implementations of the SOR iteration kernels using numba.cuda.
-Uses Red-Black ordering for parallel SOR iteration on GPU.
+Uses dependency-safe multi-color ordering for parallel SOR iteration on GPU:
+red-black for nearest-neighbour stencils, four colors for mixed-derivative
+nine-point stencils, and five colors for the biharmonic stencil.
 
 Currently implemented:
   - invert_standard_2D_gpu:      GPU version of invert_standard_2D (Poisson, etc.)
@@ -17,7 +19,7 @@ Currently implemented:
   - invert_standard_3D_gpu:      GPU version of invert_standard_3D (omega)
   - invert_general_3D_gpu:       GPU version of invert_general_3D (3DOcean)
   - invert_general_bih_2D_gpu:   GPU version of invert_general_bih_2D
-                                 (StommelMunk); 3-color SOR for the
+                                 (StommelMunk); 5-color SOR for the
                                  13-point biharmonic stencil
 
 The GPU wrapper functions have the **same signature** as the numba kernels in
@@ -53,16 +55,19 @@ _DEFAULT_BLOCK_2D = (16, 16)
 
 
 # ---------------------------------------------------------------------------
-# CUDA kernels for Red-Black SOR (standard 2D form)
+# CUDA kernels for adaptive two/four-color SOR (standard 2D forms)
 # ---------------------------------------------------------------------------
 
 @cuda.jit
 def _sor_2d_rb(S, A, B, C, F, yc, xc, bcx_periodic,
-               delxSqr, ratioQtr, ratioSqr, optArg, undef, color):
-    """Red-Black SOR update for one color of the standard 2D form.
+               delxSqr, ratioQtr, ratioSqr, optArg, undef, color, n_color,
+               metric, track_residual):
+    """Multi-color SOR update for one color of the standard 2D form.
 
-    color=0 → red points ((j+i) even), color=1 → black points.
-    Handles interior points and periodic x-boundary points.
+    A five-point operator uses classic red-black coloring.  When ``B`` is
+    non-zero the mixed derivative adds diagonal neighbours, so the wrapper
+    selects a four-color ``(j % 2, i % 2)`` scheme instead.  Points in one
+    four-color pass then share neither edges nor corners.
 
     The update formula matches the interior loop of
     :func:`xinvert.cpus.invert_standard_2D`.
@@ -102,9 +107,12 @@ def _sor_2d_rb(S, A, B, C, F, yc, xc, bcx_periodic,
         if i < 1 or i >= xc - 1:
             return
 
-    # Only process the requested color
-    if (j + i) % 2 != color:
-        return
+    if n_color == 2:
+        if (j + i) % 2 != color:
+            return
+    else:
+        if (j % 2) * 2 + (i % 2) != color:
+            return
 
     # Periodic wrapping for x-neighbours
     ip1 = i + 1
@@ -136,13 +144,19 @@ def _sor_2d_rb(S, A, B, C, F, yc, xc, bcx_periodic,
 
     denom = (A[j + 1, i] + A[j, i]) * ratioSqr + (C[j, ip1] + C[j, i])
     if denom != 0.0:
-        S[j, i] += temp * optArg / denom
+        delta = temp * optArg / denom
+        if track_residual:
+            cuda.atomic.max(metric, 0, abs(delta))
+            cuda.atomic.max(metric, 1,
+                            max(abs(S[j, i]), abs(S[j, i] + delta)))
+        S[j, i] += delta
 
 
 @cuda.jit
 def _sor_2d_rb_full(S, A, B, C, D, E, F, yc, xc, bcx_periodic,
-                    delxSqr, ratioQtr, ratioSqr, optArg, undef, color):
-    """Red-Black SOR update for one color of the full standard 2D form.
+                    delxSqr, ratioQtr, ratioSqr, optArg, undef, color,
+                    n_color, metric, track_residual):
+    """Multi-color SOR update for one color of the full standard 2D form.
 
     Solves  (A ψy + B ψx)/y + (C ψy + D ψx)/x + E ψ = F  with coefficients
     at staggered (half-grid) positions -- the divergence form including the
@@ -186,8 +200,12 @@ def _sor_2d_rb_full(S, A, B, C, D, E, F, yc, xc, bcx_periodic,
         if i < 1 or i >= xc - 1:
             return
 
-    if (j + i) % 2 != color:
-        return
+    if n_color == 2:
+        if (j + i) % 2 != color:
+            return
+    else:
+        if (j % 2) * 2 + (i % 2) != color:
+            return
 
     # Periodic wrapping for x-neighbours
     ip1 = i + 1
@@ -221,14 +239,19 @@ def _sor_2d_rb_full(S, A, B, C, D, E, F, yc, xc, bcx_periodic,
     denom = ((A[j + 1, i] + A[j, i]) * ratioSqr +
              (D[j, ip1] + D[j, i]) - E[j, i] * delxSqr)
     if denom != 0.0:
-        S[j, i] += temp * optArg / denom
+        delta = temp * optArg / denom
+        if track_residual:
+            cuda.atomic.max(metric, 0, abs(delta))
+            cuda.atomic.max(metric, 1,
+                            max(abs(S[j, i]), abs(S[j, i] + delta)))
+        S[j, i] += delta
 
 
 @cuda.jit
 def _sor_2d_rb_general(S, A, B, C, D, E, F, G, yc, xc, bcx_periodic,
                        delxSqr, delx, ratio, ratioQtr, ratioSqr,
-                       optArg, undef, color):
-    """Red-Black SOR update for one color of the general 2D form.
+                       optArg, undef, color, n_color, metric, track_residual):
+    """Multi-color SOR update for one color of the general 2D form.
 
     Solves  A ψyy + B ψyx + C ψxx + D ψy + E ψx + F ψ = G  with all
     coefficients at grid centers (non-divergence / point form).  The
@@ -269,8 +292,12 @@ def _sor_2d_rb_general(S, A, B, C, D, E, F, G, yc, xc, bcx_periodic,
         if i < 1 or i >= xc - 1:
             return
 
-    if (j + i) % 2 != color:
-        return
+    if n_color == 2:
+        if (j + i) % 2 != color:
+            return
+    else:
+        if (j % 2) * 2 + (i % 2) != color:
+            return
 
     # Periodic wrapping for x-neighbours
     ip1 = i + 1
@@ -301,7 +328,12 @@ def _sor_2d_rb_general(S, A, B, C, D, E, F, G, yc, xc, bcx_periodic,
 
     denom = (A[j, i] * ratioSqr + C[j, i]) * 2.0 - F[j, i] * delxSqr
     if denom != 0.0:
-        S[j, i] += temp * optArg / denom
+        delta = temp * optArg / denom
+        if track_residual:
+            cuda.atomic.max(metric, 0, abs(delta))
+            cuda.atomic.max(metric, 1,
+                            max(abs(S[j, i]), abs(S[j, i] + delta)))
+        S[j, i] += delta
 
 
 @cuda.jit
@@ -325,8 +357,12 @@ def _abs_norm_2d(S, undef, out):
 
 
 @cuda.jit
-def _extend_y_boundary(S, yc, xc, undef):
+def _extend_y_boundary(S, yc, xc, undef, bcx_periodic,
+                       anchor_side, anchor_idx):
     """Extend BC: copy y-interior boundary to y-outer boundary.
+
+    The gauge-anchor column (singular extend systems) is skipped, so
+    the pinned boundary point keeps its initial (uploaded) value.
 
     Parameters
     ----------
@@ -336,22 +372,27 @@ def _extend_y_boundary(S, yc, xc, undef):
         Grid counts in y and x dimensions.
     undef : float
         Undefined value (undef cells are not overwritten).
+    anchor_side, anchor_idx : int
+        Boundary gauge anchor (side 0 = north row, 1 = south row); the
+        copy of S[anchor] is skipped.  side < 0 = no anchor.
     """
     i = cuda.grid(1)
-    if i < xc:
-        if S[1, i] != undef:
+    if i < xc and (bcx_periodic or (0 < i < xc - 1)):
+        if S[1, i] != undef and not (anchor_side == 0 and i == anchor_idx):
             S[0, i] = S[1, i]
-        if S[yc - 2, i] != undef:
+        if S[yc - 2, i] != undef and not (anchor_side == 1 and i == anchor_idx):
             S[yc - 1, i] = S[yc - 2, i]
 
 
 @cuda.jit
-def _extend_x_boundary(S, yc, xc, undef):
+def _extend_x_boundary(S, yc, xc, undef, bcy_extend,
+                       anchor_side, anchor_idx):
     """Extend BC: copy x-interior boundary to x-outer boundary, plus corners.
 
     Folding corner handling into this kernel avoids a separate 1-block
     launch (which triggers a ``Grid size 1`` under-utilization warning)
-    and saves one kernel launch per iteration.
+    and saves one kernel launch per iteration.  The gauge-anchor row
+    (side 2 = west column, 3 = east column) is skipped.
 
     Parameters
     ----------
@@ -361,17 +402,24 @@ def _extend_x_boundary(S, yc, xc, undef):
         Grid counts in y and x dimensions.
     undef : float
         Undefined value (undef cells are not overwritten).
+    anchor_side, anchor_idx : int
+        Boundary gauge anchor; the copy of S[anchor] is skipped.
+        side < 0 = no anchor.
     """
     j = cuda.grid(1)
     if j >= yc:
         return
     if j == 0:
+        if not bcy_extend:
+            return
         # top-left / top-right corners (diagonal neighbour)
         if S[1, 1] != undef:
             S[0, 0] = S[1, 1]
         if S[1, xc - 2] != undef:
             S[0, xc - 1] = S[1, xc - 2]
     elif j == yc - 1:
+        if not bcy_extend:
+            return
         # bottom-left / bottom-right corners
         if S[yc - 2, 1] != undef:
             S[yc - 1, 0] = S[yc - 2, 1]
@@ -379,9 +427,9 @@ def _extend_x_boundary(S, yc, xc, undef):
             S[yc - 1, xc - 1] = S[yc - 2, xc - 2]
     else:
         # interior rows: left and right edges
-        if S[j, 1] != undef:
+        if S[j, 1] != undef and not (anchor_side == 2 and j == anchor_idx):
             S[j, 0] = S[j, 1]
-        if S[j, xc - 2] != undef:
+        if S[j, xc - 2] != undef and not (anchor_side == 3 and j == anchor_idx):
             S[j, xc - 1] = S[j, xc - 2]
 
 
@@ -391,7 +439,7 @@ def _extend_x_boundary(S, yc, xc, undef):
 
 @cuda.jit
 def _sor_1d_rb(S, A, B, F, xc, bcx_periodic,
-               delxSqr, optArg, undef, color):
+               delxSqr, optArg, undef, color, metric, track_residual):
     """Red-Black SOR update for one color of the standard 1D form.
 
     Solves  (A psi_x)/x + B psi = F  with A at staggered (half-grid)
@@ -445,7 +493,11 @@ def _sor_1d_rb(S, A, B, F, xc, bcx_periodic,
 
     denom = (A[ip1] + A[i]) / delxSqr - B[i]
     if denom != 0.0:
-        S[i] += temp * optArg / denom
+        delta = temp * optArg / denom
+        if track_residual:
+            cuda.atomic.max(metric, 0, abs(delta))
+            cuda.atomic.max(metric, 1, max(abs(S[i]), abs(S[i] + delta)))
+        S[i] += delta
 
 
 @cuda.jit
@@ -459,12 +511,15 @@ def _abs_norm_1d(S, undef, out):
 
 
 @cuda.jit
-def _extend_boundary_1d(S, xc, undef):
-    """Extend BC for 1D: copy interior boundary to outer boundary."""
+def _extend_boundary_1d(S, xc, undef, anchor_side):
+    """Extend BC for 1D: copy interior boundary to outer boundary.
+
+    The gauge-anchor end (side 0 = S[0], 1 = S[-1]) is skipped so it
+    keeps its initial (uploaded) value."""
     if cuda.grid(1) == 0:
-        if S[1] != undef:
+        if S[1] != undef and anchor_side != 0:
             S[0] = S[1]
-        if S[xc - 2] != undef:
+        if S[xc - 2] != undef and anchor_side != 1:
             S[xc - 1] = S[xc - 2]
 
 
@@ -474,7 +529,8 @@ def _extend_boundary_1d(S, xc, undef):
 
 @cuda.jit
 def _sor_3d_rb(S, A, B, C, F, zc, yc, xc, bcx_periodic,
-               delxSqr, ratio2Sqr, ratio1Sqr, optArg, undef, color):
+               delxSqr, ratio2Sqr, ratio1Sqr, optArg, undef, color,
+               metric, track_residual):
     """Red-Black SOR update for one color of the standard 3D form.
 
     Solves  (A ψz)/z + (B ψy)/y + (C ψx)/x = F  with coefficients at
@@ -550,7 +606,12 @@ def _sor_3d_rb(S, A, B, C, F, zc, yc, xc, bcx_periodic,
              (B[k, j + 1, i] + B[k, j, i]) * ratio1Sqr +
              (C[k, j, ip1] + C[k, j, i]))
     if denom != 0.0:
-        S[k, j, i] += temp * optArg / denom
+        delta = temp * optArg / denom
+        if track_residual:
+            cuda.atomic.max(metric, 0, abs(delta))
+            cuda.atomic.max(
+                metric, 1, max(abs(S[k, j, i]), abs(S[k, j, i] + delta)))
+        S[k, j, i] += delta
 
 
 @cuda.jit
@@ -564,14 +625,15 @@ def _abs_norm_3d(S, undef, out):
 
 
 @cuda.jit
-def _extend_y_boundary_3d(S, zc, yc, xc, undef):
+def _extend_y_boundary_3d(S, zc, yc, xc, undef, bcx_periodic):
     """3D extend BC: copy y-interior boundary to y-outer boundary.
 
     Sweeped over (k, i) for interior k levels; covers the full i range
     (corners are later overwritten by the x kernel, mirroring the CPU).
     """
     k, i = cuda.grid(2)
-    if k < 1 or k >= zc - 1 or i >= xc:
+    if (k < 1 or k >= zc - 1 or i >= xc or
+            (not bcx_periodic and (i == 0 or i == xc - 1))):
         return
     if S[k, 1, i] != undef:
         S[k, 0, i] = S[k, 1, i]
@@ -580,7 +642,7 @@ def _extend_y_boundary_3d(S, zc, yc, xc, undef):
 
 
 @cuda.jit
-def _extend_x_boundary_3d(S, zc, yc, xc, undef):
+def _extend_x_boundary_3d(S, zc, yc, xc, undef, bcy_extend):
     """3D extend BC: copy x-interior boundary to x-outer boundary + corners.
 
     Sweeped over (k, j); folds corner handling in to avoid a separate
@@ -590,12 +652,16 @@ def _extend_x_boundary_3d(S, zc, yc, xc, undef):
     if k < 1 or k >= zc - 1 or j >= yc:
         return
     if j == 0:
+        if not bcy_extend:
+            return
         # top-left / top-right corners (diagonal neighbour)
         if S[k, 1, 1] != undef:
             S[k, 0, 0] = S[k, 1, 1]
         if S[k, 1, xc - 2] != undef:
             S[k, 0, xc - 1] = S[k, 1, xc - 2]
     elif j == yc - 1:
+        if not bcy_extend:
+            return
         # bottom-left / bottom-right corners
         if S[k, yc - 2, 1] != undef:
             S[k, yc - 1, 0] = S[k, yc - 2, 1]
@@ -612,7 +678,7 @@ def _extend_x_boundary_3d(S, zc, yc, xc, undef):
 @cuda.jit
 def _sor_3d_rb_general(S, A, B, C, D, E, F, G, H, zc, yc, xc, bcx_periodic,
                        delxSqr, delx, ratio2, ratio1, ratio2Sqr, ratio1Sqr,
-                       optArg, undef, color):
+                       optArg, undef, color, metric, track_residual):
     """Red-Black SOR update for one color of the general 3D form.
 
     Solves  A ψzz + B ψyy + C ψxx + D ψz + E ψy + F ψx + G ψ = H  with all
@@ -692,7 +758,12 @@ def _sor_3d_rb_general(S, A, B, C, D, E, F, G, H, zc, yc, xc, bcx_periodic,
     denom = ((A[k, j, i] * ratio2Sqr + B[k, j, i] * ratio1Sqr + C[k, j, i])
              * 2.0 - G[k, j, i] * delxSqr)
     if denom != 0.0:
-        S[k, j, i] += temp * optArg / denom
+        delta = temp * optArg / denom
+        if track_residual:
+            cuda.atomic.max(metric, 0, abs(delta))
+            cuda.atomic.max(
+                metric, 1, max(abs(S[k, j, i]), abs(S[k, j, i] + delta)))
+        S[k, j, i] += delta
 
 
 # ---------------------------------------------------------------------------
@@ -703,8 +774,8 @@ def _sor_3d_rb_general(S, A, B, C, D, E, F, G, H, zc, yc, xc, bcx_periodic,
 def _sor_2d_mc_bih(S, A, B, C, D, E, F, G, H, I, J, yc, xc, bcx_periodic,
                    delxSSr, delxTr, delxSqr,
                    ratio, ratioSSr, ratioQtr, ratioSqr,
-                   optArg, undef, color):
-    """One color (of THREE) of the multi-color SOR update for the
+                   optArg, undef, color, metric, track_residual):
+    """One color (of five) of the multi-color SOR update for the
     general biharmonic 2D form.
 
     Solves  A ψyyyy + B ψyyxx + C ψxxxx + D ψyy + E ψyx + F ψxx
@@ -712,11 +783,12 @@ def _sor_2d_mc_bih(S, A, B, C, D, E, F, G, H, I, J, yc, xc, bcx_periodic,
     centers.  The update formula matches the interior loop of
     :func:`xinvert.cpus.invert_general_bih_2D`.
 
-    Coloring: the 13-point stencil couples (j, i) to (j, i+-2), (j+-2, i)
-    and (j+-2, i+-2), all of which PRESERVE the (j+i) parity -- so classic
-    red-black would race.  A 3-coloring (j+i) % 3 separates every stencil
-    offset (all offsets change j+i by +-1 or +-2, never +-3), hence
-    ``color`` ranges over 0..2 and the wrapper launches three passes.
+    Coloring: the stencil couples axial neighbours at distances one and two,
+    first diagonals, and ``(+/-2, +/-2)`` neighbours.  The previous
+    ``(j+i) % 3`` scheme assigned ``(j+2, i-2)`` the same color as ``(j,i)``.
+    ``(j + 2*i) % 5`` gives every possible non-zero stencil offset a non-zero
+    color difference, so one kernel launch cannot read a point being updated
+    by another thread in that launch.
 
     Parameters
     ----------
@@ -738,7 +810,7 @@ def _sor_2d_mc_bih(S, A, B, C, D, E, F, G, H, I, J, yc, xc, bcx_periodic,
     undef : float
         Undefined value (skipped points).
     color : int
-        0, 1 or 2: update points with (j+i) % 3 == color.
+        0 through 4: update points with ``(j + 2*i) % 5 == color``.
     """
     j, i = cuda.grid(2)
 
@@ -753,7 +825,7 @@ def _sor_2d_mc_bih(S, A, B, C, D, E, F, G, H, I, J, yc, xc, bcx_periodic,
         if i < 2 or i >= xc - 2:
             return
 
-    if (j + i) % 3 != color:
+    if (j + 2 * i) % 5 != color:
         return
 
     # Periodic wrapping for x-neighbours (up to +-2 cells)
@@ -808,41 +880,53 @@ def _sor_2d_mc_bih(S, A, B, C, D, E, F, G, H, I, J, yc, xc, bcx_periodic,
              -(D[j, i] * ratioSqr + F[j, i]) * 2.0 * delxSqr +
              I[j, i] * delxSSr)
     if denom != 0.0:
-        S[j, i] += temp * (-optArg) / denom
+        delta = temp * (-optArg) / denom
+        if track_residual:
+            cuda.atomic.max(metric, 0, abs(delta))
+            cuda.atomic.max(metric, 1,
+                            max(abs(S[j, i]), abs(S[j, i] + delta)))
+        S[j, i] += delta
 
 
 @cuda.jit
-def _extend_y_boundary_2d_bih(S, yc, xc, undef, bcx_periodic):
+def _extend_y_boundary_2d_bih(S, yc, xc, undef, bcx_periodic,
+                              anchor_side, anchor_idx):
     """Biharmonic extend BC: copy the 2-cell y boundary (rows 0,1 / yc-2,yc-1).
 
     Mirrors the CPU kernel: with periodic x, S[0] takes the old S[1];
     otherwise both boundary rows take S[2].  Non-periodic x skips the
-    corner columns (handled by the x kernel).
+    corner columns (handled by the x kernel).  The gauge-anchor column
+    keeps its OUTER row pinned (skipped copy); the inner boundary row
+    (S[1] / S[yc-2]) still extends.
     """
     i = cuda.grid(1)
     if i >= xc:
         return
-    if not bcx_periodic and (i < 1 or i >= xc - 1):
+    if not bcx_periodic and (i < 2 or i >= xc - 2):
         return  # corners handled by the x kernel
     if S[2, i] != undef:
-        if bcx_periodic:
-            S[0, i] = S[1, i]
-        else:
-            S[0, i] = S[2, i]
+        if not (anchor_side == 0 and i == anchor_idx):
+            if bcx_periodic:
+                S[0, i] = S[1, i]
+            else:
+                S[0, i] = S[2, i]
         S[1, i] = S[2, i]
     if S[yc - 3, i] != undef:
-        S[yc - 1, i] = S[yc - 3, i]
+        if not (anchor_side == 1 and i == anchor_idx):
+            S[yc - 1, i] = S[yc - 3, i]
         S[yc - 2, i] = S[yc - 3, i]
 
 
 @cuda.jit
-def _extend_x_boundary_2d_bih(S, yc, xc, undef):
+def _extend_x_boundary_2d_bih(S, yc, xc, undef, bcy_extend,
+                              anchor_side, anchor_idx):
     """Biharmonic extend BC: copy the 2-cell x boundary (+ 2x2 corners).
 
     Mirrors the CPU kernel's non-periodic branch.  NOTE the corner blocks
     span TWO rows (0,1 and yc-2,yc-1), so the interior-row branch must
     start at j == 2: otherwise threads j == 1 / j == yc-2 would race with
-    the corner threads on row 1 / row yc-2.
+    the corner threads on row 1 / row yc-2.  The gauge-anchor row keeps
+    its OUTER column pinned (skipped copy).
     """
     j = cuda.grid(1)
     if j >= yc:
@@ -850,12 +934,16 @@ def _extend_x_boundary_2d_bih(S, yc, xc, undef):
     if 2 <= j < yc - 2:
         # interior rows: left and right 2-cell edges
         if S[j, 2] != undef:
-            S[j, 0] = S[j, 2]
+            if not (anchor_side == 2 and j == anchor_idx):
+                S[j, 0] = S[j, 2]
             S[j, 1] = S[j, 2]
         if S[j, xc - 3] != undef:
-            S[j, xc - 1] = S[j, xc - 3]
+            if not (anchor_side == 3 and j == anchor_idx):
+                S[j, xc - 1] = S[j, xc - 3]
             S[j, xc - 2] = S[j, xc - 3]
     elif j == 0:
+        if not bcy_extend:
+            return
         # top 2x2 corners from the (2, 2) / (2, xc-3) diagonal values
         if S[2, 2] != undef:
             S[0, 0] = S[2, 2]
@@ -868,6 +956,8 @@ def _extend_x_boundary_2d_bih(S, yc, xc, undef):
             S[0, xc - 2] = S[2, xc - 3]
             S[1, xc - 2] = S[2, xc - 3]
     elif j == yc - 1:
+        if not bcy_extend:
+            return
         # bottom 2x2 corners from the (yc-3, 2) / (yc-3, xc-3) values
         if S[yc - 3, 2] != undef:
             S[yc - 1, 0] = S[yc - 3, 2]
@@ -879,6 +969,42 @@ def _extend_x_boundary_2d_bih(S, yc, xc, undef):
             S[yc - 2, xc - 1] = S[yc - 3, xc - 3]
             S[yc - 1, xc - 2] = S[yc - 3, xc - 3]
             S[yc - 2, xc - 2] = S[yc - 3, xc - 3]
+
+
+def _find_boundary_anchor_2d_host(F, undef, allow_we):
+    """Host-side BOUNDARY gauge-anchor lookup (mirrors
+    cpus._find_boundary_anchor_2d).
+
+    Returns (side, idx): side 0=N (S[0, idx]), 1=S (S[yc-1, idx]),
+    2=W (S[idx, 0]), 3=E (S[idx, xc-1]); (-1, -1) if none.  The anchor
+    is a BOUNDARY point whose extend-copy is skipped, so it keeps its
+    initial (uploaded) value -- a Dirichlet gauge that removes the
+    constant null space of singular extend systems while every interior
+    point keeps updating normally.
+    """
+    valid_n = F[1, 1:-1] != undef
+    if valid_n.any():
+        return 0, int(np.argmax(valid_n)) + 1
+    valid_s = F[-2, 1:-1] != undef
+    if valid_s.any():
+        return 1, int(np.argmax(valid_s)) + 1
+    if allow_we:
+        valid_w = F[1:-1, 1] != undef
+        if valid_w.any():
+            return 2, int(np.argmax(valid_w)) + 1
+        valid_e = F[1:-1, -2] != undef
+        if valid_e.any():
+            return 3, int(np.argmax(valid_e)) + 1
+    return -1, -1
+
+
+def _find_boundary_anchor_1d_host(F, undef):
+    """1D counterpart: 0 = pin S[0], 1 = pin S[-1], -1 = none."""
+    if F[1] != undef:
+        return 0
+    if F[-2] != undef:
+        return 1
+    return -1
 
 
 # ---------------------------------------------------------------------------
@@ -896,7 +1022,13 @@ def ensure_context():
     (``core._make_kernel`` does it when dispatching to GPU) before handing
     GPU tasks to dask.
     """
-    cuda.get_current_device()
+    # ``get_current_device`` is unavailable under Numba's CUDA simulator;
+    # ``current_context`` still forces/validates context creation there.
+    get_device = getattr(cuda, 'get_current_device', None)
+    if get_device is not None:
+        get_device()
+    else:
+        cuda.current_context()
 
 
 def _auto_bsize_1d(n):
@@ -913,6 +1045,36 @@ def _auto_bsize_1d(n):
     if n < 512:
         return 128
     return 256
+
+
+def _has_active_coefficient(*coefficients):
+    """Return whether any host coefficient array contains a non-zero value.
+
+    Mixed-derivative coefficients determine the dependency graph of the 2-D
+    stencil.  This inexpensive host-side check lets the common five-point
+    case retain two-color red-black SOR while selecting four colors whenever
+    diagonal neighbours are actually coupled.
+    """
+    return any(np.any(np.asarray(coef) != 0) for coef in coefficients)
+
+
+def _validate_periodic_x_coloring(xc, BCx, n_color):
+    """Reject periodic grids incompatible with the selected linear coloring.
+
+    Wrapping must preserve the color assigned to a logical column.  Parity
+    colorings therefore require an even x extent; the biharmonic five-color
+    mapping requires an extent divisible by five.  Without this check the
+    seam can connect two points updated by the same kernel launch.
+    """
+    if BCx != 'periodic':
+        return
+    period = 5 if n_color == 5 else 2
+    if xc % period != 0:
+        raise ValueError(
+            f"GPU {n_color}-color SOR with periodic x requires the x grid "
+            f"length to be divisible by {period}; got {xc}.  Use a compatible "
+            "grid size or the CPU backend."
+        )
 
 
 # Max number of GPU solves running concurrently within one process.
@@ -991,12 +1153,21 @@ def _evaluate_gpu_norm(norm_sum, norm_count, norm_prev,
 
     overflow = (np.isnan(norm) or norm > 1e100)
 
-    if need_convergence and norm_prev < np.finfo(np.float64).max:
+    if need_convergence and norm == 0:
+        error = 0.0
+    elif need_convergence and norm_prev < np.finfo(np.float64).max:
         error = abs(norm - norm_prev) / norm_prev
     else:
         error = 1.0
 
     return norm, error, overflow
+
+
+def _evaluate_update_metric(max_update, max_value):
+    """Normalize the max SOR correction used as preconditioned residual."""
+    if max_value > np.finfo(np.float64).tiny:
+        return max_update / max_value
+    return max_update
 
 
 def _launch_config_2d(yc, xc, block_2d):
@@ -1044,8 +1215,8 @@ def _launch_config_3d(zc, yc, xc):
 
 
 def _run_sor_3d_loop(d_S, launch_color, blocks, threads,
-                     bcx_periodic, bcy_extend, undef,
-                     d_norm, mxLoop, tolerance):
+                     bcx_periodic, bcx_extend, bcy_extend, undef,
+                     d_norm, d_metric, mxLoop, tolerance, convergence):
     """Host-side Red-Black SOR iteration loop shared by 3D wrappers.
 
     Same structure as :func:`_run_sor_2d_loop`; note the z boundary is
@@ -1072,14 +1243,24 @@ def _run_sor_3d_loop(d_S, launch_color, blocks, threads,
     t3d = (bt_z, bt_h)
 
     while True:
+        next_loop = loop + 1
+        track_residual = (need_convergence and convergence == 1 and
+                          ((next_loop % check_interval == 0) or
+                           next_loop >= mxLoop))
+        if track_residual:
+            d_metric[0] = 0.0
+            d_metric[1] = 0.0
+
         # --- process boundaries (y / x extend; z is fixed) ---
         if bcy_extend:
-            _extend_y_boundary_3d[b3d_y, t3d](d_S, zc, yc, xc, undef)
-            if not bcx_periodic:
-                _extend_x_boundary_3d[b3d_x, t3d](d_S, zc, yc, xc, undef)
+            _extend_y_boundary_3d[b3d_y, t3d](
+                d_S, zc, yc, xc, undef, bcx_periodic)
+        if bcx_extend:
+            _extend_x_boundary_3d[b3d_x, t3d](
+                d_S, zc, yc, xc, undef, bcy_extend)
 
-        launch_color(0)
-        launch_color(1)
+        launch_color(0, track_residual)
+        launch_color(1, track_residual)
 
         loop += 1
 
@@ -1093,8 +1274,14 @@ def _run_sor_3d_loop(d_S, launch_color, blocks, threads,
         _abs_norm_3d[blocks, threads](d_S, undef, d_norm)
         norm_h = d_norm.copy_to_host()
 
-        norm, error, overflow = _evaluate_gpu_norm(
+        norm, norm_error, overflow = _evaluate_gpu_norm(
             norm_h[0], norm_h[1], norm_prev, need_convergence, tolerance)
+
+        if convergence == 1 and need_convergence:
+            metric_h = d_metric.copy_to_host()
+            error = _evaluate_update_metric(metric_h[0], metric_h[1])
+        else:
+            error = norm_error
 
         if overflow:
             break
@@ -1107,18 +1294,19 @@ def _run_sor_3d_loop(d_S, launch_color, blocks, threads,
     return overflow, error, loop
 
 
-def _run_sor_2d_loop(d_S, launch_color, blocks, threads,
-                     bcx_periodic, bcy_extend, undef,
-                     bcount_x, bs1d_x, bcount_y, bs1d_y,
-                     d_norm, mxLoop, tolerance, n_color=2):
-    """Host-side Red-Black SOR iteration loop shared by all 2-D wrappers.
+def _run_sor_2d_loop(d_S, launch_color, launch_boundary, blocks, threads,
+                     undef, d_norm, d_metric, mxLoop, tolerance, convergence,
+                     n_color=2):
+    """Host-side multi-color SOR iteration loop shared by all 2-D wrappers.
 
     ``launch_color(color)`` must launch the SOR kernel for one color on the
-    device arrays already bound inside the closure.  Boundary handling and
-    the sparse convergence check mirror the CPU kernels' while-loop.
-    ``n_color`` is 2 for the 5/9-point stencils (classic red-black) and 3
-    for the 13-point biharmonic stencil, whose (0, +-2) / (+-2, 0) /
-    (+-2, +-2) couplings require a 3-coloring ((j+i) % 3).
+    device arrays already bound inside the closure.  ``launch_boundary()``
+    is called at the top of every iteration and must launch the correct
+    extend kernels (1-row for the 5/9-point stencils, 2-row for the
+    biharmonic stencil, gauge-anchor-aware; no-op unless BCy == 'extend').
+    ``n_color`` is selected from the actual stencil dependency graph: two for
+    five-point operators, four when a mixed derivative adds diagonal
+    neighbours, and a separate scheme for the biharmonic operator.
 
     Returns
     -------
@@ -1135,19 +1323,20 @@ def _run_sor_2d_loop(d_S, launch_color, blocks, threads,
     error = 0.0
 
     while True:
-        # --- process boundaries ---
-        if bcy_extend:
-            _extend_y_boundary[bcount_x, bs1d_x](
-                d_S, d_S.shape[0], d_S.shape[1], undef)
-            if not bcx_periodic:
-                # _extend_x_boundary also handles the four corners, so a
-                # separate 1-block corners kernel is not needed.
-                _extend_x_boundary[bcount_y, bs1d_y](
-                    d_S, d_S.shape[0], d_S.shape[1], undef)
+        next_loop = loop + 1
+        track_residual = (need_convergence and convergence == 1 and
+                          ((next_loop % check_interval == 0) or
+                           next_loop >= mxLoop))
+        if track_residual:
+            d_metric[0] = 0.0
+            d_metric[1] = 0.0
 
-        # --- multi-color SOR update (Red+Black, or 3 colors for biharmonic) ---
+        # --- process boundaries ---
+        launch_boundary()
+
+        # --- one globally synchronized launch per color ---
         for c in range(n_color):
-            launch_color(c)
+            launch_color(c, track_residual)
 
         loop += 1
 
@@ -1162,8 +1351,14 @@ def _run_sor_2d_loop(d_S, launch_color, blocks, threads,
         _abs_norm_2d[blocks, threads](d_S, undef, d_norm)
         norm_h = d_norm.copy_to_host()
 
-        norm, error, overflow = _evaluate_gpu_norm(
+        norm, norm_error, overflow = _evaluate_gpu_norm(
             norm_h[0], norm_h[1], norm_prev, need_convergence, tolerance)
+
+        if convergence == 1 and need_convergence:
+            metric_h = d_metric.copy_to_host()
+            error = _evaluate_update_metric(metric_h[0], metric_h[1])
+        else:
+            error = norm_error
 
         if overflow:
             break
@@ -1183,8 +1378,8 @@ def _run_sor_2d_loop(d_S, launch_color, blocks, threads,
 def invert_standard_2D_gpu(S, A, B, C, F, info,
                            yc, xc, BCy, BCx, delxSqr,
                            ratioQtr, ratioSqr, optArg, undef, flags,
-                           mxLoop, tolerance, block_2d=None):
-    r"""GPU implementation of ``invert_standard_2D`` using Red-Black SOR.
+                           mxLoop, tolerance, convergence=0, block_2d=None):
+    r"""GPU implementation of ``invert_standard_2D`` using multi-color SOR.
 
     Thin wrapper that bounds the number of concurrent GPU solves to
     ``_GPU_MAX_CONCURRENT``: when the input is dask-backed, each
@@ -1197,22 +1392,23 @@ def invert_standard_2D_gpu(S, A, B, C, F, info,
         return _solve_standard_2D_gpu(S, A, B, C, F, info,
                                       yc, xc, BCy, BCx, delxSqr,
                                       ratioQtr, ratioSqr, optArg, undef,
-                                      flags, mxLoop, tolerance,
+                                      flags, mxLoop, tolerance, convergence,
                                       block_2d=block_2d)
 
 
 def _solve_standard_2D_gpu(S, A, B, C, F, info,
                            yc, xc, BCy, BCx, delxSqr,
                            ratioQtr, ratioSqr, optArg, undef, flags,
-                           mxLoop, tolerance, block_2d=None):
-    r"""GPU implementation of ``invert_standard_2D`` using Red-Black SOR.
+                           mxLoop, tolerance, convergence=0, block_2d=None):
+    r"""GPU implementation of ``invert_standard_2D`` using multi-color SOR.
 
     Same signature as :func:`xinvert.cpus.invert_standard_2D` so it can be
     used as a drop-in replacement via ``iParams={'architect': 'gpu'}``.
 
-    The host-side Python code controls the iteration loop; each iteration
-    launches a Red kernel followed by a Black kernel on the GPU, then
-    computes the convergence norm via an atomic-reduction kernel.
+    The host-side Python code controls the iteration loop.  Each iteration
+    launches two color kernels for a five-point stencil or four for a
+    mixed-derivative nine-point stencil, then computes the convergence norm
+    via an atomic-reduction kernel.
 
     Parameters
     ----------
@@ -1245,6 +1441,12 @@ def _solve_standard_2D_gpu(S, A, B, C, F, info,
         None = built-in default ``(16, 16)``.  Set per call via
         ``iParams['gpu_block2d']``.
     """
+    # A non-zero mixed derivative couples diagonal points.  Diagonals have
+    # the same red-black parity, so they require four colors to avoid a data
+    # race within a kernel launch.
+    n_color = 4 if _has_active_coefficient(B) else 2
+    _validate_periodic_x_coloring(xc, BCx, n_color)
+
     # --- transfer to GPU ---
     d_S = cuda.to_device(S)
     d_A = cuda.to_device(A)
@@ -1253,23 +1455,40 @@ def _solve_standard_2D_gpu(S, A, B, C, F, info,
     d_F = cuda.to_device(F)
 
     bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
     bcy_extend = (BCy == 'extend')
 
     blocks, threads, bcount_x, bs1d_x, bcount_y, bs1d_y = \
         _launch_config_2d(yc, xc, block_2d)
 
     d_norm = cuda.device_array(2, dtype=np.float64)
+    d_metric = cuda.device_array(2, dtype=np.float64)
 
-    def launch_color(color):
+    # boundary gauge anchor for singular extend systems (y-extend with
+    # x-extend or x-periodic): ONE boundary point keeps its initial
+    # (uploaded) value; every interior point updates normally.
+    aside, aidx = -1, -1
+    if BCy == 'extend' and BCx != 'fixed':
+        aside, aidx = _find_boundary_anchor_2d_host(F, undef, BCx == 'extend')
+
+    def launch_boundary():
+        if bcy_extend:
+            _extend_y_boundary[bcount_x, bs1d_x](
+                d_S, yc, xc, undef, bcx_periodic, aside, aidx)
+        if bcx_extend:
+            _extend_x_boundary[bcount_y, bs1d_y](
+                d_S, yc, xc, undef, bcy_extend, aside, aidx)
+
+    def launch_color(color, track_residual):
         _sor_2d_rb[blocks, threads](
             d_S, d_A, d_B, d_C, d_F, yc, xc, bcx_periodic,
-            delxSqr, ratioQtr, ratioSqr, optArg, undef, color)
+            delxSqr, ratioQtr, ratioSqr, optArg, undef, color, n_color,
+            d_metric, track_residual)
 
     overflow, error, loop = _run_sor_2d_loop(
-        d_S, launch_color, blocks, threads,
-        bcx_periodic, bcy_extend, undef,
-        bcount_x, bs1d_x, bcount_y, bs1d_y,
-        d_norm, mxLoop, tolerance)
+        d_S, launch_color, launch_boundary, blocks, threads,
+        undef, d_norm, d_metric, mxLoop, tolerance, convergence,
+        n_color=n_color)
 
     # --- copy result back (in-place) ---
     d_S.copy_to_host(S)
@@ -1282,8 +1501,8 @@ def _solve_standard_2D_gpu(S, A, B, C, F, info,
 def invert_standard_2D_full_gpu(S, A, B, C, D, E, F, info,
                                 yc, xc, BCy, BCx, delxSqr,
                                 ratioQtr, ratioSqr, optArg, undef, flags,
-                                mxLoop, tolerance, block_2d=None):
-    r"""GPU implementation of ``invert_standard_2D_full`` using Red-Black SOR.
+                                mxLoop, tolerance, convergence=0, block_2d=None):
+    r"""GPU implementation of ``invert_standard_2D_full`` using multi-color SOR.
 
     Thin wrapper that bounds the number of concurrent GPU solves to
     ``_GPU_MAX_CONCURRENT`` (see :func:`invert_standard_2D_gpu`).
@@ -1292,15 +1511,15 @@ def invert_standard_2D_full_gpu(S, A, B, C, D, E, F, info,
         return _solve_standard_2D_full_gpu(S, A, B, C, D, E, F, info,
                                            yc, xc, BCy, BCx, delxSqr,
                                            ratioQtr, ratioSqr, optArg, undef,
-                                           flags, mxLoop, tolerance,
+                                           flags, mxLoop, tolerance, convergence,
                                            block_2d=block_2d)
 
 
 def _solve_standard_2D_full_gpu(S, A, B, C, D, E, F, info,
                                 yc, xc, BCy, BCx, delxSqr,
                                 ratioQtr, ratioSqr, optArg, undef, flags,
-                                mxLoop, tolerance, block_2d=None):
-    r"""GPU implementation of ``invert_standard_2D_full`` using Red-Black SOR.
+                                mxLoop, tolerance, convergence=0, block_2d=None):
+    r"""GPU implementation of ``invert_standard_2D_full`` using multi-color SOR.
 
     Same signature as :func:`xinvert.cpus.invert_standard_2D_full` so it can
     be used as a drop-in replacement via ``iParams={'architect': 'gpu'}``.
@@ -1311,6 +1530,11 @@ def _solve_standard_2D_full_gpu(S, A, B, C, D, E, F, info,
         Coefficient arrays for the x-flux divergence and the Helmholtz
         (linear) term, same shape as S.
     """
+    # B and C multiply diagonal-neighbour terms; either being active changes
+    # the dependency graph from five-point red-black to four-color.
+    n_color = 4 if _has_active_coefficient(B, C) else 2
+    _validate_periodic_x_coloring(xc, BCx, n_color)
+
     # --- transfer to GPU ---
     d_S = cuda.to_device(S)
     d_A = cuda.to_device(A)
@@ -1321,23 +1545,39 @@ def _solve_standard_2D_full_gpu(S, A, B, C, D, E, F, info,
     d_F = cuda.to_device(F)
 
     bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
     bcy_extend = (BCy == 'extend')
 
     blocks, threads, bcount_x, bs1d_x, bcount_y, bs1d_y = \
         _launch_config_2d(yc, xc, block_2d)
 
     d_norm = cuda.device_array(2, dtype=np.float64)
+    d_metric = cuda.device_array(2, dtype=np.float64)
 
-    def launch_color(color):
+    # boundary gauge anchor for singular extend systems; value stays at
+    # the uploaded initial S (see the standard_2D wrapper).
+    aside, aidx = -1, -1
+    if BCy == 'extend' and BCx != 'fixed':
+        aside, aidx = _find_boundary_anchor_2d_host(F, undef, BCx == 'extend')
+
+    def launch_boundary():
+        if bcy_extend:
+            _extend_y_boundary[bcount_x, bs1d_x](
+                d_S, yc, xc, undef, bcx_periodic, aside, aidx)
+        if bcx_extend:
+            _extend_x_boundary[bcount_y, bs1d_y](
+                d_S, yc, xc, undef, bcy_extend, aside, aidx)
+
+    def launch_color(color, track_residual):
         _sor_2d_rb_full[blocks, threads](
             d_S, d_A, d_B, d_C, d_D, d_E, d_F, yc, xc, bcx_periodic,
-            delxSqr, ratioQtr, ratioSqr, optArg, undef, color)
+            delxSqr, ratioQtr, ratioSqr, optArg, undef, color, n_color,
+            d_metric, track_residual)
 
     overflow, error, loop = _run_sor_2d_loop(
-        d_S, launch_color, blocks, threads,
-        bcx_periodic, bcy_extend, undef,
-        bcount_x, bs1d_x, bcount_y, bs1d_y,
-        d_norm, mxLoop, tolerance)
+        d_S, launch_color, launch_boundary, blocks, threads,
+        undef, d_norm, d_metric, mxLoop, tolerance, convergence,
+        n_color=n_color)
 
     # --- copy result back (in-place) ---
     d_S.copy_to_host(S)
@@ -1351,34 +1591,36 @@ def invert_general_bih_2D_gpu(S, A, B, C, D, E, F, G, H, I, J, info,
                               yc, xc, BCy, BCx, delxSSr, delxTr, delxSqr,
                               ratio, ratioSSr, ratioQtr, ratioSqr,
                               optArg, undef, flags,
-                              mxLoop, tolerance, block_2d=None):
-    r"""GPU implementation of ``invert_general_bih_2D`` using 3-color SOR.
+                              mxLoop, tolerance, convergence=0, block_2d=None):
+    r"""GPU implementation of ``invert_general_bih_2D`` using 5-color SOR.
 
     Thin wrapper that bounds the number of concurrent GPU solves to
     ``_GPU_MAX_CONCURRENT`` (see :func:`invert_standard_2D_gpu`).
 
-    Note: the 13-point biharmonic stencil requires a **3-coloring**
-    ((j+i) % 3) instead of the classic red-black pair, so each iteration
-    launches three color passes.
+    The biharmonic stencil requires five colors instead of the classic
+    red-black pair, so each iteration launches five synchronized passes.
     """
     with _get_gpu_sem():
         return _solve_general_bih_2D_gpu(S, A, B, C, D, E, F, G, H, I, J, info,
                                          yc, xc, BCy, BCx, delxSSr, delxTr,
                                          delxSqr, ratio, ratioSSr, ratioQtr,
                                          ratioSqr, optArg, undef, flags,
-                                         mxLoop, tolerance, block_2d=block_2d)
+                                         mxLoop, tolerance, convergence,
+                                         block_2d=block_2d)
 
 
 def _solve_general_bih_2D_gpu(S, A, B, C, D, E, F, G, H, I, J, info,
                               yc, xc, BCy, BCx, delxSSr, delxTr, delxSqr,
                               ratio, ratioSSr, ratioQtr, ratioSqr,
                               optArg, undef, flags,
-                              mxLoop, tolerance, block_2d=None):
-    r"""GPU implementation of ``invert_general_bih_2D`` using 3-color SOR.
+                              mxLoop, tolerance, convergence=0, block_2d=None):
+    r"""GPU implementation of ``invert_general_bih_2D`` using 5-color SOR.
 
     Same signature as :func:`xinvert.cpus.invert_general_bih_2D` so it can
     be used as a drop-in replacement via ``iParams={'architect': 'gpu'}``.
     """
+    _validate_periodic_x_coloring(xc, BCx, 5)
+
     # --- transfer to GPU ---
     d_S = cuda.to_device(S)
     d_A = cuda.to_device(A)
@@ -1393,26 +1635,41 @@ def _solve_general_bih_2D_gpu(S, A, B, C, D, E, F, G, H, I, J, info,
     d_J = cuda.to_device(J)
 
     bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
     bcy_extend = (BCy == 'extend')
 
     blocks, threads, bcount_x, bs1d_x, bcount_y, bs1d_y = \
         _launch_config_2d(yc, xc, block_2d)
 
     d_norm = cuda.device_array(2, dtype=np.float64)
+    d_metric = cuda.device_array(2, dtype=np.float64)
 
-    def launch_color(color):
+    # NOTE: no gauge anchor for the biharmonic kernel -- the 4th-order
+    # Neumann null space is multi-dimensional and a single pinned point
+    # cannot remove it (see the corresponding note in cpus.py).
+    aside, aidx = -1, -1
+
+    def launch_boundary():
+        # biharmonic extend copies TWO rows/cols; the anchor's outer
+        # row/col copy is skipped so it keeps its initial value
+        if bcy_extend:
+            _extend_y_boundary_2d_bih[bcount_x, bs1d_x](
+                d_S, yc, xc, undef, bcx_periodic, aside, aidx)
+        if bcx_extend:
+            _extend_x_boundary_2d_bih[bcount_y, bs1d_y](
+                d_S, yc, xc, undef, bcy_extend, aside, aidx)
+
+    def launch_color(color, track_residual):
         _sor_2d_mc_bih[blocks, threads](
             d_S, d_A, d_B, d_C, d_D, d_E, d_F, d_G, d_H, d_I, d_J,
             yc, xc, bcx_periodic,
             delxSSr, delxTr, delxSqr,
             ratio, ratioSSr, ratioQtr, ratioSqr,
-            optArg, undef, color)
+            optArg, undef, color, d_metric, track_residual)
 
     overflow, error, loop = _run_sor_2d_loop(
-        d_S, launch_color, blocks, threads,
-        bcx_periodic, bcy_extend, undef,
-        bcount_x, bs1d_x, bcount_y, bs1d_y,
-        d_norm, mxLoop, tolerance, n_color=3)
+        d_S, launch_color, launch_boundary, blocks, threads,
+        undef, d_norm, d_metric, mxLoop, tolerance, convergence, n_color=5)
 
     # --- copy result back (in-place) ---
     d_S.copy_to_host(S)
@@ -1424,7 +1681,7 @@ def _solve_general_bih_2D_gpu(S, A, B, C, D, E, F, G, H, I, J, info,
 
 def invert_standard_1D_gpu(S, A, B, F, info,
                            xc, BCx, delxSqr, optArg, undef, flags,
-                           mxLoop, tolerance, block_2d=None):
+                           mxLoop, tolerance, convergence=0, block_2d=None):
     r"""GPU implementation of ``invert_standard_1D`` using Red-Black SOR.
 
     Thin wrapper that bounds the number of concurrent GPU solves to
@@ -1461,17 +1718,19 @@ def invert_standard_1D_gpu(S, A, B, F, info,
     with _get_gpu_sem():
         return _solve_standard_1D_gpu(S, A, B, F, info,
                                       xc, BCx, delxSqr, optArg, undef, flags,
-                                      mxLoop, tolerance)
+                                      mxLoop, tolerance, convergence)
 
 
 def _solve_standard_1D_gpu(S, A, B, F, info,
                            xc, BCx, delxSqr, optArg, undef, flags,
-                           mxLoop, tolerance):
+                           mxLoop, tolerance, convergence=0):
     r"""GPU implementation of ``invert_standard_1D`` using Red-Black SOR.
 
     Same signature as :func:`xinvert.cpus.invert_standard_1D` so it can be
     used as a drop-in replacement via ``iParams={'architect': 'gpu'}``.
     """
+    _validate_periodic_x_coloring(xc, BCx, 2)
+
     # --- transfer to GPU ---
     d_S = cuda.to_device(np.ascontiguousarray(S))
     d_A = cuda.to_device(np.ascontiguousarray(A))
@@ -1486,6 +1745,14 @@ def _solve_standard_1D_gpu(S, A, B, F, info,
     blocks = max((xc + bs - 1) // bs, 1)
 
     d_norm = cuda.device_array(2, dtype=np.float64)
+    d_metric = cuda.device_array(2, dtype=np.float64)
+
+    # boundary gauge anchor for the singular extend (Neumann at both
+    # ends) system: ONE boundary point keeps its initial (uploaded)
+    # value; all interior points update normally.
+    aside = -1
+    if BCx == 'extend':
+        aside = _find_boundary_anchor_1d_host(F, undef)
 
     check_interval = _compute_check_interval(mxLoop, tolerance)
     need_convergence = (tolerance > 0.0)
@@ -1496,17 +1763,25 @@ def _solve_standard_1D_gpu(S, A, B, F, info,
     error = 0.0
 
     while True:
+        next_loop = loop + 1
+        track_residual = (need_convergence and convergence == 1 and
+                          ((next_loop % check_interval == 0) or
+                           next_loop >= mxLoop))
+        if track_residual:
+            d_metric[0] = 0.0
+            d_metric[1] = 0.0
+
         # --- process boundaries ---
         if bcx_extend:
-            _extend_boundary_1d[1, 1](d_S, xc, undef)
+            _extend_boundary_1d[1, 1](d_S, xc, undef, aside)
 
         # --- Red + Black SOR update ---
         _sor_1d_rb[blocks, bs](
             d_S, d_A, d_B, d_F, xc, bcx_periodic,
-            delxSqr, optArg, undef, 0)
+            delxSqr, optArg, undef, 0, d_metric, track_residual)
         _sor_1d_rb[blocks, bs](
             d_S, d_A, d_B, d_F, xc, bcx_periodic,
-            delxSqr, optArg, undef, 1)
+            delxSqr, optArg, undef, 1, d_metric, track_residual)
 
         loop += 1
 
@@ -1521,8 +1796,14 @@ def _solve_standard_1D_gpu(S, A, B, F, info,
         _abs_norm_1d[blocks, bs](d_S, undef, d_norm)
         norm_h = d_norm.copy_to_host()
 
-        norm, error, overflow = _evaluate_gpu_norm(
+        norm, norm_error, overflow = _evaluate_gpu_norm(
             norm_h[0], norm_h[1], norm_prev, need_convergence, tolerance)
+
+        if convergence == 1 and need_convergence:
+            metric_h = d_metric.copy_to_host()
+            error = _evaluate_update_metric(metric_h[0], metric_h[1])
+        else:
+            error = norm_error
 
         if overflow:
             break
@@ -1543,7 +1824,7 @@ def _solve_standard_1D_gpu(S, A, B, F, info,
 def invert_standard_3D_gpu(S, A, B, C, F, info,
                            zc, yc, xc, BCz, BCy, BCx, delxSqr,
                            ratio2Sqr, ratio1Sqr, optArg, undef, flags,
-                           mxLoop, tolerance, block_2d=None):
+                           mxLoop, tolerance, convergence=0, block_2d=None):
     r"""GPU implementation of ``invert_standard_3D`` using Red-Black SOR.
 
     Thin wrapper that bounds the number of concurrent GPU solves to
@@ -1582,18 +1863,20 @@ def invert_standard_3D_gpu(S, A, B, C, F, info,
         return _solve_standard_3D_gpu(S, A, B, C, F, info,
                                       zc, yc, xc, BCz, BCy, BCx, delxSqr,
                                       ratio2Sqr, ratio1Sqr, optArg, undef,
-                                      flags, mxLoop, tolerance)
+                                      flags, mxLoop, tolerance, convergence)
 
 
 def _solve_standard_3D_gpu(S, A, B, C, F, info,
                            zc, yc, xc, BCz, BCy, BCx, delxSqr,
                            ratio2Sqr, ratio1Sqr, optArg, undef, flags,
-                           mxLoop, tolerance):
+                           mxLoop, tolerance, convergence=0):
     r"""GPU implementation of ``invert_standard_3D`` using Red-Black SOR.
 
     Same signature as :func:`xinvert.cpus.invert_standard_3D` so it can be
     used as a drop-in replacement via ``iParams={'architect': 'gpu'}``.
     """
+    _validate_periodic_x_coloring(xc, BCx, 2)
+
     # --- transfer to GPU ---
     d_S = cuda.to_device(S)
     d_A = cuda.to_device(A)
@@ -1602,21 +1885,24 @@ def _solve_standard_3D_gpu(S, A, B, C, F, info,
     d_F = cuda.to_device(F)
 
     bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
     bcy_extend = (BCy == 'extend')
 
     blocks, threads = _launch_config_3d(zc, yc, xc)
 
     d_norm = cuda.device_array(2, dtype=np.float64)
+    d_metric = cuda.device_array(2, dtype=np.float64)
 
-    def launch_color(color):
+    def launch_color(color, track_residual):
         _sor_3d_rb[blocks, threads](
             d_S, d_A, d_B, d_C, d_F, zc, yc, xc, bcx_periodic,
-            delxSqr, ratio2Sqr, ratio1Sqr, optArg, undef, color)
+            delxSqr, ratio2Sqr, ratio1Sqr, optArg, undef, color,
+            d_metric, track_residual)
 
     overflow, error, loop = _run_sor_3d_loop(
         d_S, launch_color, blocks, threads,
-        bcx_periodic, bcy_extend, undef,
-        d_norm, mxLoop, tolerance)
+        bcx_periodic, bcx_extend, bcy_extend, undef,
+        d_norm, d_metric, mxLoop, tolerance, convergence)
 
     # --- copy result back (in-place) ---
     d_S.copy_to_host(S)
@@ -1630,7 +1916,7 @@ def invert_general_3D_gpu(S, A, B, C, D, E, F, G, H, info,
                           zc, yc, xc, delx, BCz, BCy, BCx, delxSqr,
                           ratio2, ratio1, ratio2Sqr, ratio1Sqr,
                           optArg, undef, flags,
-                          mxLoop, tolerance, block_2d=None):
+                          mxLoop, tolerance, convergence=0, block_2d=None):
     r"""GPU implementation of ``invert_general_3D`` using Red-Black SOR.
 
     Thin wrapper that bounds the number of concurrent GPU solves to
@@ -1640,19 +1926,22 @@ def invert_general_3D_gpu(S, A, B, C, D, E, F, G, H, info,
         return _solve_general_3D_gpu(S, A, B, C, D, E, F, G, H, info,
                                      zc, yc, xc, delx, BCz, BCy, BCx, delxSqr,
                                      ratio2, ratio1, ratio2Sqr, ratio1Sqr,
-                                     optArg, undef, flags, mxLoop, tolerance)
+                                     optArg, undef, flags, mxLoop, tolerance,
+                                     convergence)
 
 
 def _solve_general_3D_gpu(S, A, B, C, D, E, F, G, H, info,
                           zc, yc, xc, delx, BCz, BCy, BCx, delxSqr,
                           ratio2, ratio1, ratio2Sqr, ratio1Sqr,
                           optArg, undef, flags,
-                          mxLoop, tolerance):
+                          mxLoop, tolerance, convergence=0):
     r"""GPU implementation of ``invert_general_3D`` using Red-Black SOR.
 
     Same signature as :func:`xinvert.cpus.invert_general_3D` so it can be
     used as a drop-in replacement via ``iParams={'architect': 'gpu'}``.
     """
+    _validate_periodic_x_coloring(xc, BCx, 2)
+
     # --- transfer to GPU ---
     d_S = cuda.to_device(S)
     d_A = cuda.to_device(A)
@@ -1665,23 +1954,25 @@ def _solve_general_3D_gpu(S, A, B, C, D, E, F, G, H, info,
     d_H = cuda.to_device(H)
 
     bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
     bcy_extend = (BCy == 'extend')
 
     blocks, threads = _launch_config_3d(zc, yc, xc)
 
     d_norm = cuda.device_array(2, dtype=np.float64)
+    d_metric = cuda.device_array(2, dtype=np.float64)
 
-    def launch_color(color):
+    def launch_color(color, track_residual):
         _sor_3d_rb_general[blocks, threads](
             d_S, d_A, d_B, d_C, d_D, d_E, d_F, d_G, d_H,
             zc, yc, xc, bcx_periodic,
             delxSqr, delx, ratio2, ratio1, ratio2Sqr, ratio1Sqr,
-            optArg, undef, color)
+            optArg, undef, color, d_metric, track_residual)
 
     overflow, error, loop = _run_sor_3d_loop(
         d_S, launch_color, blocks, threads,
-        bcx_periodic, bcy_extend, undef,
-        d_norm, mxLoop, tolerance)
+        bcx_periodic, bcx_extend, bcy_extend, undef,
+        d_norm, d_metric, mxLoop, tolerance, convergence)
 
     # --- copy result back (in-place) ---
     d_S.copy_to_host(S)
@@ -1694,8 +1985,8 @@ def _solve_general_3D_gpu(S, A, B, C, D, E, F, G, H, info,
 def invert_general_2D_gpu(S, A, B, C, D, E, F, G, info,
                           yc, xc, delx, BCy, BCx, delxSqr,
                           ratio, ratioQtr, ratioSqr, optArg, undef, flags,
-                          mxLoop, tolerance, block_2d=None):
-    r"""GPU implementation of ``invert_general_2D`` using Red-Black SOR.
+                          mxLoop, tolerance, convergence=0, block_2d=None):
+    r"""GPU implementation of ``invert_general_2D`` using multi-color SOR.
 
     Thin wrapper that bounds the number of concurrent GPU solves to
     ``_GPU_MAX_CONCURRENT`` (see :func:`invert_standard_2D_gpu`).
@@ -1704,15 +1995,15 @@ def invert_general_2D_gpu(S, A, B, C, D, E, F, G, info,
         return _solve_general_2D_gpu(S, A, B, C, D, E, F, G, info,
                                      yc, xc, delx, BCy, BCx, delxSqr,
                                      ratio, ratioQtr, ratioSqr, optArg, undef,
-                                     flags, mxLoop, tolerance,
+                                     flags, mxLoop, tolerance, convergence,
                                      block_2d=block_2d)
 
 
 def _solve_general_2D_gpu(S, A, B, C, D, E, F, G, info,
                           yc, xc, delx, BCy, BCx, delxSqr,
                           ratio, ratioQtr, ratioSqr, optArg, undef, flags,
-                          mxLoop, tolerance, block_2d=None):
-    r"""GPU implementation of ``invert_general_2D`` using Red-Black SOR.
+                          mxLoop, tolerance, convergence=0, block_2d=None):
+    r"""GPU implementation of ``invert_general_2D`` using multi-color SOR.
 
     Same signature as :func:`xinvert.cpus.invert_general_2D` so it can be
     used as a drop-in replacement via ``iParams={'architect': 'gpu'}``.
@@ -1720,6 +2011,9 @@ def _solve_general_2D_gpu(S, A, B, C, D, E, F, G, info,
     Parameters are as in :func:`_solve_standard_2D_gpu`, for the
     non-divergence (point) form with first-derivative terms.
     """
+    n_color = 4 if _has_active_coefficient(B) else 2
+    _validate_periodic_x_coloring(xc, BCx, n_color)
+
     # --- transfer to GPU ---
     d_S = cuda.to_device(S)
     d_A = cuda.to_device(A)
@@ -1731,23 +2025,39 @@ def _solve_general_2D_gpu(S, A, B, C, D, E, F, G, info,
     d_G = cuda.to_device(G)
 
     bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
     bcy_extend = (BCy == 'extend')
 
     blocks, threads, bcount_x, bs1d_x, bcount_y, bs1d_y = \
         _launch_config_2d(yc, xc, block_2d)
 
     d_norm = cuda.device_array(2, dtype=np.float64)
+    d_metric = cuda.device_array(2, dtype=np.float64)
 
-    def launch_color(color):
+    # boundary gauge anchor for singular extend systems; value stays at
+    # the uploaded initial S (see the standard_2D wrapper).
+    aside, aidx = -1, -1
+    if BCy == 'extend' and BCx != 'fixed':
+        aside, aidx = _find_boundary_anchor_2d_host(G, undef, BCx == 'extend')
+
+    def launch_boundary():
+        if bcy_extend:
+            _extend_y_boundary[bcount_x, bs1d_x](
+                d_S, yc, xc, undef, bcx_periodic, aside, aidx)
+        if bcx_extend:
+            _extend_x_boundary[bcount_y, bs1d_y](
+                d_S, yc, xc, undef, bcy_extend, aside, aidx)
+
+    def launch_color(color, track_residual):
         _sor_2d_rb_general[blocks, threads](
             d_S, d_A, d_B, d_C, d_D, d_E, d_F, d_G, yc, xc, bcx_periodic,
-            delxSqr, delx, ratio, ratioQtr, ratioSqr, optArg, undef, color)
+            delxSqr, delx, ratio, ratioQtr, ratioSqr, optArg, undef, color,
+            n_color, d_metric, track_residual)
 
     overflow, error, loop = _run_sor_2d_loop(
-        d_S, launch_color, blocks, threads,
-        bcx_periodic, bcy_extend, undef,
-        bcount_x, bs1d_x, bcount_y, bs1d_y,
-        d_norm, mxLoop, tolerance)
+        d_S, launch_color, launch_boundary, blocks, threads,
+        undef, d_norm, d_metric, mxLoop, tolerance, convergence,
+        n_color=n_color)
 
     # --- copy result back (in-place) ---
     d_S.copy_to_host(S)

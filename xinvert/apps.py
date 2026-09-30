@@ -9,10 +9,13 @@ model parameters and call the SOR solvers in :mod:`xinvert.core`.
 import numpy as np
 import xarray as xr
 import copy
+import warnings
 from .utils import loop_noncore
 from .core import inv_standard3D, inv_standard2D, inv_standard1D,\
                   inv_general3D, inv_general2D,\
-                  inv_general2D_bih, inv_standard2D_full
+                  inv_general2D_bih, inv_standard2D_full,\
+                  _validate_inversion_bcs, _validate_inversion_dims,\
+                  _validate_solver_controls, _normalize_scalar_bcs
 
 
 # default undefined value
@@ -25,10 +28,22 @@ default_iParams = {
     'BCs'      : ['fixed', 'fixed'],
     # undefined value in the array
     'undef'    : np.nan,
+    # compute precision of the solver (both coefficients and solution
+    # arrays are allocated natively in this dtype).  float32 halves the
+    # memory footprint and roughly doubles GPU throughput; use
+    # 'float64' when accuracy matters more than speed.
+    'dtype'    : np.float32,
     # max loop count, exceed which the iteration is stopped
     'mxLoop'   : 5000,
     # tolerance, smaller than which the iteration is stopped
     'tolerance': 1e-8,
+    # convergence metric.  'norm' preserves the historical relative change
+    # of mean(abs(solution)); 'residual' uses the maximum diagonally
+    # preconditioned equation residual produced by an SOR sweep.
+    'convergence': 'norm',
+    # Opt in to ``(solution, diagnostics)`` without changing the historical
+    # DataArray-only return value.
+    'return_diagnostics': False,
     # optimal argument for SOR, 1 stand for G-S iteration.
     # This argument will be automatically updated according to grids
     'optArg'   : None,
@@ -75,7 +90,7 @@ default_mParams = {
 Application functions
 """
 def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
-                   mParams=default_mParams, iParams=default_iParams):
+                   mParams=None, iParams=None):
     r"""Inverting the Poisson equation.
 
     The Poisson equation is given as:
@@ -95,7 +110,7 @@ def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
     coords: {'lat-lon', 'z-lat', 'z-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribed inital condition/guess (IC) and boundary conditions (BC).
+        Prescribed initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Model parameters.  None for the Poisson model.
     iParams: dict, optional
@@ -112,7 +127,7 @@ def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
 
 
 def invert_RefState(PV, dims, coords='z-lat', icbc=None,
-                    mParams=default_mParams, iParams=default_iParams):
+                    mParams=None, iParams=None):
     r"""PV inversion for a balanced symmetric vortex.
 
     The balanced symmetric vortex equation is given as:
@@ -136,7 +151,7 @@ def invert_RefState(PV, dims, coords='z-lat', icbc=None,
     coords: {'z-lat', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict
         Parameters required for this model are:
 
@@ -156,7 +171,7 @@ def invert_RefState(PV, dims, coords='z-lat', icbc=None,
 
 
 def invert_GeoAdjustment(PV0, dims, coords='lat', icbc=None,
-                         mParams=default_mParams, iParams=default_iParams):
+                         mParams=None, iParams=None):
     r"""(PV) inversion for a geostrophic adjustment model.
 
     The balanced free surface satisfies:
@@ -186,7 +201,7 @@ def invert_GeoAdjustment(PV0, dims, coords='lat', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict
         No explicit model parameters are required here.
     iParams: dict, optional
@@ -202,7 +217,7 @@ def invert_GeoAdjustment(PV0, dims, coords='lat', icbc=None,
 
 
 def invert_RefStateSWM(Q, dims, coords='lat', icbc=None,
-                       mParams=default_mParams, iParams=default_iParams):
+                       mParams=None, iParams=None):
     r"""(PV) inversion for a steady state of shallow-water model.
 
     The balanced symmetric vortex equation is given as:
@@ -234,7 +249,7 @@ def invert_RefStateSWM(Q, dims, coords='lat', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict
         Parameters required for this model are:
 
@@ -254,7 +269,7 @@ def invert_RefStateSWM(Q, dims, coords='lat', icbc=None,
 
 
 def invert_PV2D(PV, dims, coords='z-lat', icbc=None,
-                mParams=default_mParams, iParams=default_iParams):
+                mParams=None, iParams=None):
     r"""Inverting the QG PV equation.
 
     The QG PV equation is given as:
@@ -286,7 +301,7 @@ def invert_PV2D(PV, dims, coords='z-lat', icbc=None,
     coords: {'z-lat', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
@@ -308,7 +323,7 @@ def invert_PV2D(PV, dims, coords='z-lat', icbc=None,
 
 
 def invert_Eliassen(F, dims, coords='z-lat', icbc=None,
-                    mParams=default_mParams, iParams=default_iParams):
+                    mParams=None, iParams=None):
     r"""Inverting the Eliassen balanced vortex model.
 
     The Eliassen model is given as:
@@ -336,7 +351,7 @@ def invert_Eliassen(F, dims, coords='z-lat', icbc=None,
     coords: {'z-lat', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict
         Parameters required for this model are:
 
@@ -357,7 +372,7 @@ def invert_Eliassen(F, dims, coords='z-lat', icbc=None,
 
 
 def invert_GillMatsuno(Q, dims, coords='lat-lon', icbc=None, 
-                       mParams=default_mParams, iParams=default_iParams):
+                       mParams=None, iParams=None):
     r"""Inverting Gill-Matsuno model.
 
     The Gill-Matsuno model is given as:
@@ -382,7 +397,7 @@ def invert_GillMatsuno(Q, dims, coords='lat-lon', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
@@ -405,7 +420,7 @@ def invert_GillMatsuno(Q, dims, coords='lat-lon', icbc=None,
 
 
 def invert_GillMatsunoFlux(Q, dims, coords='lat-lon', icbc=None, 
-                       mParams=default_mParams, iParams=default_iParams):
+                       mParams=None, iParams=None):
     r"""Inverting Gill-Matsuno model (flux-form discretization).
 
     The Gill-Matsuno model is given as:
@@ -430,7 +445,7 @@ def invert_GillMatsunoFlux(Q, dims, coords='lat-lon', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
@@ -453,7 +468,7 @@ def invert_GillMatsunoFlux(Q, dims, coords='lat-lon', icbc=None,
 
 
 def invert_Stommel(curl, dims, coords='lat-lon', icbc=None,
-                   mParams=default_mParams, iParams=default_iParams):
+                   mParams=None, iParams=None):
     r"""Inverting Stommel model.
 
     The Stommel model is given as:
@@ -476,7 +491,7 @@ def invert_Stommel(curl, dims, coords='lat-lon', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
@@ -499,7 +514,7 @@ def invert_Stommel(curl, dims, coords='lat-lon', icbc=None,
 
 
 def invert_StommelFlux(curl, dims, coords='lat-lon', icbc=None,
-                   mParams=default_mParams, iParams=default_iParams):
+                   mParams=None, iParams=None):
     r"""Inverting Stommel model (flux-form discretization).
 
     The Stommel model is given as:
@@ -522,7 +537,7 @@ def invert_StommelFlux(curl, dims, coords='lat-lon', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
@@ -545,7 +560,7 @@ def invert_StommelFlux(curl, dims, coords='lat-lon', icbc=None,
 
 
 def invert_StommelMunk(curl, dims, coords='lat-lon', icbc=None,
-                       mParams=default_mParams, iParams=default_iParams):
+                       mParams=None, iParams=None):
     r"""Inverting Stommel-Munk model.
 
     The Stommel-Munk model is given as:
@@ -569,7 +584,7 @@ def invert_StommelMunk(curl, dims, coords='lat-lon', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
@@ -593,7 +608,7 @@ def invert_StommelMunk(curl, dims, coords='lat-lon', icbc=None,
 
 
 def invert_StommelArons(Q, dims, coords='lat-lon', icbc=None, 
-                        mParams=default_mParams, iParams=default_iParams):
+                        mParams=None, iParams=None):
     r"""Inverting Stommel-Arons model.
 
     The Stommel-Arons model is given as:
@@ -618,7 +633,7 @@ def invert_StommelArons(Q, dims, coords='lat-lon', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
@@ -640,7 +655,7 @@ def invert_StommelArons(Q, dims, coords='lat-lon', icbc=None,
 
 
 def invert_geostrophic(lapPhi, dims, coords='lat-lon', icbc=None,
-                       mParams=default_mParams, iParams=default_iParams):
+                       mParams=None, iParams=None):
     r"""Inverting the geostrophic balance model.
 
     The geostrophic balance model is given as:
@@ -663,7 +678,7 @@ def invert_geostrophic(lapPhi, dims, coords='lat-lon', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
@@ -684,7 +699,7 @@ def invert_geostrophic(lapPhi, dims, coords='lat-lon', icbc=None,
 
 
 def invert_BrethertonHaidvogel(h, dims, coords='cartesian', icbc=None,
-                               mParams=default_mParams, iParams=default_iParams):
+                               mParams=None, iParams=None):
     r"""Inverting the Bretherton-Haiduogel model.
 
     The Bretherton-Haiduogel model is given as:
@@ -706,7 +721,7 @@ def invert_BrethertonHaidvogel(h, dims, coords='cartesian', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
@@ -729,7 +744,7 @@ def invert_BrethertonHaidvogel(h, dims, coords='cartesian', icbc=None,
 
 
 def invert_Fofonoff(F, dims, coords='cartesian', icbc=None,
-                    mParams=default_mParams, iParams=default_iParams):
+                    mParams=None, iParams=None):
     r"""Inverting the Fofonoff (1954) model.
 
     The equation is given as:
@@ -751,7 +766,7 @@ def invert_Fofonoff(F, dims, coords='cartesian', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribed inital condition/guess (IC) and boundary conditions (BC).
+        Prescribed initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
@@ -774,7 +789,7 @@ def invert_Fofonoff(F, dims, coords='cartesian', icbc=None,
 
 
 def invert_omega(F, dims, coords='lat-lon', icbc=None,
-                 mParams=default_mParams, iParams=default_iParams):
+                 mParams=None, iParams=None):
     r"""Inverting the omega equation.
 
     The omega equation is given as:
@@ -806,12 +821,12 @@ def invert_omega(F, dims, coords='lat-lon', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
-		* f0: Coriolis parameter at south BC on beta plane.
-		* beta: Meridional derivative of Coriolis parameter.
+        * f0: Coriolis parameter at south BC on beta plane.
+        * beta: Meridional derivative of Coriolis parameter.
         * N2: Buoyancy frequency = g/theta0 * dtheta/dz = -R*pi/p * dtheta/dp.
 
     iParams: dict, optional
@@ -822,15 +837,16 @@ def invert_omega(F, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results (vertical velocity) of the SOR inversion.
     """
-    if isinstance(mParams['N2'], xr.DataArray):
-        if not np.isfinite(mParams['N2'][1:]).all():
-            raise Exception('inifinite stratification coefficient A')
+    N2 = None if mParams is None else mParams.get('N2')
+    if isinstance(N2, xr.DataArray):
+        if not np.isfinite(N2[1:]).all():
+            raise ValueError('infinite stratification coefficient N2')
         
-        if np.isnan(mParams['N2'][1:]).any():
-            raise Exception('nan in coefficient A')
+        if np.isnan(N2[1:]).any():
+            raise ValueError('nan in stratification coefficient N2')
         
-        if (mParams['N2'][1:]<=0).any():
-            raise Exception('unstable stratification in coefficient A')
+        if (N2[1:] <= 0).any():
+            raise ValueError('unstable stratification coefficient N2')
     
     return __template(__coeffs_omega, inv_standard3D, 3, F, dims, coords,
                       icbc, ['f0', 'beta', 'N2', 'g', 'Omega', 'Rearth'],
@@ -838,7 +854,7 @@ def invert_omega(F, dims, coords='lat-lon', icbc=None,
 
 
 def invert_3DOcean(F, dims, coords='lat-lon', icbc=None,
-                   mParams=default_mParams, iParams=default_iParams):
+                   mParams=None, iParams=None):
     r"""Inverting 3D ocean flow.
 
     The 3D ocean flow equation is given as:
@@ -865,15 +881,15 @@ def invert_3DOcean(F, dims, coords='lat-lon', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Parameters required for this model are:
 
-		* f0: Coriolis parameter at south BC on beta plane.
-		* beta: Meridional derivative of Coriolis parameter.
-		* epsilon: Linear damping coefficient for momentum.
+        * f0: Coriolis parameter at south BC on beta plane.
+        * beta: Meridional derivative of Coriolis parameter.
+        * epsilon: Linear damping coefficient for momentum.
         * N2: Buoyancy frequency = g/theta0 * dtheta/dz = -R*pi/p * dtheta/dp.
-        * k:linear damping coefficient for buoyancy
+        * k: Linear damping coefficient for buoyancy.
         
     iParams: dict, optional
         Iteration parameters.
@@ -883,15 +899,16 @@ def invert_3DOcean(F, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results (streamfunction) of the SOR inversion.
     """
-    if isinstance(mParams['N2'], xr.DataArray):
-        if not np.isfinite(mParams['N2'][1:]).all():
-            raise Exception('inifinite stratification coefficient A')
+    N2 = None if mParams is None else mParams.get('N2')
+    if isinstance(N2, xr.DataArray):
+        if not np.isfinite(N2[1:]).all():
+            raise ValueError('infinite stratification coefficient N2')
         
-        if np.isnan(mParams['N2'][1:]).any():
-            raise Exception('nan in coefficient A')
+        if np.isnan(N2[1:]).any():
+            raise ValueError('nan in stratification coefficient N2')
         
-        if (mParams['N2'][1:]<=0).any():
-            raise Exception('unstable stratification in coefficient A')
+        if (N2[1:] <= 0).any():
+            raise ValueError('unstable stratification coefficient N2')
     
     return __template(__coeffs_3DOcean, inv_general3D, 3, F, dims, coords,
                       icbc, ['f0', 'beta', 'epsilon', 'N2', 'k', 'g', 'Omega', 'Rearth'],
@@ -903,7 +920,7 @@ def invert_3DOcean(F, dims, coords='lat-lon', icbc=None,
 Some high-level functions are based on application functions
 """
 def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
-                      mParams=default_mParams, iParams=default_iParams,
+                      mParams=None, iParams=None,
                       loop_per_frame=5, max_frames=30):
     r"""Animate the iteration process.
 
@@ -922,7 +939,7 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
     coords: str, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Model parameters.  None for the Poisson model.
     iParams: dict, optional
@@ -943,13 +960,22 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         len_nc = len_nc + 1
     
     if len_nc != 1:
-        raise Exception('For 2D case, only 2D slice  F is allowed;\n'+
+        raise ValueError('For 2D case, only 2D slice  F is allowed;\n'+
                         'For 3D case, only 3D volume F is allowed.')
     
     app_name = app_name.lower()
-    dimLen = len(dims)
+    if isinstance(dims, str):
+        dimLen = 1
+    elif isinstance(dims, (list, tuple)):
+        dimLen = len(dims)
+    else:
+        raise ValueError(
+            f'dims must be a string, list, or tuple, got {type(dims).__name__}')
+    dims = _validate_inversion_dims(F, dims, dimLen)
     
     iParams = __update(default_iParams, iParams)
+    _validate_inversion_bcs(iParams, dimLen)
+    _validate_solver_controls(iParams)
     
     if   app_name == 'poisson':
         coef_func = __coeffs_Poisson
@@ -1011,7 +1037,7 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         invt_func = inv_standard3D
         validMPs  = ['f0', 'beta', 'N2', 'epsilon', 'k', 'g', 'Omega', 'Rearth']
     else:
-        raise Exception('unsupported problem: '+app_name+', should be one of:\n'+
+        raise ValueError('unsupported problem: '+app_name+', should be one of:\n'+
                         "'Poisson'\n'PV2D'\n'GillMatsuno'\n'Eliassen'\n"+
                         "'geostrophic'\n'StommelMunk'\n'RefState'\n'omega'")
     
@@ -1019,7 +1045,7 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
     
     ######  1. calculating the coefficients  ######
     maskF, initS, coeffs = coef_func(F, dims, coords, mParams, iParams, icbc)
-    
+
     ######  2. calculating the parameters  ######
     if dimLen == 2:
         ps = __cal_params2D(maskF[dims[0]], maskF[dims[1]], coords,
@@ -1028,7 +1054,7 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         ps = __cal_params3D(maskF[dims[0]], maskF[dims[1]], maskF[dims[2]], coords,
                             Rearth=mParams['Rearth'])
     else:
-        raise Exception('dimension length should be one of [2, 3]')
+        raise ValueError('dimension length should be one of [2, 3]')
     
     iParams = __update(ps, iParams)
     
@@ -1076,7 +1102,14 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
 
 
 def invert_MultiGrid(invert_func, *args, ratio=3, gridNo=3, **kwargs):
-    r"""Using multi-grid method to do the inversion (test only now).
+    r"""Use an experimental multi-grid driver for inversion.
+
+    .. warning::
+
+        This function is experimental and is not part of xinvert's stable
+        public API.  Its parameters and numerical workflow may change, and
+        the current implementation has not yet been validated for production
+        research results.
 
     All the `invert_xxx` function can be solved using multi-grid method here.
     
@@ -1091,7 +1124,7 @@ def invert_MultiGrid(invert_func, *args, ratio=3, gridNo=3, **kwargs):
     coords: str, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     mParams: dict, optional
         Model parameters.  None for the Poisson model.
     iParams: dict, optional
@@ -1106,6 +1139,13 @@ def invert_MultiGrid(invert_func, *args, ratio=3, gridNo=3, **kwargs):
     xarray.DataArray
         The result, in which an extra dimension called `iter` will be added.
     """
+    warnings.warn(
+        'invert_MultiGrid() is experimental and not part of the stable API; '
+        'its parameters and numerical workflow may change',
+        UserWarning,
+        stacklevel=2,
+    )
+
     from .utils import coarsen
     
     ratios = [10, 6, 3, 1]
@@ -1115,7 +1155,7 @@ def invert_MultiGrid(invert_func, *args, ratio=3, gridNo=3, **kwargs):
     loops  = [mxLoop*ratio/10 for ratio in ratios]
     
     if 'dims' not in kwargs:
-        raise Exception('kwarg dims= should be provided')
+        raise ValueError('kwarg dims= should be provided')
     
     dims = kwargs['dims']
         
@@ -1152,12 +1192,15 @@ def invert_MultiGrid(invert_func, *args, ratio=3, gridNo=3, **kwargs):
     return o_guess, fs, os
 
 
-def _invert_omega_MG(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
+def _invert_omega_MG(force, S, dims, BCs=None,
                     coords='latlon', f0=None, beta=None,
                     undef=np.nan, mxLoop=5000, tolerance=1e-6,
                     optArg=None, printInfo=True, debug=False,
                     icbc=None, ratio=4, gridNo=3):
     from .utils import coarsen
+
+    if BCs is None:
+        BCs = ['fixed', 'fixed', 'fixed']
     
     ratios = [10, 6, 3, 1]
     loops  = [mxLoop*ratio/30 for ratio in ratios]
@@ -1195,8 +1238,8 @@ def _invert_omega_MG(force, S, dims, BCs=['fixed', 'fixed', 'fixed'],
     return o_guess, fs, os
 
 
-def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
-             vtype='streamfunction', mParams=default_mParams):
+def cal_flow(S, dims, coords='lat-lon', BCs=None,
+             vtype='streamfunction', mParams=None):
     r"""Calculate flow vector using streamfunction or velocity potential.
 
     Parameters
@@ -1207,21 +1250,37 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
         Dimension combination for the inversion e.g., ['lat', 'lon'].
     coords: {'lat-lon', 'z-lat', 'z-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
-    BCs: dict
-        Boundary conditions e.g., ['fixed', 'periodic'] for 2D case.
+    BCs: list of str, optional
+        One boundary condition per dimension, applied to both endpoints,
+        e.g., ['fixed', 'periodic'].  Use ``FiniteDiff`` directly for
+        different boundary conditions at the two endpoints.
     vtype: {'streamfunction', 'velocitypotential', 'GillMatsuno'}, optional
-        Type of the given variable, which determins the returns.
+        Type of the given variable, which determines the returns.
 
     Returns
     -------
     tuple
         Flow vector components.
     """
-    if vtype.lower() not in ['streamfunction', 'velocitypotential', 'gillmatsuno']:
-        raise Exception('unsupported vtype: ' + vtype + ', should be one of:\n'+
+    if BCs is None:
+        BCs = ['fixed', 'fixed']
+
+    dims = _validate_inversion_dims(S, dims, 2)
+    BCs = _normalize_scalar_bcs(
+        BCs, 2, parameter='BCs',
+        valid=('fixed', 'extend', 'reflect', 'periodic'))
+
+    if not isinstance(vtype, str):
+        raise ValueError(f'vtype must be a string, got {type(vtype).__name__}')
+    if not isinstance(coords, str):
+        raise ValueError(f'coords must be a string, got {type(coords).__name__}')
+    vtype = vtype.strip().lower()
+    coords = coords.strip().lower()
+    if vtype not in ['streamfunction', 'velocitypotential', 'gillmatsuno']:
+        raise ValueError('unsupported vtype: ' + vtype + ', should be one of:\n'+
                         "['streamfunction', 'velocitypotential', 'gillmatsuno']")
     
-    if vtype != 'GillMatsuno': # Poisson case
+    if vtype != 'gillmatsuno': # Poisson case
         if vtype == 'streamfunction':
             sf = True
         else:
@@ -1229,7 +1288,7 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
         
         from .finitediffs import FiniteDiff
         
-        if coords.lower() == 'lat-lon':
+        if coords == 'lat-lon':
             dmap = {'Y': dims[0], 'X': dims[1]}
             
             fd = FiniteDiff(dmap, {'Y': (BCs[0], BCs[0]),
@@ -1242,7 +1301,7 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
             else:
                 return grdx, grdy
         
-        elif coords.lower() == 'z-lat':
+        elif coords == 'z-lat':
             dmap = {'Z': dims[0], 'Y': dims[1]}
             
             fd = FiniteDiff(dmap, {'Z': (BCs[0], BCs[0]),
@@ -1261,7 +1320,7 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
             else:
                 return grdy, grdz
             
-        elif coords.lower() == 'z-lon':
+        elif coords == 'z-lon':
             dmap = {'Z': dims[0], 'X': dims[1]}
             
             fd = FiniteDiff(dmap, {'Z': (BCs[0], BCs[0]),
@@ -1274,7 +1333,7 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
             else:
                 return grdx, grdz
             
-        elif coords.lower() == 'cartesian':
+        elif coords == 'cartesian':
             dmap = {'Y': dims[0], 'X': dims[1]}
             
             fd = FiniteDiff(dmap, {'Y': (BCs[0], BCs[0]),
@@ -1288,7 +1347,7 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
                 return grdx, grdy
             
         else:
-            raise Exception('unsupported coords ' + coords +
+            raise ValueError('unsupported coords ' + coords +
                             ', should be [lat-lon, z-lat, z-lon, cartesian]')
     
     else: # GillMatsuno case
@@ -1328,7 +1387,7 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
             c2 = - coef1 * S.differentiate(dims[0]) \
                  + coef2 * S.differentiate(dims[1])
         else:
-            raise Exception('unsupported coords ' + coords +
+            raise ValueError('unsupported coords ' + coords +
                             ', should be [lat-lon, cartesian]')
         
         return c1, c2
@@ -1339,8 +1398,8 @@ def cal_flow(S, dims, coords='lat-lon', BCs=['fixed', 'fixed'],
 Below are the helper methods of these applications
 """
 def __template(coef_func, inv_func, dimLen,
-               F, dims, coords='lat-lon', icbc=None, validParams=[],
-               mParams=default_mParams, iParams=default_iParams):
+               F, dims, coords='lat-lon', icbc=None, validParams=None,
+               mParams=None, iParams=None):
     r"""Template for the whole inverting process.
     
     Parameters
@@ -1359,7 +1418,7 @@ def __template(coef_func, inv_func, dimLen,
     coords: str, optional
         Coordinates in ['lat-lon', 'cartesian'] are supported.
     icbc: xarray.DataArray
-        Prescribe inital condition/guess (IC) and boundary conditions (BC).
+        Prescribe initial condition/guess (IC) and boundary conditions (BC).
     validParams: list of str
         Valid mParams for a specific model.
     mParams: dict, optional
@@ -1372,15 +1431,16 @@ def __template(coef_func, inv_func, dimLen,
     xarray.DataArray
         Results of the SOR inversion.
     """
-    if len(dims) != dimLen:
-        raise Exception('{0:2d} dimensional forcing are needed'.format(dimLen))
+    dims = _validate_inversion_dims(F, dims, dimLen)
     
     iParams = __update(default_iParams, iParams)
+    _validate_inversion_bcs(iParams, dimLen)
+    _validate_solver_controls(iParams)
     mParams = __update(default_mParams, mParams, validParams)
     
     ######  1. calculating the coefficients  ######
     maskF, initS, coeffs = coef_func(F, dims, coords, mParams, iParams, icbc)
-    
+
     ######  2. calculating the parameters  ######
     if dimLen == 1:
         ps = __cal_params1D(maskF[dims[0]], coords,
@@ -1392,7 +1452,7 @@ def __template(coef_func, inv_func, dimLen,
         ps = __cal_params3D(maskF[dims[0]], maskF[dims[1]], maskF[dims[2]], coords,
                             Rearth=mParams['Rearth'])
     else:
-        raise Exception('dimension length should be one of [2, 3]')
+        raise ValueError('dimension length should be one of [2, 3]')
         
     iParams = __update(ps, iParams)
     
@@ -1407,14 +1467,21 @@ def __template(coef_func, inv_func, dimLen,
         __print_params(iParams)
     
     ######  3. inverting the solution  ######
-    S = inv_func(*coeffs, maskF, initS, dims, iParams)
+    result = inv_func(*coeffs, maskF, initS, dims, iParams)
+    if iParams.get('return_diagnostics', False):
+        S, diagnostics = result
+    else:
+        S = result
     
     ######  4. properly de-masking  ######
-    if icbc is None:
-        S = S.where(maskF!=_undeftmp, other=iParams['undef']).rename('inverted')
-    else:
-        S = S.rename('inverted')
+    # The forcing mask defines the PDE domain.  ``icbc`` supplies initial and
+    # boundary values only on valid forcing cells; it must never make an
+    # invalid forcing cell appear valid in the returned solution.
+    S = S.where(maskF != _undeftmp,
+                other=iParams['undef']).rename('inverted')
 
+    if iParams.get('return_diagnostics', False):
+        return S, diagnostics
     return S
 
 
@@ -1455,7 +1522,7 @@ def __coeffs_Poisson(force, dims, coords, mParams, iParams, icbc):
         F = maskF.where(maskF!=_undeftmp, _undeftmp)
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, z-lat, z-lon, cartesian]')
     
     return F, initS, (A, B, C)
@@ -1485,7 +1552,7 @@ def __coeffs_RefState(Q, dims, coords, mParams, iParams, icbc):
         F = maskF.where(maskF!=_undeftmp, _undeftmp)
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [z-lat, cartesian]')
     
     return F, initS, (A, B, C)
@@ -1539,10 +1606,10 @@ def __coeffs_RefStateSWM(Q, dims, coords, mParams, iParams, icbc):
                    (2.0 * np.pi * Omega**2.0 * asin * acos) / g - diff
     
     elif coords.lower() == 'cartesian': # dims[0] is θ, dims[1] is r
-        raise Exception('not supported for cartesian coordinates')
+        raise ValueError('not supported for cartesian coordinates')
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [z-lat, cartesian]')
     
     return F, initS, (A, B)
@@ -1567,10 +1634,10 @@ def __coeffs_GeoAdjustment(PV0, dims, coords, mParams, iParams, icbc):
         F = zero - f * cosG / g
     
     elif coords.lower() == 'cartesian': # dims[0] is θ, dims[1] is r
-        raise Exception('not supported for cartesian coordinates')
+        raise ValueError('not supported for cartesian coordinates')
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat, cartesian]')
     
     return F, initS, (A, B)
@@ -1597,7 +1664,7 @@ def __coeffs_PV2D(PV, dims, coords, mParams, iParams, icbc):
         F = maskF.where(maskF!=_undeftmp, _undeftmp)
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [z-lat, cartesian]')
     
     return F, initS, (A, B, C)
@@ -1624,7 +1691,7 @@ def __coeffs_Eliassen(force, dims, coords, mParams, iParams, icbc):
         F = maskF.where(maskF!=_undeftmp, _undeftmp)
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [z-lat, cartesian]')
     
     return F, initS, (A, B, C)
@@ -1675,7 +1742,7 @@ def __coeffs_GillMatsuno(Q, dims, coords, mParams, iParams, icbc):
         G = maskF.where(maskF!=_undeftmp, _undeftmp)
         
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, cartesian]')
     
     return G, initS, (A, B, C, D, E, F)
@@ -1727,7 +1794,7 @@ def __coeffs_GillMatsunoFlux(Q, dims, coords, mParams, iParams, icbc):
         F = (maskF).where(maskF!=_undeftmp, _undeftmp)
         
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, cartesian]')
     
     return F, initS, (A, B, C, D, E)
@@ -1766,7 +1833,7 @@ def __coeffs_Stommel(curl, dims, coords, mParams, iParams, icbc):
         G = (-maskF / depth / rho0).where(maskF!=_undeftmp, _undeftmp)
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, z-lat, z-lon, cartesian]')
     
     return G, initS, (A, B, C, D, E, F)
@@ -1808,7 +1875,7 @@ def __coeffs_StommelFlux(curl, dims, coords, mParams, iParams, icbc):
         F = (-maskF / depth / rho0).where(maskF!=_undeftmp, _undeftmp)
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, z-lat, z-lon, cartesian]')
     
     return F, initS, (A, B, C, D, E)
@@ -1854,7 +1921,7 @@ def __coeffs_StommelMunk(curl, dims, coords, mParams, iParams, icbc):
         J = (-maskF / depth / rho0).where(maskF!=_undeftmp, _undeftmp)
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, cartesian]')
     
     return J, initS, (A, B, C, D, E, F, G, H, I)
@@ -1904,7 +1971,7 @@ def __coeffs_StommelArons(Q, dims, coords, mParams, iParams, icbc):
         G = maskF.where(maskF!=_undeftmp, _undeftmp)
         
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, cartesian]')
     
     return G, initS, (A, B, C, D, E, F)
@@ -1949,7 +2016,7 @@ def __coeffs_geostrophic(lapPhi, dims, coords, mParams, iParams, icbc):
         F = lapPhi.where(lapPhi!=_undeftmp, _undeftmp)
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, cartesian]')
     
     return F, initS, (A, B, C)
@@ -1990,7 +2057,7 @@ def __coeffs_Bretherton(h, dims, coords, mParams, iParams, icbc):
         F = (-maskF*f/depth).where(maskF!=_undeftmp, _undeftmp)
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, cartesian]')
     
     return F, initS, (A, B, C, D, E)
@@ -2031,7 +2098,7 @@ def __coeffs_Fofonoff(f, dims, coords, mParams, iParams, icbc):
         F = (zero + c1 - f).where(maskF!=_undeftmp, _undeftmp)
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, cartesian]')
     
     return F, initS, (A, B, C, D, E)
@@ -2070,7 +2137,7 @@ def __coeffs_omega(force, dims, coords, mParams, iParams, icbc):
         F = maskF.where(maskF!=_undeftmp, _undeftmp)
 
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, cartesian]')
     
     return F, initS, (A, B, C)
@@ -2127,7 +2194,7 @@ def __coeffs_3DOcean(force, dims, coords, mParams, iParams, icbc):
         H = maskF.where(maskF!=_undeftmp, _undeftmp)
         
     else:
-        raise Exception('unsupported coords ' + coords +
+        raise ValueError('unsupported coords ' + coords +
                         ', should be in [lat-lon, cartesian]')
     
     return H, initS, (A, B, C, D, E, F, G)
@@ -2135,6 +2202,11 @@ def __coeffs_3DOcean(force, dims, coords, mParams, iParams, icbc):
 
 def __mask_FS(F, dims, iParams, icbc):
     r"""Properly mask forcing and output with _undeftmp.
+
+    All returned arrays (``maskF``, ``initS``, ``zero``) are allocated
+    natively in the compute dtype from :func:`_solve_dtype` -- the forcing
+    is cast *before* masking, so no full-size float64 intermediates are
+    ever created when computing in float32.
 
     Parameters
     ----------
@@ -2144,8 +2216,8 @@ def __mask_FS(F, dims, iParams, icbc):
         Dimension combination for the inversion e.g., ['lat', 'lon'].
     iParams: dict
         Parameters.
-    out: xarray.DataArray
-        Output array.
+    icbc: xarray.DataArray or None
+        Prescribed initial guess / boundary values.
 
     Returns
     -------
@@ -2154,34 +2226,105 @@ def __mask_FS(F, dims, iParams, icbc):
     initS: xarray.DataArray
         Initialized output.
     zero: xarray.DataArray
-        Allocated array for later use.
+        Allocated array for later use (all zeros, compute dtype).
     """
+    dt = _solve_dtype(iParams)
+
     ######  1. properly masking forcing with _undeftmp  ######
+    # cast first: every derived array (maskF, zero and the coefficient
+    # arrays built as zero + expr) then inherits the compute dtype
+    # without any additional full-size copies
+    if F.dtype != dt:
+        F = F.astype(dt)
+
     if np.isnan(iParams['undef']):
         maskF = F.fillna(_undeftmp)
     else:
         maskF = F.where(F!=iParams['undef'], other=_undeftmp)
-    
+
     zero = maskF - maskF
-    
+
     ######  2. properly masking output with _undeftmp and BCs  ######
+    invalid = maskF == _undeftmp
+
     if icbc is None:
         initS = zero.copy()
     else:
-        dimVs = [maskF[dim] for dim in dims]
-        conds = [dimV.isin([dimV[0], dimV[-1]]) for dimV in dimVs] 
-        mask  = maskF == _undeftmp
-        
-        # applied fixed boundaries
-        for cond, BC in zip(conds, iParams['BCs']):
-            if BC != 'periodic':
-                mask = np.logical_or(mask, cond)
-        
-        initS = xr.where(mask, icbc, 0)
-    
+        if not isinstance(icbc, xr.DataArray):
+            raise ValueError(
+                f'icbc must be an xarray.DataArray or None, '
+                f'got {type(icbc).__name__}')
+
+        missing_dims = [dim for dim in dims if dim not in icbc.dims]
+        if missing_dims:
+            raise ValueError(
+                f'icbc is missing inversion dimensions {missing_dims}; '
+                f'its dimensions are {list(icbc.dims)}')
+
+        extra_dims = [dim for dim in icbc.dims if dim not in maskF.dims]
+        if extra_dims:
+            raise ValueError(
+                f'icbc contains dimensions {extra_dims} that are not present '
+                f'in forcing dimensions {list(maskF.dims)}')
+
+        try:
+            _, icbc = xr.align(maskF, icbc, join='exact', copy=False)
+        except ValueError as exc:
+            raise ValueError(
+                'icbc coordinates must exactly match forcing coordinates on '
+                'their shared dimensions') from exc
+
+        # A spatial-only icbc may intentionally be reused for every non-core
+        # slice (for example every time step).  Broadcast explicitly so the
+        # initialized solution has the same dimensions and order as forcing.
+        icbc = icbc.broadcast_like(maskF)
+
+        # ``icbc`` is both the initial guess and the prescribed fixed-boundary
+        # field.  Use it on every valid grid point; extend boundaries are
+        # overwritten by the boundary kernel and periodic endpoints remain
+        # ordinary unknowns.  Invalid forcing cells stay zero: the current
+        # coefficient construction also stores zeros there, so placing the
+        # internal sentinel in S would contaminate neighbouring stencils.
+        initS = xr.where(invalid, 0, icbc)
+
+        if initS.dtype != dt:
+            initS = initS.astype(dt)
+
     # # loaded initS because dask cannot be modified
     # return maskF, initS.load(), zero
     return maskF, initS, zero
+
+
+def _solve_dtype(iParams):
+    """Resolve the compute dtype from ``iParams['dtype']``.
+
+    Accepts numpy dtypes, python floats, or the strings 'float32'/'f32'/
+    'float64'/'f64'.  Only 32- and 64-bit floats are supported; anything
+    else raises so typos fail loudly instead of silently changing
+    precision.
+
+    Returns
+    -------
+    numpy.dtype
+        Either ``np.dtype(np.float32)`` or ``np.dtype(np.float64)``.
+    """
+    dt = iParams.get('dtype', np.float32)
+
+    if isinstance(dt, str):
+        alias = {'float32': np.float32, 'f32': np.float32,
+                 'float64': np.float64, 'f64': np.float64}
+        key = dt.strip().lower()
+        if key not in alias:
+            raise ValueError(f"iParams['dtype']='{dt}' not understood, "
+                             "use np.float32 / np.float64 or "
+                             "'float32' / 'float64'")
+        dt = alias[key]
+
+    dt = np.dtype(dt)
+    if dt not in (np.dtype(np.float32), np.dtype(np.float64)):
+        raise ValueError(f"iParams['dtype']={iParams['dtype']} unsupported, "
+                         "only float32 / float64 are allowed")
+    return dt
 
 
 def __cal_params3D(dim3_var, dim2_var, dim1_var, coords,
@@ -2220,7 +2363,7 @@ def __cal_params3D(dim3_var, dim2_var, dim1_var, coords,
     elif coords.lower() == 'cartesian':
         pass
     else:
-        raise Exception('unsupported coords for 3D case: ' + coords +
+        raise ValueError('unsupported coords for 3D case: ' + coords +
                         ', should be in [\'lat-lon\', \'cartesian\']')
     
     ratio1    = del1 / del2
@@ -2296,7 +2439,7 @@ def __cal_params2D(dim2_var, dim1_var, coords, Rearth=default_mParams['Rearth'])
     elif coords.lower() == 'cartesian':
         pass
     else:
-        raise Exception('unsupported coords for 2D case: ' + coords +
+        raise ValueError('unsupported coords for 2D case: ' + coords +
                         ', should be [lat-lon, cartesian]')
     
     ratio    = del1 / del2
@@ -2350,7 +2493,7 @@ def __cal_params1D(dim1_var, coords, Rearth=default_mParams['Rearth']):
     if coords.lower() == 'lat':
         del1 = np.deg2rad(del1) * Rearth # convert lon to m
     else:
-        raise Exception('unsupported coords for 2D case: ' + coords +
+        raise ValueError('unsupported coords for 2D case: ' + coords +
                         ', should be [lat-lon, cartesian]')
     
     del1Sqr = del1 ** 2.0
@@ -2370,11 +2513,13 @@ def __cal_params1D(dim1_var, coords, Rearth=default_mParams['Rearth']):
 
 def __update(default, users, valid=None):
     """Update default invert parameters with user-defined ones."""
+    if users is None:
+        users = {}
     
     if valid is not None and users != default:
         for k, v in users.items():
             if k not in valid:
-                raise Exception(f'mParams[\'{k}\'] is not used, valid are {valid}')
+                raise ValueError(f'mParams[\'{k}\'] is not used, valid are {valid}')
     
     default_cp = copy.deepcopy(default)
     
@@ -2384,12 +2529,14 @@ def __update(default, users, valid=None):
     
     return default_cp
 
+
 def __uniform_interval(coord1D, value):
     if not np.isclose(coord1D.diff(coord1D.name), value, rtol=5e-04).all():
-        raise Exception(f'coordinate {coord1D.name} is non-uniform:\n{coord1D}')
+        raise ValueError(f'coordinate {coord1D.name} is non-uniform:\n{coord1D}')
 
 def __print_params(params):
     """Print parameters for debugging."""
+    print('dtype      : ', params.get('dtype'))
     if 'ratio' in params:
         print('dim grids  : ',
               params['gc2'], params['gc1'])
@@ -2403,6 +2550,8 @@ def __print_params(params):
               params['mxLoop'])
         print('tolerance  : ',
               params['tolerance'])
+        print('convergence: ',
+              params.get('convergence', 'norm'))
         print('printInfo  : ',
               params['printInfo'])
         print('debug      : ',
@@ -2426,6 +2575,8 @@ def __print_params(params):
               params['mxLoop'])
         print('tolerance  : ',
               params['tolerance'])
+        print('convergence: ',
+              params.get('convergence', 'norm'))
         print('printInfo  : ',
               params['printInfo'])
         print('debug      : ',
@@ -2447,6 +2598,8 @@ def __print_params(params):
               params['mxLoop'])
         print('tolerance  : ',
               params['tolerance'])
+        print('convergence: ',
+              params.get('convergence', 'norm'))
         print('printInfo  : ',
               params['printInfo'])
         print('debug      : ',
@@ -2455,4 +2608,3 @@ def __print_params(params):
               params['undef'])
         print('boundaries : ',
               params['BCs'])
-

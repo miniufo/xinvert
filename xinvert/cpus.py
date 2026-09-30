@@ -13,11 +13,116 @@ import numba as nb
 """
 Below are the numba functions
 """
+
+
+@nb.njit(inline='always')
+def _apply_extend_boundary_2d(S, BCy, BCx, undef, aside, aidx):
+    """Apply scalar per-dimension extend BCs without coupling x and y."""
+    yc, xc = S.shape
+
+    if BCy == 'extend':
+        istart = 0 if BCx == 'periodic' else 1
+        iend = xc if BCx == 'periodic' else xc - 1
+        for i in range(istart, iend):
+            if S[1, i] != undef and not (aside == 0 and i == aidx):
+                S[0, i] = S[1, i]
+            if S[yc - 2, i] != undef and not (aside == 1 and i == aidx):
+                S[yc - 1, i] = S[yc - 2, i]
+
+    if BCx == 'extend':
+        for j in range(1, yc - 1):
+            if S[j, 1] != undef and not (aside == 2 and j == aidx):
+                S[j, 0] = S[j, 1]
+            if S[j, xc - 2] != undef and not (aside == 3 and j == aidx):
+                S[j, xc - 1] = S[j, xc - 2]
+
+    # A corner belongs to both dimensions: extend it only when both
+    # dimensions are extend.  If either dimension is fixed, its prescribed
+    # corner value must remain untouched.
+    if BCy == 'extend' and BCx == 'extend':
+        if S[1, 1] != undef:
+            S[0, 0] = S[1, 1]
+        if S[1, xc - 2] != undef:
+            S[0, xc - 1] = S[1, xc - 2]
+        if S[yc - 2, 1] != undef:
+            S[yc - 1, 0] = S[yc - 2, 1]
+        if S[yc - 2, xc - 2] != undef:
+            S[yc - 1, xc - 1] = S[yc - 2, xc - 2]
+
+
+@nb.njit(inline='always')
+def _apply_extend_boundary_3d(S, BCy, BCx, undef):
+    """3-D counterpart; z remains fixed and x/y are independent."""
+    zc, yc, xc = S.shape
+    for k in range(1, zc - 1):
+        if BCy == 'extend':
+            istart = 0 if BCx == 'periodic' else 1
+            iend = xc if BCx == 'periodic' else xc - 1
+            for i in range(istart, iend):
+                if S[k, 1, i] != undef:
+                    S[k, 0, i] = S[k, 1, i]
+                if S[k, yc - 2, i] != undef:
+                    S[k, yc - 1, i] = S[k, yc - 2, i]
+
+        if BCx == 'extend':
+            for j in range(1, yc - 1):
+                if S[k, j, 1] != undef:
+                    S[k, j, 0] = S[k, j, 1]
+                if S[k, j, xc - 2] != undef:
+                    S[k, j, xc - 1] = S[k, j, xc - 2]
+
+        if BCy == 'extend' and BCx == 'extend':
+            if S[k, 1, 1] != undef:
+                S[k, 0, 0] = S[k, 1, 1]
+            if S[k, 1, xc - 2] != undef:
+                S[k, 0, xc - 1] = S[k, 1, xc - 2]
+            if S[k, yc - 2, 1] != undef:
+                S[k, yc - 1, 0] = S[k, yc - 2, 1]
+            if S[k, yc - 2, xc - 2] != undef:
+                S[k, yc - 1, xc - 1] = S[k, yc - 2, xc - 2]
+
+
+@nb.njit(inline='always')
+def _apply_extend_boundary_bih_2d(S, BCy, BCx, undef):
+    """Apply the two-cell biharmonic extend boundary independently."""
+    yc, xc = S.shape
+    if BCy == 'extend':
+        istart = 0 if BCx == 'periodic' else 2
+        iend = xc if BCx == 'periodic' else xc - 2
+        for i in range(istart, iend):
+            if S[2, i] != undef:
+                S[0, i] = S[1, i] if BCx == 'periodic' else S[2, i]
+                S[1, i] = S[2, i]
+            if S[yc - 3, i] != undef:
+                S[yc - 1, i] = S[yc - 3, i]
+                S[yc - 2, i] = S[yc - 3, i]
+
+    if BCx == 'extend':
+        for j in range(2, yc - 2):
+            if S[j, 2] != undef:
+                S[j, 0] = S[j, 2]
+                S[j, 1] = S[j, 2]
+            if S[j, xc - 3] != undef:
+                S[j, xc - 1] = S[j, xc - 3]
+                S[j, xc - 2] = S[j, xc - 3]
+
+    if BCy == 'extend' and BCx == 'extend':
+        for jj in range(2):
+            for ii in range(2):
+                if S[2, 2] != undef:
+                    S[jj, ii] = S[2, 2]
+                if S[2, xc - 3] != undef:
+                    S[jj, xc - 1 - ii] = S[2, xc - 3]
+                if S[yc - 3, 2] != undef:
+                    S[yc - 1 - jj, ii] = S[yc - 3, 2]
+                if S[yc - 3, xc - 3] != undef:
+                    S[yc - 1 - jj, xc - 1 - ii] = S[yc - 3, xc - 3]
+
 @nb.njit(cache=False, nogil=True)
 def invert_standard_3D(S, A, B, C, F, info,
                        zc, yc, xc, BCz, BCy, BCx, delxSqr,
                        ratio2Sqr, ratio1Sqr, optArg, undef, flags,
-                       mxLoop, tolerance):
+                       mxLoop, tolerance, convergence=0):
     r"""Inverting a 3D volume of elliptic equation in standard form.
 
     .. math::
@@ -80,40 +185,19 @@ def invert_standard_3D(S, A, B, C, F, info,
     normPrev = np.finfo(np.float64).max
     overflow = False
     error = 0.0
+    interval = _check_interval(mxLoop, tolerance)
+    # gauge anchor for singular extend systems (resolved before the first
+    # sweep; -2 = unresolved sentinel, -1 = not applicable, 0..3 = side)
+    aside, aidx = -2, -2
     
     while(True):
-        # process boundaries
-        if BCy == 'extend':
-            if BCx == 'periodic':
-                for k in range(1, zc-1):
-                    for i in range(xc):
-                        if  S[k, 1,i] != undef:
-                            S[k, 0,i]  = S[k, 1,i]
-                        if  S[k,-2,i] != undef:
-                            S[k,-1,i]  = S[k,-2,i]
-            else:
-                for k in range(1, zc-1):
-                    # north/south boundary (y-direction rows) for interior x
-                    for i in range(1, xc-1):
-                        if  S[k, 1,i] != undef:
-                            S[k, 0,i]  = S[k, 1,i]
-                        if  S[k,-2,i] != undef:
-                            S[k,-1,i]  = S[k,-2,i]
-                    # east/west boundary (x-direction columns) for interior y
-                    for j in range(1, yc-1):
-                        if  S[k, j, 1] != undef:
-                            S[k, j, 0]  = S[k, j, 1]
-                        if  S[k, j,-2] != undef:
-                            S[k, j,-1]  = S[k, j,-2]
-                    
-                    if  S[k, 1, 1] != undef:
-                        S[k, 0, 0] = S[k, 1, 1]
-                    if  S[k, 1,-2] != undef:
-                        S[k, 0,-1] = S[k, 1,-2]
-                    if  S[k,-2, 1] != undef:
-                        S[k,-1, 0] = S[k,-2, 1]
-                    if  S[k,-2,-2] != undef:
-                        S[k,-1,-1] = S[k,-2,-2]
+        next_loop = loop + 1
+        track_residual = (convergence == 1 and
+                          ((next_loop % interval == 0) or next_loop >= mxLoop))
+        maxUpdate = 0.0
+        maxValue = 0.0
+        # process x/y boundaries independently; z remains fixed
+        _apply_extend_boundary_3d(S, BCy, BCx, undef)
         
         for k in range(1, zc-1):
             for j in range(1, yc-1):
@@ -141,6 +225,9 @@ def invert_standard_3D(S, A, B, C, F, info,
                         temp *= optArg / ((A[k+1,j,0] + A[k,j,0]) *ratio2Sqr +
                                           (B[k,j+1,0] + B[k,j,0]) *ratio1Sqr +
                                           (C[k,j  ,1] + C[k,j,0]))
+                        if track_residual:
+                            maxUpdate, maxValue = _accumulate_update_metric(
+                                temp, S[k,j,0], maxUpdate, maxValue)
                         S[k,j,0] += temp
                 
                 # inner loop
@@ -167,6 +254,9 @@ def invert_standard_3D(S, A, B, C, F, info,
                         temp *= optArg / ((A[k+1,j,i] + A[k,j,i]) *ratio2Sqr +
                                           (B[k,j+1,i] + B[k,j,i]) *ratio1Sqr +
                                           (C[k,j,i+1] + C[k,j,i]))
+                        if track_residual:
+                            maxUpdate, maxValue = _accumulate_update_metric(
+                                temp, S[k,j,i], maxUpdate, maxValue)
                         S[k,j,i] += temp
                 
                 # for the east boundary iteration (i==-1)
@@ -193,21 +283,37 @@ def invert_standard_3D(S, A, B, C, F, info,
                         temp *= optArg / ((A[k+1,j,-1] + A[k,j,-1]) *ratio2Sqr +
                                           (B[k,j+1,-1] + B[k,j,-1]) *ratio1Sqr+
                                           (C[k,j  , 0] + C[k,j,-1]))
+                        if track_residual:
+                            maxUpdate, maxValue = _accumulate_update_metric(
+                                temp, S[k,j,-1], maxUpdate, maxValue)
                         S[k,j,-1] += temp
         
+        loop += 1
+
+        # Sparse convergence check (same strategy as the GPU path): the
+        # norm reduction is a full-array scan, so only run it every
+        # *interval* iterations or at mxLoop.  The error then measures
+        # the norm change over the whole interval.
+        if (loop % interval != 0) and (loop < mxLoop):
+            continue
+
         norm = absNorm3D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
             overflow = True
             break
 
-        error = abs(norm - normPrev) / normPrev
-        
+        if convergence == 1:
+            error = _relative_update_metric(maxUpdate, maxValue)
+        elif norm == 0:
+            error = 0.0
+        else:
+            error = abs(norm - normPrev) / normPrev
+
         if error < tolerance or loop >= mxLoop:
             break
         
         normPrev = norm
-        loop += 1
         
     flags[0] = overflow
     flags[1] = error
@@ -220,7 +326,7 @@ def invert_standard_3D(S, A, B, C, F, info,
 def invert_standard_2D(S, A, B, C, F, info,
                        yc, xc, BCy, BCx, delxSqr,
                        ratioQtr, ratioSqr, optArg, undef, flags,
-                       mxLoop, tolerance):
+                       mxLoop, tolerance, convergence=0):
     r"""Inverting a 2D slice of elliptic equation in standard form.
 
     .. math::
@@ -282,39 +388,32 @@ def invert_standard_2D(S, A, B, C, F, info,
     normPrev = np.finfo(np.float64).max
     overflow = False
     error = 0.0
+    interval = _check_interval(mxLoop, tolerance)
+    # gauge anchor for singular extend systems (resolved before the first
+    # sweep; -2 = unresolved sentinel, -1 = not applicable, 0..3 = side)
+    aside, aidx = -2, -2
     
     while(True):
-        # process boundaries
-        if BCy == 'extend':
-            if BCx == 'periodic':
-                for i in range(xc):
-                    if  S[ 1,i] != undef:
-                        S[ 0,i]  = S[ 1,i]
-                    if  S[-2,i] != undef:
-                        S[-1,i]  = S[-2,i]
+        next_loop = loop + 1
+        track_residual = (convergence == 1 and
+                          ((next_loop % interval == 0) or next_loop >= mxLoop))
+        maxUpdate = 0.0
+        maxValue = 0.0
+        # resolve the gauge anchor once, BEFORE the first sweep: pin ONE
+        # BOUNDARY grid point (extend-copy skipped -> keeps its initial
+        # value); every interior point keeps updating normally.  Active
+        # whenever y is extend and x is NOT fixed (extend or periodic
+        # both leave the constant null space unresolved).
+        if aside == -2:
+            if BCy == 'extend' and BCx != 'fixed':
+                aside, aidx = _find_boundary_anchor_2d(
+                    F, undef, BCx == 'extend')
             else:
-                # north/south boundary (y-direction rows) for interior x
-                for i in range(1, xc-1):
-                    if  S[ 1,i] != undef:
-                        S[ 0,i]  = S[ 1,i]
-                    if  S[-2,i] != undef:
-                        S[-1,i]  = S[-2,i]
-                # east/west boundary (x-direction columns) for interior y
-                for j in range(1, yc-1):
-                    if  S[ j, 1] != undef:
-                        S[ j, 0]  = S[ j, 1]
-                    if  S[ j,-2] != undef:
-                        S[ j,-1]  = S[ j,-2]
-                
-                if  S[ 1, 1] != undef:
-                    S[ 0, 0] = S[ 1, 1]
-                if  S[ 1,-2] != undef:
-                    S[ 0,-1] = S[ 1,-2]
-                if  S[-2, 1] != undef:
-                    S[-1, 0] = S[-2, 1]
-                if  S[-2,-2] != undef:
-                    S[-1,-1] = S[-2,-2]
-        
+                aside, aidx = -1, -1
+
+        # process x/y boundaries independently after resolving the anchor
+        _apply_extend_boundary_2d(S, BCy, BCx, undef, aside, aidx)
+
         for j in range(1, yc-1):
             # for the west boundary iteration (i==0)
             if BCx == 'periodic':
@@ -343,6 +442,9 @@ def invert_standard_2D(S, A, B, C, F, info,
                     
                     temp *= optArg / ((A[j+1,0] + A[j,0]) *ratioSqr +
                                       (C[j  ,1] + C[j,0]))
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,0], maxUpdate, maxValue)
                     S[j,0] += temp
             
             # inner loop
@@ -372,6 +474,9 @@ def invert_standard_2D(S, A, B, C, F, info,
                     
                     temp *= optArg / ((A[j+1,i] + A[j,i]) *ratioSqr +
                                       (C[j,i+1] + C[j,i]))
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,i], maxUpdate, maxValue)
                     S[j,i] += temp
             
             
@@ -402,21 +507,37 @@ def invert_standard_2D(S, A, B, C, F, info,
                     
                     temp *= optArg / ((A[j+1,-1] + A[j,-1]) *ratioSqr +
                                       (C[j  , 0] + C[j,-1]))
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,-1], maxUpdate, maxValue)
                     S[j,-1] += temp
-        
+
+        loop += 1
+
+        # Sparse convergence check (same strategy as the GPU path): the
+        # norm reduction is a full-array scan, so only run it every
+        # *interval* iterations or at mxLoop.  The error then measures
+        # the norm change over the whole interval.
+        if (loop % interval != 0) and (loop < mxLoop):
+            continue
+
         norm = absNorm2D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
             overflow = True
             break
         
-        error = abs(norm - normPrev) / normPrev
-        
+        if convergence == 1:
+            error = _relative_update_metric(maxUpdate, maxValue)
+        elif norm == 0:
+            error = 0.0
+        else:
+            error = abs(norm - normPrev) / normPrev
+
         if error < tolerance or loop >= mxLoop or norm == 0:
             break
-        
+
         normPrev = norm
-        loop += 1
         
     flags[0] = overflow
     flags[1] = error
@@ -430,7 +551,7 @@ def invert_standard_2D(S, A, B, C, F, info,
 def invert_standard_2D_full(S, A, B, C, D, E, F, info,
                        yc, xc, BCy, BCx, delxSqr,
                        ratioQtr, ratioSqr, optArg, undef, flags,
-                       mxLoop, tolerance):
+                       mxLoop, tolerance, convergence=0):
     r"""Inverting a 2D slice of elliptic equation in standard form.
 
     .. math::
@@ -497,39 +618,32 @@ def invert_standard_2D_full(S, A, B, C, D, E, F, info,
     normPrev = np.finfo(np.float64).max
     overflow = False
     error = 0.0
+    interval = _check_interval(mxLoop, tolerance)
+    # gauge anchor for singular extend systems (resolved before the first
+    # sweep; -2 = unresolved sentinel, -1 = not applicable, 0..3 = side)
+    aside, aidx = -2, -2
     
     while(True):
-        # process boundaries
-        if BCy == 'extend':
-            if BCx == 'periodic':
-                for i in range(xc):
-                    if  S[ 1,i] != undef:
-                        S[ 0,i]  = S[ 1,i]
-                    if  S[-2,i] != undef:
-                        S[-1,i]  = S[-2,i]
+        next_loop = loop + 1
+        track_residual = (convergence == 1 and
+                          ((next_loop % interval == 0) or next_loop >= mxLoop))
+        maxUpdate = 0.0
+        maxValue = 0.0
+        # resolve the gauge anchor once, BEFORE the first sweep: pin ONE
+        # BOUNDARY grid point (extend-copy skipped -> keeps its initial
+        # value); every interior point keeps updating normally.  Active
+        # whenever y is extend and x is NOT fixed (extend or periodic
+        # both leave the constant null space unresolved).
+        if aside == -2:
+            if BCy == 'extend' and BCx != 'fixed':
+                aside, aidx = _find_boundary_anchor_2d(
+                    F, undef, BCx == 'extend')
             else:
-                # north/south boundary (y-direction rows) for interior x
-                for i in range(1, xc-1):
-                    if  S[ 1,i] != undef:
-                        S[ 0,i]  = S[ 1,i]
-                    if  S[-2,i] != undef:
-                        S[-1,i]  = S[-2,i]
-                # east/west boundary (x-direction columns) for interior y
-                for j in range(1, yc-1):
-                    if  S[ j, 1] != undef:
-                        S[ j, 0]  = S[ j, 1]
-                    if  S[ j,-2] != undef:
-                        S[ j,-1]  = S[ j,-2]
-                
-                if  S[ 1, 1] != undef:
-                    S[ 0, 0] = S[ 1, 1]
-                if  S[ 1,-2] != undef:
-                    S[ 0,-1] = S[ 1,-2]
-                if  S[-2, 1] != undef:
-                    S[-1, 0] = S[-2, 1]
-                if  S[-2,-2] != undef:
-                    S[-1,-1] = S[-2,-2]
-        
+                aside, aidx = -1, -1
+
+        # process x/y boundaries independently after resolving the anchor
+        _apply_extend_boundary_2d(S, BCy, BCx, undef, aside, aidx)
+
         for j in range(1, yc-1):
             # for the west boundary iteration (i==0)
             if BCx == 'periodic':
@@ -559,6 +673,9 @@ def invert_standard_2D_full(S, A, B, C, D, E, F, info,
                     
                     temp *= optArg / ((A[j+1,0] + A[j,0]) *ratioSqr +
                                       (D[j  ,1] + D[j,0]) - E[j, 0]*delxSqr)
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,0], maxUpdate, maxValue)
                     S[j,0] += temp
             
             # inner loop
@@ -589,6 +706,9 @@ def invert_standard_2D_full(S, A, B, C, D, E, F, info,
                     
                     temp *= optArg / ((A[j+1,i] + A[j,i]) *ratioSqr +
                                       (D[j,i+1] + D[j,i]) - E[j, i]*delxSqr)
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,i], maxUpdate, maxValue)
                     S[j,i] += temp
             
             
@@ -620,21 +740,37 @@ def invert_standard_2D_full(S, A, B, C, D, E, F, info,
                     
                     temp *= optArg / ((A[j+1,-1] + A[j,-1]) *ratioSqr +
                                       (D[j  , 0] + D[j,-1]) - E[j, -1]*delxSqr)
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,-1], maxUpdate, maxValue)
                     S[j,-1] += temp
-        
+
+        loop += 1
+
+        # Sparse convergence check (same strategy as the GPU path): the
+        # norm reduction is a full-array scan, so only run it every
+        # *interval* iterations or at mxLoop.  The error then measures
+        # the norm change over the whole interval.
+        if (loop % interval != 0) and (loop < mxLoop):
+            continue
+
         norm = absNorm2D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
             overflow = True
             break
         
-        error = abs(norm - normPrev) / normPrev
+        if convergence == 1:
+            error = _relative_update_metric(maxUpdate, maxValue)
+        elif norm == 0:
+            error = 0.0
+        else:
+            error = abs(norm - normPrev) / normPrev
 
         if error < tolerance or loop >= mxLoop or norm == 0:
             break
         
         normPrev = norm
-        loop += 1
         
     flags[0] = overflow
     flags[1] = error
@@ -646,7 +782,7 @@ def invert_standard_2D_full(S, A, B, C, D, E, F, info,
 @nb.njit(cache=False, nogil=True)
 def invert_standard_1D(S, A, B, F, info,
                        xc, BCx, delxSqr, optArg, undef, flags,
-                       mxLoop, tolerance):
+                       mxLoop, tolerance, convergence=0):
     r"""Inverting a 1D series of elliptic equation in standard form.
 
     .. math::
@@ -695,14 +831,34 @@ def invert_standard_1D(S, A, B, F, info,
     normPrev = np.finfo(np.float64).max
     overflow = False
     error = 0.0
+    interval = _check_interval(mxLoop, tolerance)
+    # gauge anchor for singular extend systems (resolved before the first
+    # sweep; -2 = unresolved sentinel, -1 = not applicable, 0..3 = side)
+    aside, aidx = -2, -2
     
     while(True):
+        next_loop = loop + 1
+        track_residual = (convergence == 1 and
+                          ((next_loop % interval == 0) or next_loop >= mxLoop))
+        maxUpdate = 0.0
+        maxValue = 0.0
         # process boundaries
         if BCx == 'extend':
-            if  S[ 1] != undef:
+            # gauge anchor (singular Neumann-at-both-ends system): the
+            # pinned boundary point keeps its initial value
+            if  S[ 1] != undef and aside != 0:
                 S[ 0] = S[ 1]
-            if  S[-2] != undef:
+            if  S[-2] != undef and aside != 1:
                 S[-1] = S[-2]
+
+        # resolve the gauge anchor once, BEFORE the first sweep: pin ONE
+        # BOUNDARY grid point (extend-copy skipped); all interior points
+        # keep updating normally.
+        if aside == -2:
+            if BCx == 'extend':
+                aside = _find_boundary_anchor_1d(F, undef)
+            else:
+                aside = -1
         
         # for the west boundary iteration (i==0)
         if BCx == 'periodic':
@@ -714,6 +870,9 @@ def invert_standard_1D(S, A, B, F, info,
                 ) / delxSqr + (B[0] * S[0] - F[0])
                 
                 temp *= optArg / ((A[1] + A[0]) / delxSqr - B[0])
+                if track_residual:
+                    maxUpdate, maxValue = _accumulate_update_metric(
+                        temp, S[0], maxUpdate, maxValue)
                 S[0] += temp
         
         # inner loop
@@ -726,6 +885,9 @@ def invert_standard_1D(S, A, B, F, info,
                 ) / delxSqr + (B[i] * S[i] - F[i])
                 
                 temp *= optArg / ((A[i+1] + A[i]) / delxSqr - B[i])
+                if track_residual:
+                    maxUpdate, maxValue = _accumulate_update_metric(
+                        temp, S[i], maxUpdate, maxValue)
                 S[i] += temp
         
         # for the west boundary iteration (i==-1)
@@ -738,21 +900,37 @@ def invert_standard_1D(S, A, B, F, info,
                 ) / delxSqr + (B[-1] * S[-1] - F[-1])
                 
                 temp *= optArg / ((A[0] + A[-1]) / delxSqr - B[-1])
+                if track_residual:
+                    maxUpdate, maxValue = _accumulate_update_metric(
+                        temp, S[-1], maxUpdate, maxValue)
                 S[-1] += temp
-        
+
+        loop += 1
+
+        # Sparse convergence check (same strategy as the GPU path): the
+        # norm reduction is a full-array scan, so only run it every
+        # *interval* iterations or at mxLoop.  The error then measures
+        # the norm change over the whole interval.
+        if (loop % interval != 0) and (loop < mxLoop):
+            continue
+
         norm = absNorm1D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
             overflow = True
             break
         
-        error = abs(norm - normPrev) / normPrev
+        if convergence == 1:
+            error = _relative_update_metric(maxUpdate, maxValue)
+        elif norm == 0:
+            error = 0.0
+        else:
+            error = abs(norm - normPrev) / normPrev
 
         if error < tolerance or loop >= mxLoop or norm == 0:
             break
         
         normPrev = norm
-        loop += 1
         
     flags[0] = overflow
     flags[1] = error
@@ -765,7 +943,7 @@ def invert_standard_1D(S, A, B, F, info,
 def invert_general_3D(S, A, B, C, D, E, F, G, H, info,
                       zc, yc, xc, delx, BCz, BCy, BCx, delxSqr,
                       ratio2, ratio1, ratio2Sqr, ratio1Sqr, optArg, undef,
-                      flags, mxLoop, tolerance):
+                      flags, mxLoop, tolerance, convergence=0):
     r"""Inverting a 3D volume of elliptic equation in the general form.
 
     .. math::
@@ -842,40 +1020,19 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H, info,
     normPrev = np.finfo(np.float64).max
     overflow = False
     error = 0.0
+    interval = _check_interval(mxLoop, tolerance)
+    # gauge anchor for singular extend systems (resolved before the first
+    # sweep; -2 = unresolved sentinel, -1 = not applicable, 0..3 = side)
+    aside, aidx = -2, -2
     
     while(True):
-        # process boundaries
-        if BCy == 'extend':
-            if BCx == 'periodic':
-                for k in range(1, zc-1):
-                    for i in range(xc):
-                        if  S[k, 1,i] != undef:
-                            S[k, 0,i]  = S[k, 1,i]
-                        if  S[k,-2,i] != undef:
-                            S[k,-1,i]  = S[k,-2,i]
-            else:
-                for k in range(1, zc-1):
-                    # north/south boundary (y-direction rows) for interior x
-                    for i in range(1, xc-1):
-                        if  S[k, 1,i] != undef:
-                            S[k, 0,i]  = S[k, 1,i]
-                        if  S[k,-2,i] != undef:
-                            S[k,-1,i]  = S[k,-2,i]
-                    # east/west boundary (x-direction columns) for interior y
-                    for j in range(1, yc-1):
-                        if  S[k, j, 1] != undef:
-                            S[k, j, 0]  = S[k, j, 1]
-                        if  S[k, j,-2] != undef:
-                            S[k, j,-1]  = S[k, j,-2]
-                    
-                    if  S[k, 1, 1] != undef:
-                        S[k, 0, 0] = S[k, 1, 1]
-                    if  S[k, 1,-2] != undef:
-                        S[k, 0,-1] = S[k, 1,-2]
-                    if  S[k,-2, 1] != undef:
-                        S[k,-1, 0] = S[k,-2, 1]
-                    if  S[k,-2,-2] != undef:
-                        S[k,-1,-1] = S[k,-2,-2]
+        next_loop = loop + 1
+        track_residual = (convergence == 1 and
+                          ((next_loop % interval == 0) or next_loop >= mxLoop))
+        maxUpdate = 0.0
+        maxValue = 0.0
+        # process x/y boundaries independently; z remains fixed
+        _apply_extend_boundary_3d(S, BCy, BCx, undef)
         
         for k in range(1, zc-1):
             for j in range(1, yc-1):
@@ -913,6 +1070,9 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H, info,
                             A[k,j,0]*ratio2Sqr + B[k,j,0]*ratio1Sqr + C[k,j,0]
                         ) * 2.0 - G[k,j,0]*delxSqr)
                         
+                        if track_residual:
+                            maxUpdate, maxValue = _accumulate_update_metric(
+                                temp, S[k,j,0], maxUpdate, maxValue)
                         S[k,j,0] += temp
                 
                 # inner loop
@@ -949,6 +1109,9 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H, info,
                             A[k,j,i]*ratio2Sqr + B[k,j,i]*ratio1Sqr + C[k,j,i]
                         ) * 2.0 - G[k,j,i]*delxSqr)
                         
+                        if track_residual:
+                            maxUpdate, maxValue = _accumulate_update_metric(
+                                temp, S[k,j,i], maxUpdate, maxValue)
                         S[k,j,i] += temp
                 
                 # for the east boundary iteration (i==-1)
@@ -985,21 +1148,37 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H, info,
                             A[k,j,-1]*ratio2Sqr + B[k,j,-1]*ratio1Sqr + C[k,j,-1]
                         ) * 2.0 - G[k,j,-1]*delxSqr)
                         
+                        if track_residual:
+                            maxUpdate, maxValue = _accumulate_update_metric(
+                                temp, S[k,j,-1], maxUpdate, maxValue)
                         S[k,j,-1] += temp
         
+        loop += 1
+
+        # Sparse convergence check (same strategy as the GPU path): the
+        # norm reduction is a full-array scan, so only run it every
+        # *interval* iterations or at mxLoop.  The error then measures
+        # the norm change over the whole interval.
+        if (loop % interval != 0) and (loop < mxLoop):
+            continue
+
         norm = absNorm3D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
             overflow = True
             break
 
-        error = abs(norm - normPrev) / normPrev
+        if convergence == 1:
+            error = _relative_update_metric(maxUpdate, maxValue)
+        elif norm == 0:
+            error = 0.0
+        else:
+            error = abs(norm - normPrev) / normPrev
 
         if error < tolerance or loop >= mxLoop:
             break
         
         normPrev = norm
-        loop += 1
         
     flags[0] = overflow
     flags[1] = error
@@ -1012,7 +1191,7 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H, info,
 def invert_general_2D(S, A, B, C, D, E, F, G, info,
                       yc, xc, delx, BCy, BCx,
                       delxSqr, ratio, ratioQtr, ratioSqr, optArg, undef,
-                      flags, mxLoop, tolerance):
+                      flags, mxLoop, tolerance, convergence=0):
     r"""Inverting a 2D slice of elliptic equation in the general form.
 
     .. math::
@@ -1082,39 +1261,32 @@ def invert_general_2D(S, A, B, C, D, E, F, G, info,
     normPrev = np.finfo(np.float64).max
     overflow = False
     error = 0.0
+    interval = _check_interval(mxLoop, tolerance)
+    # gauge anchor for singular extend systems (resolved before the first
+    # sweep; -2 = unresolved sentinel, -1 = not applicable, 0..3 = side)
+    aside, aidx = -2, -2
     
     while(True):
-        # process boundaries
-        if BCy == 'extend':
-            if BCx == 'periodic':
-                for i in range(xc):
-                    if  S[ 1,i] != undef:
-                        S[ 0,i]  = S[ 1,i]
-                    if  S[-2,i] != undef:
-                        S[-1,i]  = S[-2,i]
+        next_loop = loop + 1
+        track_residual = (convergence == 1 and
+                          ((next_loop % interval == 0) or next_loop >= mxLoop))
+        maxUpdate = 0.0
+        maxValue = 0.0
+        # resolve the gauge anchor once, BEFORE the first sweep: pin ONE
+        # BOUNDARY grid point (extend-copy skipped -> keeps its initial
+        # value); every interior point keeps updating normally.  Active
+        # whenever y is extend and x is NOT fixed (extend or periodic
+        # both leave the constant null space unresolved).
+        if aside == -2:
+            if BCy == 'extend' and BCx != 'fixed':
+                aside, aidx = _find_boundary_anchor_2d(
+                    G, undef, BCx == 'extend')
             else:
-                # north/south boundary (y-direction rows) for interior x
-                for i in range(1, xc-1):
-                    if  S[ 1,i] != undef:
-                        S[ 0,i]  = S[ 1,i]
-                    if  S[-2,i] != undef:
-                        S[-1,i]  = S[-2,i]
-                # east/west boundary (x-direction columns) for interior y
-                for j in range(1, yc-1):
-                    if  S[ j, 1] != undef:
-                        S[ j, 0]  = S[ j, 1]
-                    if  S[ j,-2] != undef:
-                        S[ j,-1]  = S[ j,-2]
-                
-                if  S[ 1, 1] != undef:
-                    S[ 0, 0] = S[ 1, 1]
-                if  S[ 1,-2] != undef:
-                    S[ 0,-1] = S[ 1,-2]
-                if  S[-2, 1] != undef:
-                    S[-1, 0] = S[-2, 1]
-                if  S[-2,-2] != undef:
-                    S[-1,-1] = S[-2,-2]
-        
+                aside, aidx = -1, -1
+
+        # process x/y boundaries independently after resolving the anchor
+        _apply_extend_boundary_2d(S, BCy, BCx, undef, aside, aidx)
+
         for j in range(1, yc-1):
             # for the west boundary iteration (i==0)
             if BCx == 'periodic':
@@ -1145,6 +1317,9 @@ def invert_general_2D(S, A, B, C, D, E, F, G, info,
                     
                     temp *= optArg / ((A[j,0]*ratioSqr + C[j,0]) * 2.0
                                       -F[j,0]*delxSqr)
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,0], maxUpdate, maxValue)
                     S[j,0] += temp
             
             # inner loop
@@ -1153,7 +1328,7 @@ def invert_general_2D(S, A, B, C, D, E, F, G, info,
                         A[j,i] != undef and B[j,i] != undef and
                         C[j,i] != undef and D[j,i] != undef and
                         E[j,i] != undef and F[j,i] != undef)
-                
+
                 if cond:
                     temp = (
                         A[j,i] * (
@@ -1176,6 +1351,9 @@ def invert_general_2D(S, A, B, C, D, E, F, G, info,
                     
                     temp *= optArg / ((A[j,i]*ratioSqr + C[j,i]) * 2.0
                                       -F[j,i]*delxSqr)
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,i], maxUpdate, maxValue)
                     S[j,i] += temp
             
             # for the east boundary iteration (i==-1)
@@ -1207,21 +1385,37 @@ def invert_general_2D(S, A, B, C, D, E, F, G, info,
                     
                     temp *= optArg / ((A[j,-1]*ratioSqr + C[j,-1]) * 2.0
                                       -F[j,-1]*delxSqr)
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,-1], maxUpdate, maxValue)
                     S[j,-1] += temp
-        
+
+        loop += 1
+
+        # Sparse convergence check (same strategy as the GPU path): the
+        # norm reduction is a full-array scan, so only run it every
+        # *interval* iterations or at mxLoop.  The error then measures
+        # the norm change over the whole interval.
+        if (loop % interval != 0) and (loop < mxLoop):
+            continue
+
         norm = absNorm2D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
             overflow = True
             break
         
-        error = abs(norm - normPrev) / normPrev
+        if convergence == 1:
+            error = _relative_update_metric(maxUpdate, maxValue)
+        elif norm == 0:
+            error = 0.0
+        else:
+            error = abs(norm - normPrev) / normPrev
         
         if error < tolerance or loop >= mxLoop:
             break
         
         normPrev = norm
-        loop += 1
         
     flags[0] = overflow
     flags[1] = error
@@ -1236,7 +1430,7 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                           delxSSr, delxTr, delxSqr,
                           ratio, ratioSSr, ratioQtr, ratioSqr,
                           optArg, undef, flags,
-                          mxLoop, tolerance):
+                          mxLoop, tolerance, convergence=0):
     r"""
     Inverting a 2D slice of biharmonic equation in the general form.
 
@@ -1322,55 +1516,32 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
     normPrev = np.finfo(np.float64).max
     overflow = False
     error = 0.0
+    interval = _check_interval(mxLoop, tolerance)
+    # gauge anchor for singular extend systems (resolved before the first
+    # sweep; -2 = unresolved sentinel, -1 = not applicable, 0..3 = side)
+    aside, aidx = -2, -2
     
     while(True):
-        # process boundaries
-        if BCy == 'extend':
-            if BCx == 'periodic':
-                for i in range(xc):
-                    if  S[ 2,i] != undef:
-                        S[ 0,i]  = S[ 1,i]
-                        S[ 1,i]  = S[ 2,i]
-                    if  S[-3,i] != undef:
-                        S[-1,i]  = S[-3,i]
-                        S[-2,i]  = S[-3,i]
-            else:
-                for i in range(1, xc-1):
-                    if  S[ 2,i] != undef:
-                        S[ 0,i]  = S[ 2,i]
-                        S[ 1,i]  = S[ 2,i]
-                    if  S[-3,i] != undef:
-                        S[-1,i]  = S[-3,i]
-                        S[-2,i]  = S[-3,i]
-                for j in range(1, yc-1):
-                    if  S[ j, 2] != undef:
-                        S[ j, 0]  = S[ j, 2]
-                        S[ j, 1]  = S[ j, 2]
-                    if  S[ j,-3] != undef:
-                        S[ j,-1]  = S[ j,-3]
-                        S[ j,-2]  = S[ j,-3]
-                
-                if  S[ 2, 2] != undef:
-                    S[ 0, 0] = S[ 2, 2]
-                    S[ 0, 1] = S[ 2, 2]
-                    S[ 1, 0] = S[ 2, 2]
-                    S[ 1, 1] = S[ 2, 2]
-                if  S[ 2,-3] != undef:
-                    S[ 0,-1] = S[ 2,-3]
-                    S[ 0,-2] = S[ 2,-3]
-                    S[ 1,-1] = S[ 2,-3]
-                    S[ 1,-2] = S[ 2,-3]
-                if  S[-3, 2] != undef:
-                    S[-1, 0] = S[-3, 2]
-                    S[-2, 0] = S[-3, 2]
-                    S[-1, 1] = S[-3, 2]
-                    S[-2, 1] = S[-3, 2]
-                if  S[-3,-3] != undef:
-                    S[-1,-1] = S[-3,-3]
-                    S[-1,-2] = S[-3,-3]
-                    S[-2,-1] = S[-3,-3]
-                    S[-2,-2] = S[-3,-3]
-        
+        next_loop = loop + 1
+        track_residual = (convergence == 1 and
+                          ((next_loop % interval == 0) or next_loop >= mxLoop))
+        maxUpdate = 0.0
+        maxValue = 0.0
+        # process the two-cell x/y boundaries independently
+        _apply_extend_boundary_bih_2d(S, BCy, BCx, undef)
+
+        # NOTE: the biharmonic kernel deliberately does NOT use a gauge
+        # anchor.  The Neumann null space of the 4th-order operator is
+        # MULTI-dimensional (all biharmonic polynomials x, y, x^2, xy...
+        # satisfy laplacian^2 psi = 0), so a single pinned point cannot
+        # remove it -- pinning one value actually destabilises the
+        # iteration along the remaining null space (verified
+        # empirically: extend+periodic diverges with an anchor).  The
+        # 5/9-point (2nd-order) forms have a 1-D constant null space,
+        # which is exactly what the single anchor removes.
+        if aside == -2:
+            aside, aidx = -1, -1
+
         for j in range(2, yc-2):
             # for the west boundary iteration (i==0)
             if BCx == 'periodic':
@@ -1415,6 +1586,9 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                                         B[j,0]*ratioSqr/4.0 +
                                       -(D[j,0]*ratioSqr + F[j,0]) * 2.0 * delxSqr +
                                         I[j,0]*delxSSr)
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,0], maxUpdate, maxValue)
                     S[j,0] += temp
             
             # for the west boundary iteration (i==1)
@@ -1460,6 +1634,9 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                                         B[j,1]*ratioSqr/4.0 +
                                       -(D[j,1]*ratioSqr + F[j,1]) * 2.0 * delxSqr +
                                         I[j,1]*delxSSr)
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,1], maxUpdate, maxValue)
                     S[j,1] += temp
             
             # inner loop
@@ -1505,6 +1682,9 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                                         B[j,i]*ratioSqr / 4.0 +
                                       -(D[j,i]*ratioSqr + F[j,i]) * 2.0 * delxSqr +
                                         I[j,i]*delxSSr)
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,i], maxUpdate, maxValue)
                     S[j,i] += temp
             
             # for the east boundary iteration (i==-2)
@@ -1550,6 +1730,9 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                                         B[j,-2]*ratioSqr/4.0
                                       -(D[j,-2]*ratioSqr + F[j,-2]) * 2.0 * delxSqr +
                                         I[j,-2]*delxSSr)
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,-2], maxUpdate, maxValue)
                     S[j,-2] += temp
             
             # for the east boundary iteration (i==-1)
@@ -1595,21 +1778,37 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                                         B[j,-1]*ratioSqr/4.0
                                       -(D[j,-1]*ratioSqr + F[j,-1]) * 2.0 * delxSqr +
                                         I[j,-1]*delxSSr)
+                    if track_residual:
+                        maxUpdate, maxValue = _accumulate_update_metric(
+                            temp, S[j,-1], maxUpdate, maxValue)
                     S[j,-1] += temp
-        
+
+        loop += 1
+
+        # Sparse convergence check (same strategy as the GPU path): the
+        # norm reduction is a full-array scan, so only run it every
+        # *interval* iterations or at mxLoop.  The error then measures
+        # the norm change over the whole interval.
+        if (loop % interval != 0) and (loop < mxLoop):
+            continue
+
         norm = absNorm2D(S, undef)
         
         if np.isnan(norm) or norm > 1e100:
             overflow = True
             break
         
-        error = abs(norm - normPrev) / normPrev
+        if convergence == 1:
+            error = _relative_update_metric(maxUpdate, maxValue)
+        elif norm == 0:
+            error = 0.0
+        else:
+            error = abs(norm - normPrev) / normPrev
         
         if error < tolerance or loop >= mxLoop:
             break
         
         normPrev = norm
-        loop += 1
         
     flags[0] = overflow
     flags[1] = error
@@ -1642,7 +1841,7 @@ def trace(a, b, c, d):
     N = len(b)
     
     if len(a) != N-1 or len(d) != N or len(c) != N-1:
-        raise Exception('lengths of given arrays are not satisfied')
+        raise ValueError('lengths of given arrays are not satisfied')
         
     buf0 = np.zeros_like(b) # N
     buf1 = np.zeros_like(a) # N - 1
@@ -1719,63 +1918,187 @@ def traceCyclic(a, b, c, d, a0, cn):
 
 
 @nb.njit(cache=False, nogil=True)
+def _check_interval(mxLoop, tolerance):
+    r"""Sparse convergence-check interval (mirrors gpus._compute_check_interval).
+
+    The norm reduction (absNorm*) is a full-array scan comparable in cost
+    to the SOR sweep itself, so it is only executed every *interval*
+    iterations:  tolerance > 0  ->  clamp(mxLoop/50, 10, 100);
+    tolerance <= 0 (fixed-iteration runs)  ->  clamp(mxLoop/20, 50, 500).
+    """
+    if tolerance > 0.0:
+        return max(10, min(100, mxLoop // 50))
+    else:
+        return max(50, min(500, mxLoop // 20))
+
+
+# NOTE: no _find_anchor_3d is needed -- in the 3D kernels the z-boundary
+# rows are never updated (values come in fixed via icbc), which acts as a
+# Dirichlet condition that already removes the constant null space.
+
+
+@nb.njit(cache=False, nogil=True)
+def _find_boundary_anchor_2d(F, undef, allow_we):
+    """Locate a BOUNDARY grid point to pin as the gauge anchor for
+    singular extend systems, scanning the boundary ring for the first
+    point whose adjacent interior equation is valid.
+
+    For 'extend' (Neumann-type) boundaries the discrete system has a
+    constant null space and the iteration drifts.  Pinning ONE boundary
+    grid point (its extend-copy is skipped, so it keeps its initial
+    value) is equivalent to a Dirichlet gauge there: the system becomes
+    non-singular and converges to a unique solution, while EVERY
+    interior point keeps updating normally.
+
+    Search order: north -> south, then (only when the x boundary is
+    also 'extend', i.e. a real copyable boundary exists) west -> east.
+
+    Parameters
+    ----------
+    F: numpy.array
+        Forcing array (undef marks points whose equation is invalid);
+        the anchor must be adjacent to a point where the equation holds.
+    undef: float
+        Undefined value.
+    allow_we: bool
+        Whether the west/east boundaries may host the anchor (True only
+        when BCx == 'extend'; under BCx == 'periodic' columns 0/xc-1 are
+        ordinary interior-periodic points, not boundaries).
+
+    Returns
+    -------
+    (side, idx) : tuple of int
+        side 0: anchor is S[0, idx]      (north row)
+        side 1: anchor is S[yc-1, idx]   (south row)
+        side 2: anchor is S[idx, 0]      (west column)
+        side 3: anchor is S[idx, xc-1]   (east column)
+        (-1, -1) if no valid boundary point exists.
+    """
+    yc, xc = F.shape
+    for i in range(1, xc - 1):
+        if F[1, i] != undef:
+            return 0, i
+    for i in range(1, xc - 1):
+        if F[yc - 2, i] != undef:
+            return 1, i
+    if allow_we:
+        for j in range(1, yc - 1):
+            if F[j, 1] != undef:
+                return 2, j
+        for j in range(1, yc - 1):
+            if F[j, xc - 2] != undef:
+                return 3, j
+    return -1, -1
+
+
+@nb.njit(cache=False, nogil=True)
+def _find_boundary_anchor_1d(F, undef):
+    """1D counterpart of :func:`_find_boundary_anchor_2d`.
+
+    Returns side: 0 (pin S[0], west end) or 1 (pin S[-1], east end);
+    -1 if neither adjacent interior equation is valid.
+    """
+    if F[1] != undef:
+        return 0
+    if F[F.shape[0] - 2] != undef:
+        return 1
+    return -1
+
+
+@nb.njit(inline='always')
+def _accumulate_update_metric(delta, value, max_update, max_value):
+    """Accumulate a max-norm diagonally preconditioned residual metric.
+
+    For SOR, ``delta = omega * D**-1 * residual``.  Tracking the largest
+    point correction therefore measures the equation residual after diagonal
+    preconditioning, without the cancellation problem of comparing two scalar
+    solution norms.  Both the old and new point magnitudes contribute to the
+    normalization so the first non-zero sweep remains well defined.
+    """
+    update = abs(delta)
+    if update > max_update:
+        max_update = update
+
+    old_value = abs(value)
+    new_value = abs(value + delta)
+    value_scale = old_value if old_value > new_value else new_value
+    if value_scale > max_value:
+        max_value = value_scale
+
+    return max_update, max_value
+
+
+@nb.njit(inline='always')
+def _relative_update_metric(max_update, max_value):
+    """Return normalized max SOR correction (preconditioned residual)."""
+    if max_value > np.finfo(np.float64).tiny:
+        return max_update / max_value
+    return max_update
+
+
+@nb.njit(cache=False, nogil=True)
 def absNorm3D(S, undef):
-    r"""Sum up 3D absolute value S"""
-    norm = 0.0
-    
+    r"""Sum up 3D absolute value S (float64 accumulator).
+
+    The accumulator is explicitly float64 so a float32 solution array
+    does not lose precision in the reduction: summing ~1e6 float32
+    values in a float32 accumulator costs ~3 digits, which would show
+    up as noise in the convergence signal long before the actual
+    solution has converged.
+    """
+    norm = np.float64(0.0)
+
     K, J, I = S.shape
     count = 0
     for k in range(K):
         for j in range(J):
             for i in range(I):
                 if S[k,j,i] != undef:
-                    norm += abs(S[k,j,i])
+                    norm += np.float64(abs(S[k,j,i]))
                     count += 1
-    
+
     if count != 0:
         norm /= count
     else:
         norm = np.nan
-    
+
     return norm
 
 @nb.njit(cache=False, nogil=True)
 def absNorm2D(S, undef):
-    r"""Sum up 2D absolute value S"""
-    norm = 0.0
-    
+    r"""Sum up 2D absolute value S (float64 accumulator, see absNorm3D)."""
+    norm = np.float64(0.0)
+
     J, I = S.shape
     count = 0
     for j in range(J):
         for i in range(I):
             if S[j,i] != undef:
-                norm += abs(S[j,i])
+                norm += np.float64(abs(S[j,i]))
                 count += 1
-    
+
     if count != 0:
         norm /= count
     else:
         norm = np.nan
-    
+
     return norm
 
 @nb.njit(cache=False, nogil=True)
 def absNorm1D(S, undef):
-    r"""Sum up 1D absolute value S"""
-    norm = 0.0
-    
+    r"""Sum up 1D absolute value S (float64 accumulator, see absNorm3D)."""
+    norm = np.float64(0.0)
+
     I = S.shape[0]
     count = 0
     for i in range(I):
         if S[i] != undef:
-            norm += abs(S[i])
+            norm += np.float64(abs(S[i]))
             count += 1
-    
+
     if count != 0:
         norm /= count
     else:
         norm = np.nan
-    
+
     return norm
-    
-    

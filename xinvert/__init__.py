@@ -10,11 +10,11 @@ coefficients and dask-enabled parallel computation.
 Notes on numerical precision
 ----------------------------
 The whole inversion (coefficients, iteration, output) is carried out in
-the **dtype of the forcing array**: a float32 forcing is inverted entirely
-in float32, a float64 forcing in float64.  float32 roughly halves memory
-bandwidth (near-2x speedup of the memory-bound SOR sweep, more on GPU)
-at the cost of ~1e-7 relative residual accuracy.  When ``icbc`` is given,
-its dtype should match that of the forcing to avoid silent down-casting.
+the dtype selected by ``iParams['dtype']`` (``float32`` by default).
+``float32`` roughly halves memory traffic and storage compared with
+``float64``, at the cost of reduced residual accuracy.  The forcing and an
+optional ``icbc`` are converted to the selected compute dtype before the
+coefficient arrays are built.
 """
 from .core import inv_standard3D, \
                   inv_standard2D, inv_standard2D_full, \

@@ -79,7 +79,7 @@ def smooth9(data, dims=None, times=1, BCx='fixed'):
         dims = data.dims
     
     if len(dims) != 2:
-        raise Exception('two dimensions are needed')
+        raise ValueError('two dimensions are needed')
     
     re = (data - data).load()
     

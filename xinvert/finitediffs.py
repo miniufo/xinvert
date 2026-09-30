@@ -20,7 +20,7 @@ class FiniteDiff(object):
     This is designed particularly for Arakawa A grid (all the variables are
     defined on the same grid points).  For grids of other types (variables
     are staggered), please use `xgcm` to calculate the finite difference in
-    finite volumn fashion.
+    finite volume fashion.
     
     For derivative along a dimension, one may use xarray's `differentiate()`.
     The problem with xarray's `differentiate()` is that the boundary conditions
@@ -135,7 +135,7 @@ class FiniteDiff(object):
         self.R      = R
         
         if coords not in ['lat-lon', 'cartesian']:
-            raise Exception('unsupported coords: ' + coords +
+            raise ValueError('unsupported coords: ' + coords +
                             ', should be one of [\'lat-lon\', \'cartesian\']')
     
     
@@ -249,7 +249,7 @@ class FiniteDiff(object):
             vector = [vector]
         
         if len(vector) != len(dims):
-            raise Exception('lengths of vector and dims are not equal')
+            raise ValueError('lengths of vector and dims are not equal')
         
         re = []
         
@@ -359,7 +359,7 @@ class FiniteDiff(object):
                 c2 = deriv(t, dims['Y'], BCs['Y'], fill['Y'], scale)
                 vor= c1 - c2
             else:
-                raise Exception('invalid component ' + str(comp) +
+                raise ValueError('invalid component ' + str(comp) +
                                 ', only in [i, j, k]')
             
             # if llc and comp in ['i', 'k']:
@@ -582,7 +582,7 @@ def padBCs(v, dim, BCs, fill=(0,0)):
     
     if 'periodic' in BCs: # pad with periodic BC
         if BCs[0] != BCs[1]:
-            raise Exception('\'periodic\' cannot be mixed with other BCs')
+            raise ValueError('\'periodic\' cannot be mixed with other BCs')
         
         p = p.pad({dim:(1,1)}, mode='wrap')
         
@@ -595,7 +595,7 @@ def padBCs(v, dim, BCs, fill=(0,0)):
             elif B == 'reflect':
                 p = p.pad({dim:shp}, mode='reflect')
             else:
-                raise Exception('unsupported BC: ' + str(BCs))
+                raise ValueError('unsupported BC: ' + str(BCs))
     
     # deal with extra (padded) coordinate values
     coord = p[dim].values.copy()
@@ -660,7 +660,7 @@ def deriv(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1,
         grd = (v.shift({dim: 1})-v) / (v[dim].shift({dim: 1})-v[dim])
         
     else:
-        raise Exception('unsupported scheme: ' + scheme +
+        raise ValueError('unsupported scheme: ' + scheme +
                         ', should be in [\'center\', \'forward\', \'backward\']')
     
     # trimming the original range and scaling

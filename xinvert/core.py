@@ -11,10 +11,138 @@ import numpy as np
 import xarray as xr
 import sys
 import threading
+import warnings
+import numbers
 from .cpus import invert_standard_3D, invert_standard_2D, invert_standard_1D,\
                     invert_general_3D, invert_general_2D, \
                     invert_general_bih_2D, invert_standard_2D_full
 from .utils import loop_noncore
+
+
+def _validate_inversion_dims(F, dims, expected):
+    """Return a validated dimension list for a DataArray inversion."""
+    if not isinstance(F, xr.DataArray):
+        raise ValueError(
+            f'forcing must be an xarray.DataArray, got {type(F).__name__}')
+    if isinstance(dims, str):
+        if expected == 1:
+            dims = [dims]
+        else:
+            raise ValueError(
+                f'dims must contain {expected} dimension names, not one string')
+    elif isinstance(dims, (list, tuple)):
+        dims = list(dims)
+    else:
+        raise ValueError(
+            f'dims must be a list or tuple of {expected} strings, '
+            f'got {type(dims).__name__}')
+
+    if len(dims) != expected:
+        raise ValueError(
+            f'{expected} dimensions are needed for inversion, got {len(dims)}')
+    if not all(isinstance(dim, str) for dim in dims):
+        raise ValueError('every entry in dims must be a string')
+    if len(set(dims)) != len(dims):
+        raise ValueError(f'dims contains duplicate dimensions: {dims}')
+
+    missing = [dim for dim in dims if dim not in F.dims]
+    if missing:
+        raise ValueError(
+            f'inversion dimensions {missing} are not present in forcing; '
+            f'available dimensions are {list(F.dims)}')
+    return dims
+
+
+def _validate_solver_controls(iParams):
+    """Validate inexpensive scalar controls before dispatching a solver."""
+    mx_loop = iParams.get('mxLoop')
+    if (isinstance(mx_loop, (bool, np.bool_)) or
+            not isinstance(mx_loop, numbers.Integral) or mx_loop <= 0):
+        raise ValueError(
+            f"iParams['mxLoop'] must be a positive integer, got {mx_loop!r}")
+
+    tolerance = iParams.get('tolerance')
+    if (isinstance(tolerance, (bool, np.bool_)) or
+            not isinstance(tolerance, numbers.Real) or
+            not np.isfinite(tolerance)):
+        raise ValueError(
+            f"iParams['tolerance'] must be a finite real number, "
+            f"got {tolerance!r}")
+
+    undef = iParams.get('undef')
+    if (isinstance(undef, (bool, np.bool_)) or
+            not isinstance(undef, numbers.Real)):
+        raise ValueError(
+            f"iParams['undef'] must be a real scalar (NaN is allowed), "
+            f"got {undef!r}")
+
+
+def _normalize_scalar_bcs(bcs, dim_len, *, parameter='BCs', valid=None):
+    """Return normalized BCs for APIs using one scalar BC per dimension."""
+    if not isinstance(bcs, (list, tuple)):
+        raise ValueError(
+            f"{parameter} must be a list or tuple containing one string "
+            "per inversion dimension; endpoint dictionaries are supported "
+            "by FiniteDiff only"
+        )
+    if len(bcs) != dim_len:
+        raise ValueError(
+            f"{parameter} has {len(bcs)} entries, but this operation "
+            f"uses {dim_len} dimensions"
+        )
+
+    normalized = []
+    for axis, bc in enumerate(bcs):
+        if not isinstance(bc, str):
+            choices = f' in {valid}' if valid is not None else ''
+            raise ValueError(
+                f"{parameter}[{axis}] must be a string{choices}, "
+                f"got {type(bc).__name__}; endpoint pairs or dictionaries "
+                "are supported by FiniteDiff only"
+            )
+        value = bc.strip().lower()
+        if valid is not None and value not in valid:
+            raise ValueError(
+                f"{parameter}[{axis}]={bc!r} is invalid; "
+                f"expected one of {valid}"
+            )
+        normalized.append(value)
+    return normalized
+
+
+def _validate_inversion_bcs(iParams, dim_len):
+    """Validate scalar-per-dimension BCs and warn for pending kernels."""
+    bcs = iParams.get('BCs')
+    marker = iParams.get('_validated_BCs')
+    if (isinstance(bcs, (list, tuple)) and
+            marker == (dim_len, tuple(bcs))):
+        return
+
+    valid = ('fixed', 'extend', 'periodic')
+    normalized = _normalize_scalar_bcs(
+        bcs, dim_len, parameter="iParams['BCs']", valid=valid)
+
+    iParams['BCs'] = normalized
+    iParams['_validated_BCs'] = (dim_len, tuple(normalized))
+
+    if dim_len == 3 and normalized[0] != 'fixed':
+        warnings.warn(
+            f"BCs[0]={normalized[0]!r} for the z dimension is accepted but "
+            "not implemented by the 3-D SOR kernels; the requested z-boundary "
+            "update will not be applied",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+    y_index = dim_len - 2
+    if dim_len >= 2 and normalized[y_index] == 'periodic':
+        warnings.warn(
+            f"BCs[{y_index}]='periodic' for the y dimension is accepted but "
+            "not implemented by the SOR kernels; only periodic x (the last "
+            "dimension) is currently implemented",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
 # Diagnostic printInfo output: live, thread-safe, distribution-safe.
 #
@@ -65,6 +193,7 @@ def _print_live(msg):
 # ---------------------------------------------------------------------------
 _gpu_kernel_map = {}
 _ensure_cuda = None    # gpus.ensure_context, if the GPU module is available
+_gpu_import_error = None
 try:
     from .gpus import (invert_standard_2D_gpu, invert_standard_2D_full_gpu,
                        invert_standard_1D_gpu, invert_general_2D_gpu,
@@ -78,8 +207,12 @@ try:
     _gpu_kernel_map[invert_standard_3D] = invert_standard_3D_gpu
     _gpu_kernel_map[invert_general_3D] = invert_general_3D_gpu
     _gpu_kernel_map[invert_general_bih_2D] = invert_general_bih_2D_gpu
-except Exception:
-    pass  # CUDA not available or GPU module not yet implemented
+except ImportError as exc:
+    # Keep CPU-only installations importable, but retain the real cause so a
+    # user who explicitly requests the GPU backend receives an actionable
+    # error.  Other exceptions are deliberately not swallowed: they indicate
+    # a bug in the GPU module rather than a missing optional dependency.
+    _gpu_import_error = exc
 
 
 # default undefined value
@@ -124,8 +257,9 @@ def inv_standard3D(A, B, C, F, S, dims, iParams):
     xarray.DataArray
         Solution :math:`\psi`.
     """
-    if len(dims) != 3:
-        raise Exception('3 dimensions are needed for inversion')
+    dims = _validate_inversion_dims(F, dims, 3)
+    _validate_inversion_bcs(iParams, 3)
+    _validate_solver_controls(iParams)
 
     # get info for print and non-core dimensions
     info, ncdims = _get_info(F, dims)
@@ -137,15 +271,9 @@ def inv_standard3D(A, B, C, F, S, dims, iParams):
     ]
     _kernel_ = _make_kernel(invert_standard_3D, grid_args, iParams)
     
-    re = xr.apply_ufunc(
-        _kernel_, S, A, B, C, F, info,
-        input_core_dims=[dims, dims, dims, dims, dims, []],
-        output_core_dims=[dims],
-        dask='parallelized',
-        dask_gufunc_kwargs={'allow_rechunk': True},
-        vectorize=True,
-        output_dtypes=[S.dtype],
-    )
+    re = _apply_solver(
+        _kernel_, [S, A, B, C, F, info],
+        [dims, dims, dims, dims, dims, []], dims, S, iParams)
     
     return re
 
@@ -188,8 +316,9 @@ def inv_standard2D(A, B, C, F, S, dims, iParams):
     xarray.DataArray
         Solution :math:`\psi`.
     """
-    if len(dims) != 2:
-        raise Exception('2 dimensions are needed for inversion')
+    dims = _validate_inversion_dims(F, dims, 2)
+    _validate_inversion_bcs(iParams, 2)
+    _validate_solver_controls(iParams)
 
     # get info for print and non-core dimensions
     info, ncdims = _get_info(F, dims)
@@ -201,15 +330,9 @@ def inv_standard2D(A, B, C, F, S, dims, iParams):
     ]
     _kernel_ = _make_kernel(invert_standard_2D, grid_args, iParams)
     
-    re = xr.apply_ufunc(
-        _kernel_, S, A, B, C, F, info,
-        input_core_dims=[dims, dims, dims, dims, dims, []],
-        output_core_dims=[dims],
-        dask='parallelized',
-        dask_gufunc_kwargs={'allow_rechunk': True},
-        vectorize=True,
-        output_dtypes=[S.dtype],
-    )
+    re = _apply_solver(
+        _kernel_, [S, A, B, C, F, info],
+        [dims, dims, dims, dims, dims, []], dims, S, iParams)
     
     return re
 
@@ -257,8 +380,9 @@ def inv_standard2D_full(A, B, C, D, E, F, S, dims, iParams):
     xarray.DataArray
         Solution :math:`\psi`.
     """
-    if len(dims) != 2:
-        raise Exception('2 dimensions are needed for inversion')
+    dims = _validate_inversion_dims(F, dims, 2)
+    _validate_inversion_bcs(iParams, 2)
+    _validate_solver_controls(iParams)
 
     # get info for print and non-core dimensions
     info, ncdims = _get_info(F, dims)
@@ -270,15 +394,9 @@ def inv_standard2D_full(A, B, C, D, E, F, S, dims, iParams):
     ]
     _kernel_ = _make_kernel(invert_standard_2D_full, grid_args, iParams)
     
-    re = xr.apply_ufunc(
-        _kernel_, S, A, B, C, D, E, F, info,
-        input_core_dims=[dims, dims, dims, dims, dims, dims, dims, []],
-        output_core_dims=[dims],
-        dask='parallelized',
-        dask_gufunc_kwargs={'allow_rechunk': True},
-        vectorize=True,
-        output_dtypes=[S.dtype],
-    )
+    re = _apply_solver(
+        _kernel_, [S, A, B, C, D, E, F, info],
+        [dims, dims, dims, dims, dims, dims, dims, []], dims, S, iParams)
     
     return re
 
@@ -314,8 +432,9 @@ def inv_standard1D(A, B, F, S, dims, iParams):
     xarray.DataArray
         Solution :math:`\psi`.
     """
-    if len(dims) != 1:
-        raise Exception('1 dimensions are needed for inversion')
+    dims = _validate_inversion_dims(F, dims, 1)
+    _validate_inversion_bcs(iParams, 1)
+    _validate_solver_controls(iParams)
 
     # get info for print and non-core dimensions
     info, ncdims = _get_info(F, dims)
@@ -325,15 +444,9 @@ def inv_standard1D(A, B, F, S, dims, iParams):
     ]
     _kernel_ = _make_kernel(invert_standard_1D, grid_args, iParams)
     
-    re = xr.apply_ufunc(
-        _kernel_, S, A, B, F, info,
-        input_core_dims=[dims, dims, dims, dims, []],
-        output_core_dims=[dims],
-        dask='parallelized',
-        dask_gufunc_kwargs={'allow_rechunk': True},
-        vectorize=True,
-        output_dtypes=[S.dtype],
-    )
+    re = _apply_solver(
+        _kernel_, [S, A, B, F, info],
+        [dims, dims, dims, dims, []], dims, S, iParams)
     
     return re
 
@@ -384,8 +497,9 @@ def inv_general3D(A, B, C, D, E, F, G, H, S, dims, iParams):
     xarray.DataArray
         Solution :math:`\psi`.
     """
-    if len(dims) != 3:
-        raise Exception('3 dimensions are needed for inversion')
+    dims = _validate_inversion_dims(H, dims, 3)
+    _validate_inversion_bcs(iParams, 3)
+    _validate_solver_controls(iParams)
 
     # get info for print and non-core dimensions
     info, ncdims = _get_info(F, dims)
@@ -398,16 +512,10 @@ def inv_general3D(A, B, C, D, E, F, G, H, S, dims, iParams):
     ]
     _kernel_ = _make_kernel(invert_general_3D, grid_args, iParams)
     
-    re = xr.apply_ufunc(
-        _kernel_, S, A, B, C, D, E, F, G, H, info,
-        input_core_dims=[dims, dims, dims, dims, dims,
-                         dims, dims, dims, dims, []],
-        output_core_dims=[dims],
-        dask='parallelized',
-        dask_gufunc_kwargs={'allow_rechunk': True},
-        vectorize=True,
-        output_dtypes=[S.dtype],
-    )
+    re = _apply_solver(
+        _kernel_, [S, A, B, C, D, E, F, G, H, info],
+        [dims, dims, dims, dims, dims, dims, dims, dims, dims, []],
+        dims, S, iParams)
     
     return re
 
@@ -453,8 +561,9 @@ def inv_general2D(A, B, C, D, E, F, G, S, dims, iParams):
     xarray.DataArray
         Solution :math:`\psi`.
     """
-    if len(dims) != 2:
-        raise Exception('2 dimensions are needed for inversion')
+    dims = _validate_inversion_dims(G, dims, 2)
+    _validate_inversion_bcs(iParams, 2)
+    _validate_solver_controls(iParams)
 
     # get info for print and non-core dimensions
     info, ncdims = _get_info(F, dims)
@@ -466,16 +575,10 @@ def inv_general2D(A, B, C, D, E, F, G, S, dims, iParams):
     ]
     _kernel_ = _make_kernel(invert_general_2D, grid_args, iParams)
     
-    re = xr.apply_ufunc(
-        _kernel_, S, A, B, C, D, E, F, G, info,
-        input_core_dims=[dims, dims, dims, dims, dims,
-                         dims, dims, dims, []],
-        output_core_dims=[dims],
-        dask='parallelized',
-        dask_gufunc_kwargs={'allow_rechunk': True},
-        vectorize=True,
-        output_dtypes=[S.dtype],
-    )
+    re = _apply_solver(
+        _kernel_, [S, A, B, C, D, E, F, G, info],
+        [dims, dims, dims, dims, dims, dims, dims, dims, []],
+        dims, S, iParams)
     
     return re
 
@@ -532,8 +635,9 @@ def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, iParams):
     xarray.DataArray
         Solution :math:`\psi`.
     """
-    if len(dims) != 2:
-        raise Exception('2 dimensions are needed for inversion')
+    dims = _validate_inversion_dims(J, dims, 2)
+    _validate_inversion_bcs(iParams, 2)
+    _validate_solver_controls(iParams)
 
     # get info for print and non-core dimensions
     info, ncdims = _get_info(F, dims)
@@ -547,16 +651,10 @@ def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, iParams):
     ]
     _kernel_ = _make_kernel(invert_general_bih_2D, grid_args, iParams)
     
-    re = xr.apply_ufunc(
-        _kernel_, S, A, B, C, D, E, F, G, H, I, J, info,
-        input_core_dims=[dims, dims, dims, dims, dims, dims,
-                         dims, dims, dims, dims, dims, []],
-        output_core_dims=[dims],
-        dask='parallelized',
-        dask_gufunc_kwargs={'allow_rechunk': True},
-        vectorize=True,
-        output_dtypes=[S.dtype],
-    )
+    re = _apply_solver(
+        _kernel_, [S, A, B, C, D, E, F, G, H, I, J, info],
+        [dims, dims, dims, dims, dims, dims,
+         dims, dims, dims, dims, dims, []], dims, S, iParams)
     
     return re
 
@@ -617,12 +715,27 @@ def _make_kernel(kernel_func, grid_args, iParams):
     """
     # case-insensitive (and whitespace-tolerant): 'GPU', ' GPU ' etc. all work
     architect = str(iParams.get('architect', 'cpu')).strip().lower()
+    convergence = _convergence_code(iParams.get('convergence', 'norm'))
 
     if architect == 'cpu':
         func = kernel_func
     elif architect == 'gpu':
+        warnings.warn(
+            "xinvert's GPU backend is experimental; numerical kernels, "
+            "configuration options, and performance characteristics may "
+            "change before it is declared stable",
+            UserWarning,
+            stacklevel=3,
+        )
         func = _gpu_kernel_map.get(kernel_func)
         if func is None:
+            if _gpu_import_error is not None:
+                raise ImportError(
+                    "GPU backend is unavailable. Install the optional GPU "
+                    "dependencies with 'pip install xinvert[gpu]' and "
+                    "ensure that a compatible NVIDIA driver and CUDA "
+                    "runtime are available."
+                ) from _gpu_import_error
             raise NotImplementedError(
                 f"GPU kernel not implemented for '{kernel_func.__name__}', "
                 f"available: {[k.__name__ for k in _gpu_kernel_map]}")
@@ -648,17 +761,95 @@ def _make_kernel(kernel_func, grid_args, iParams):
 
         func(o, *coeffs, info, *grid_args,
              iParams['optArg'], _undeftmp, flags,
-             iParams['mxLoop'], iParams['tolerance'])
+             iParams['mxLoop'], iParams['tolerance'], convergence)
 
         if iParams['printInfo']:
-            msg = f'{info} loops {flags[2]:4.0f}, tolerance is {flags[1]:e}'
+            metric = 'residual' if convergence == 1 else 'norm change'
+            msg = (f'{info} loops {flags[2]:4.0f}, {metric} is '
+                   f'{flags[1]:e}')
             if flags[0]:
                 msg = msg + ' (overflow!)'
             # module-level function => transferred by reference by
             # cloudpickle, keeping the closure picklable
             _print_live(msg)
 
+        if iParams.get('return_diagnostics', False):
+            return o, flags
         return o
 
     return _kernel_
 
+
+def _apply_solver(kernel, inputs, input_core_dims, solution_dims, solution,
+                  iParams):
+    """Apply one vectorized solver and optionally expose per-slice status."""
+    if not iParams.get('return_diagnostics', False):
+        return xr.apply_ufunc(
+            kernel, *inputs,
+            input_core_dims=input_core_dims,
+            output_core_dims=[solution_dims],
+            dask='parallelized',
+            dask_gufunc_kwargs={'allow_rechunk': True},
+            vectorize=True,
+            output_dtypes=[solution.dtype],
+        )
+
+    result, raw = xr.apply_ufunc(
+        kernel, *inputs,
+        input_core_dims=input_core_dims,
+        output_core_dims=[solution_dims, ['diagnostic']],
+        dask='parallelized',
+        dask_gufunc_kwargs={
+            'allow_rechunk': True,
+            'output_sizes': {'diagnostic': 3},
+        },
+        vectorize=True,
+        output_dtypes=[solution.dtype, np.float64],
+    )
+    return result, _diagnostics_from_flags(raw, iParams)
+
+
+def _diagnostics_from_flags(raw, iParams):
+    """Convert the kernel flag vector into a labelled diagnostics Dataset."""
+    overflow = raw.isel(diagnostic=0, drop=True).astype(bool)
+    error = raw.isel(diagnostic=1, drop=True)
+    iterations = raw.isel(diagnostic=2, drop=True).astype(np.int64)
+    tolerance = float(iParams['tolerance'])
+    converged = (~overflow) & np.isfinite(error) & (tolerance > 0.0) & (
+        error < tolerance)
+
+    reason = xr.full_like(iterations, 'max_iterations', dtype=object)
+    reason = xr.where(converged, 'converged', reason)
+    reason = xr.where(overflow, 'overflow', reason)
+
+    diagnostics = xr.Dataset({
+        'converged': converged,
+        'iterations': iterations,
+        'error': error,
+        'stop_reason': reason,
+    })
+    diagnostics.attrs.update({
+        'convergence': ('residual' if _convergence_code(
+            iParams.get('convergence', 'norm')) == 1 else 'norm'),
+        'tolerance': tolerance,
+        'max_iterations': int(iParams['mxLoop']),
+    })
+    return diagnostics
+
+
+def _convergence_code(value):
+    """Validate a public convergence-mode value and return its kernel code."""
+    mode = str(value).strip().lower().replace('-', '_')
+    aliases = {
+        'norm': 0,
+        'solution_norm': 0,
+        'legacy': 0,
+        'residual': 1,
+        'preconditioned_residual': 1,
+    }
+    if mode not in aliases:
+        raise ValueError(
+            f"unsupported convergence mode '{value}', should be 'norm' or "
+            "'residual' (case-insensitive)"
+        )
+    return aliases[mode]
