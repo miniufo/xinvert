@@ -9,8 +9,9 @@ Installation
 Requirements
 ^^^^^^^^^^^^
 
-xinvert is compatible with python 3 (>= version 3.6). It requires xarray_ dask_ 
-numpy_ and numba_.
+xinvert supports Python 3.9 and newer.  Its core dependencies are xarray_,
+dask_, numpy_, and numba_.  GPU acceleration is optional and additionally
+requires an NVIDIA GPU, a compatible driver/runtime, and ``numba-cuda``.
 
 Installation from conda forge
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -29,6 +30,33 @@ One can do this by using pip::
 This will install the latest release from
 `pypi <https://pypi.python.org/pypi>`_.
 
+GPU support
+^^^^^^^^^^^
+
+.. warning::
+
+   The GPU backend is experimental and is currently intended for testing and
+   evaluation.  Its numerical kernels, configuration options, and performance
+   characteristics may change before the backend is declared stable.  Use the
+   CPU backend for production workflows that require the stable path.
+
+For a machine with an existing CUDA runtime, install the GPU extra::
+
+    pip install "xinvert[gpu]"
+
+If the CUDA runtime should be installed into the Python environment, NVIDIA's
+``numba-cuda`` package provides versioned extras, for example::
+
+    pip install xinvert "numba-cuda[cu12]"
+
+or with conda::
+
+    conda install -c conda-forge xinvert numba-cuda "cuda-version=12"
+
+CUDA 13 users can replace ``cu12`` / ``cuda-version=12`` with the
+corresponding CUDA 13 option.  An up-to-date NVIDIA driver is required in all
+cases.  CPU-only installations do not need ``numba-cuda``.
+
 Installation from github
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -38,7 +66,7 @@ and install it::
 
     git clone https://github.com/miniufo/xinvert.git
     cd xinvert
-    python setup.py install
+    python -m pip install .
 
 or simply::
 

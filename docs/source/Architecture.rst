@@ -60,6 +60,12 @@ Using ``invert_Poisson`` as an example::
 Architecture dispatch (architect)
 ---------------------------------
 
+.. warning::
+
+   The GPU backend is experimental.  Selecting ``architect='gpu'`` emits a
+   ``UserWarning`` so production users do not opt into an unstable backend
+   accidentally.
+
 .. list-table::
    :header-rows: 1
    :widths: 15 15 25 15 30
@@ -124,13 +130,15 @@ module-load time:
         _gpu_kernel_map[invert_general_2D] = invert_general_2D_gpu
         _gpu_kernel_map[invert_general_3D] = invert_general_3D_gpu
         _gpu_kernel_map[invert_general_bih_2D] = invert_general_bih_2D_gpu
-    except Exception:
-        pass  # silently fall back to CPU-only when CUDA is unavailable
+    except ImportError as exc:
+        _gpu_import_error = exc
 
-Every kernel in ``cpus.py`` has a registered GPU counterpart, and the ``except``
-clause keeps the package importable on machines without CUDA.  Should a kernel
-ever be added without a GPU version, requesting ``architect='gpu'`` for it
-raises::
+Every kernel in ``cpus.py`` has a registered GPU counterpart.  Catching only
+``ImportError`` keeps CPU-only installations importable while allowing actual
+bugs in the GPU module to surface.  The captured import error is chained into
+an actionable installation message if GPU execution is requested.  Should a
+kernel ever be added without a GPU version, requesting ``architect='gpu'`` for
+it raises::
 
     NotImplementedError: GPU kernel not implemented for invert_standard_2D
 
@@ -152,10 +160,10 @@ CPU vs GPU implementation comparison
      - ``while True`` in the Python wrapper
    * - Per call
      - runs all iterations
-     - launches a Red + a Black kernel each iteration
+     - launches one kernel per stencil color each iteration
    * - Parallelism
      - serial (point-by-point update)
-     - massively parallel (Red-Black parallel update)
+     - massively parallel (dependency-safe multi-color update)
    * - Convergence check
      - ``absNorm2D`` inside the kernel
      - GPU reduction kernel → host comparison
@@ -166,12 +174,13 @@ CPU vs GPU implementation comparison
      - identical
      - identical
 
-Red-Black SOR principle
------------------------
+Multi-color SOR principle
+-------------------------
 
 Classical SOR is inherently serial (each point update depends on the latest
-neighbour values), so it cannot be parallelised directly.  Red-Black SOR
-partitions the grid into two colours in a checkerboard pattern::
+neighbour values), so it cannot be parallelised directly.  For a five-point
+nearest-neighbour stencil, Red-Black SOR partitions the grid into two colours
+in a checkerboard pattern::
 
     R B R B R
     B R B R B
@@ -182,13 +191,23 @@ partitions the grid into two colours in a checkerboard pattern::
 2. **Black phase**: all black points update in parallel (their neighbours are
    all red, already updated).
 
-Together the two phases are equivalent to one SOR iteration.
+Together the two phases form one Red-Black SOR iteration.
 
-.. note::
+The coloring must match the complete stencil dependency graph.  xinvert
+therefore selects the scheme from the active coefficients:
 
-    When B≠0 (cross-derivative term) the diagonal neighbours share the same
-    colour, so the cross terms are effectively Jacobi-updated.  For the
-    Poisson equation (B=0) Red-Black SOR is strictly correct.
+* two colors for five-point 2-D and seven-point 3-D operators;
+* four colors, ``(j % 2, i % 2)``, when a 2-D mixed derivative couples
+  diagonal neighbours;
+* five colors, ``(j + 2*i) % 5``, for the biharmonic stencil, which also
+  couples points two cells apart.
+
+Each color is launched as a separate kernel, providing a device-wide
+synchronization between dependent colors.  A periodic x boundary must also
+preserve the coloring across its seam: parity schemes require an even x grid
+length, while the five-color biharmonic scheme requires a multiple of five.
+Incompatible GPU grids raise ``ValueError`` rather than running with a data
+race; the CPU backend has no such restriction.
 
 GPU convergence-check strategy
 ------------------------------
@@ -231,6 +250,58 @@ through ``_run_sor_2d_loop`` and the 3-D family (standard, general) through
 ``invert_standard_1D_gpu`` keeps its own inline loop, since a 1-D sweep has no
 row-structured boundary handling to share.
 
+Convergence modes
+~~~~~~~~~~~~~~~~~
+
+``iParams['convergence']`` selects the stopping metric:
+
+- ``'norm'`` (the backward-compatible default) uses the historical relative
+  change in ``mean(abs(S))`` shown above.  It is inexpensive, but two scalar
+  norms can be almost equal while individual grid points are still changing.
+- ``'residual'`` uses the normalized maximum SOR correction
+
+  .. math::
+
+      r_D = \frac{\max_i |\Delta S_i|}
+                  {\max_i\max(|S_i^{old}|, |S_i^{new}|)}.
+
+  Since an SOR update satisfies
+  :math:`\Delta S_i = \omega D_{ii}^{-1}(L(S)-F)_i`, this is a
+  diagonally-preconditioned equation residual.  Unlike the legacy scalar
+  norm-change test, local errors cannot cancel each other.  If the solution
+  scale is zero, the absolute maximum correction is used.
+
+The residual accumulator is enabled only on convergence-check sweeps.  GPU
+updates use two atomic maxima and copy two scalars to the host at a check;
+non-check sweeps retain the normal fast path.  CPU and GPU therefore use the
+same metric and check schedule.  ``tolerance <= 0`` still means a fixed
+iteration run in either mode.
+
+Structured solver diagnostics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The historical API returns only the solution ``DataArray``.  Setting
+``iParams['return_diagnostics'] = True`` opts into a two-item return value::
+
+    solution, diagnostics = invert_Poisson(
+        forcing, dims=['y', 'x'], coords='cartesian',
+        iParams={'convergence': 'residual',
+                 'return_diagnostics': True})
+
+``diagnostics`` is an ``xarray.Dataset`` containing:
+
+- ``converged`` -- whether the selected error metric reached ``tolerance``;
+- ``iterations`` -- the number of completed SOR sweeps;
+- ``error`` -- the final checked norm change or preconditioned residual;
+- ``stop_reason`` -- ``'converged'``, ``'max_iterations'``, or ``'overflow'``.
+
+Dataset attributes record ``convergence``, ``tolerance``, and
+``max_iterations``.  Each variable retains all non-core dimensions, so a
+time-series, ensemble, or Dask-backed inversion exposes one status record per
+independent solve.  Kernel flags are returned through a second generalized
+ufunc output; no shared mutable collector is used, which keeps threaded and
+distributed execution deterministic.
+
 Configurable thread-block shape
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -251,6 +322,14 @@ kernel actually sweeps (32 for *n* < 64, 128 for *n* < 512, else 256).  Since
 these kernels are off the hot loop, the block size has negligible effect on
 total runtime, so the parameter was removed to keep the API surface small.
 ``gpu_block2d`` in ``iParams`` is the only remaining GPU tuning knob.
+
+Compute precision is controlled by ``iParams['dtype']`` (default
+``np.float32``; ``np.float64`` or the strings ``'float32'``/``'float64'``
+are also accepted).  The forcing is cast *before* masking, so the
+solution, the mask and every coefficient array are allocated natively in
+the target dtype -- no full-size float64 intermediates are ever created
+when computing in float32, halving peak memory and (on the GPU) roughly
+doubling effective memory bandwidth.
 
 GPU with dask datasets
 ~~~~~~~~~~~~~~~~~~~~~~

@@ -300,6 +300,8 @@ lever is reducing the *iteration count* (multigrid, preconditioning).
 
 Benchmark and regression scripts live in ``tests/``:
 ``benchmark_cpu_gpu.py``, ``benchmark_blocks.py``, ``benchmark_convergence.py``,
+``benchmark_stopping_modes.py`` (``norm`` vs ``residual`` end-to-end time,
+iteration count, reported error, and manufactured-solution error),
 ``benchmark_gpu_overheads.py``, ``benchmark_gpu_scaling.py``,
 ``benchmark_resolution.py``, ``test_distributed.py`` (dask.distributed
 serialisation), ``test_jupyter_printinfo.py`` (Jupyter printInfo regression).
@@ -416,4 +418,3 @@ The default remains ``(16, 16)``; override per call via
 Reproduce the sweep::
 
     python tests/benchmark_blocks.py 128 256 512 1024 2048 4096
-

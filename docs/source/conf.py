@@ -70,7 +70,7 @@ templates_path = ['_templates']
 # This pattern also affects html_static_path and html_extra_path.
 exclude_patterns = [
     'conf.py', 'sphinxext', '_build', '_templates', '_themes',
-    '**.ipynb_checkpoints' '.DS_Store', 'trash', 'tmp',
+    '**.ipynb_checkpoints', '.DS_Store', 'trash', 'tmp',
 ]
 
 

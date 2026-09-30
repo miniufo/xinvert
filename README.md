@@ -23,6 +23,11 @@ More importantly, this could be generalized into a numerical solver for elliptic
 
 One problem with SOR is that the speed of iteration using **explicit loops in Python** will be **e-x-t-r-e-m-e-l-y ... s-l-o-w**!  A very suitable solution here is to use [`numba`](https://numba.pydata.org/).  In addition, through using [`xarray`](http://xarray.pydata.org/en/stable/)'s [`dask`](https://docs.dask.org/en/latest/) backend for parallel computing, the speed of the inversion could be further improved using multiple CPU cores.  Now, we could also make use of CUDA GPU for further acceleration, with a Red-Black SOR kernel achieving up to **~17× speedup** over the CPU for large grids (measured on an RTX 3090; see the [benchmark docs](https://xinvert.readthedocs.io/en/latest/Benchmark.html)).  See this [notebook](./docs/source/notebooks/Parallel_inversions.ipynb) for more details of CPU/GPU parallel computing, and this [docs](https://xinvert.readthedocs.io/en/latest/Benchmark.html) for benchmark of the inversion speed.
 
+> **Experimental GPU backend:** CUDA support is available for testing and
+> evaluation, but is not yet part of xinvert's stable API. Kernel behavior,
+> configuration options, and performance characteristics may still change.
+> Use the CPU backend for production workflows that require the stable path.
+
 Classical problems include Gill-Matsuno model, Stommel-Munk model, QG omega model, PV inversion model, Swayer-Eliassen balance model...  A complete list of the classical inversion problems can be found at [this notebook](./docs/source/notebooks/00_Introduction.ipynb).
 
 Why `xinvert`?
@@ -30,19 +35,25 @@ Why `xinvert`?
 - **Thinking and coding in equations:** User APIs are very close to the equations: unknowns are on the LHS of `=`, whereas the known forcings are on its RHS;
 - **Genearlize all the steady-state problems:** All the known steady-state problems in geophysical fluid dynamics can be easily adapted to fit the solvers;
 - **Very short parameter list:** Passing a single `xarray` forcing is enough for the inversion.  Coordinates information is already encapsulated.
-- **Flexible model parameters:** Model paramters can be either a constant, or varying with a specific dimension (like Coriolis $f$), or fully varying with space and time, due to the use of `xarray`'s broadcasting capability;
+- **Flexible model parameters:** Model parameters can be either a constant, or varying with a specific dimension (like Coriolis $f$), or fully varying with space and time, due to the use of `xarray`'s broadcasting capability;
 - **Parallel inverting:** The use of `xarray`, and thus `dask` allow parallel inverting, which is almost transparent to the user;
 - **Pure Python code for C-code speed:** The use of `numba` allow pure python code in this package but native speed;
 
 ---
 ## 2. How to install
 **Requirements**
-`xinvert` is developed under the environment with `xarray` (=version 0.15.0), `dask` (=version 2.11.0), `numpy` (=version 1.15.4), and `numba` (=version 0.51.2).  Older versions of these packages are not well tested.
+`xinvert` supports Python 3.9 and newer and requires `xarray`, `dask`, `numpy`, and `numba`. GPU acceleration additionally requires an NVIDIA GPU with a compatible driver/runtime and the maintained `numba-cuda` package.
 
 
 **Install via pip**
 ```bash
 pip install xinvert
+```
+
+**Install GPU support**
+```bash
+pip install "xinvert[gpu]"                 # existing CUDA runtime
+pip install xinvert "numba-cuda[cu12]"    # install CUDA 12 runtime libraries
 ```
 
 **Install via conda**
@@ -54,7 +65,7 @@ conda install -c conda-forge xinvert
 ```bash
 git clone https://github.com/miniufo/xinvert.git
 cd xinvert
-python setup.py install
+python -m pip install .
 ```
 
 
@@ -85,6 +96,36 @@ psi = animate_iteration(invert_Poisson, vor, iParams=iParams,
 ```
 
 See the animation at the top.
+
+For accuracy-sensitive inversions, the optional preconditioned-residual
+stopping criterion avoids false convergence caused by an unchanged global
+solution norm:
+
+```python
+iParams = {
+    'tolerance': 1e-8,
+    'convergence': 'residual',  # default 'norm' keeps legacy behaviour
+}
+psi = invert_Poisson(vor, dims=['lat', 'lon'], iParams=iParams)
+```
+
+To inspect termination status programmatically, opt in to structured
+diagnostics.  The default return value remains unchanged:
+
+```python
+iParams['return_diagnostics'] = True
+psi, diagnostics = invert_Poisson(
+    vor, dims=['lat', 'lon'], iParams=iParams)
+
+print(diagnostics.converged.item())
+print(diagnostics.iterations.item())
+print(diagnostics.error.item())
+print(diagnostics.stop_reason.item())  # 'converged', 'max_iterations', ...
+```
+
+For inputs with non-solver dimensions such as `time` or `member`, every
+diagnostic variable retains those dimensions and reports each inversion
+independently.  This also works with Dask-backed arrays.
 
 
 
