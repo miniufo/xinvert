@@ -53,7 +53,7 @@ for _mod in ('numba.core.errors', 'numba_cuda.errors'):
 # helpers
 # ---------------------------------------------------------------------------
 
-_NZ, _NY, _NX = 17, 21, 25
+_NZ, _NY, _NX = 17, 21, 24  # periodic x requires an even extent
 _UNDEF = -9.99e8
 _OPTARG = 1.7
 _MXLOOP = 200000

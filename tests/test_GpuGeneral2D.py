@@ -50,7 +50,7 @@ for _mod in ('numba.core.errors', 'numba_cuda.errors'):
 # helpers
 # ---------------------------------------------------------------------------
 
-def _grid(ny=33, nx=49, periodic=False):
+def _grid(ny=33, nx=48, periodic=False):
     x = np.linspace(0.0, 1.0, nx, endpoint=not periodic)
     y = np.linspace(0.0, 1.0, ny)
     X, Y = np.meshgrid(x, y)

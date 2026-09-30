@@ -19,10 +19,8 @@ Run:  python tests/benchmark_convergence.py [--grids 64 ... 4096]
           [--iters 100 ... 25600] [--cpu-budget 120]
 """
 import argparse
-import io
 import json
 import os
-import re
 import sys
 import time
 import warnings
@@ -33,7 +31,6 @@ warnings.filterwarnings('ignore', message='.*low occupancy.*')
 
 import numpy as np
 import xarray as xr
-import contextlib
 from xinvert import invert_Poisson
 
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
@@ -47,13 +44,11 @@ def solve(arch, n, mxLoop, tol, optArg):
     F = xr.DataArray(-2.0 * np.pi**2 * psi_true, dims=['y', 'x'],
                      coords={'y': y, 'x': x})
     ip = {'BCs': ['fixed', 'fixed'], 'undef': np.nan, 'mxLoop': mxLoop,
-          'tolerance': tol, 'optArg': optArg, 'printInfo': True,
-          'architect': arch}
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        r = invert_Poisson(F, dims=['y', 'x'], coords='cartesian', iParams=ip)
-    m = re.search(r'loops\s+(\d+)', buf.getvalue())
-    loop = int(m.group(1)) if m else -1
+          'tolerance': tol, 'optArg': optArg, 'printInfo': False,
+          'architect': arch, 'return_diagnostics': True}
+    r, diagnostics = invert_Poisson(
+        F, dims=['y', 'x'], coords='cartesian', iParams=ip)
+    loop = int(diagnostics.iterations.item())
     err = float(np.nanmax(np.abs(r.values - psi_true)))
     return loop, err
 

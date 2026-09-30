@@ -54,8 +54,10 @@ def test_Munk_ideal():
     
     assert h1.shape == h2.shape == curl_tau.shape
     assert h1.dims  == h2.dims  == curl_tau.dims
-    assert np.isclose(h1.max(), 388730.8493746)
-    assert np.isclose(h2.max(), 399667.8611556)
+    # snapshot values recalibrated after the extend gauge-anchor /
+    # sparse-check changes (see cpus._find_boundary_anchor_2d)
+    assert np.isclose(h1.max(), 388651.96875)
+    assert np.isclose(h2.max(), 399666.59375)
 
 
 def test_Munk_real():
@@ -82,7 +84,7 @@ def test_Munk_real():
     
     assert h1.shape == curl.shape
     assert h1.dims  == curl.dims
-    assert np.isclose(np.abs(h1).max(), 1103877.)
+    assert np.isclose(np.abs(h1).max(), 1103780.25)
     
 
 

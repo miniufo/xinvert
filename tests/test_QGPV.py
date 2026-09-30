@@ -71,9 +71,20 @@ def test_invert_PV2D():
     THo = TH2 + THa
     To  = T  + Ta
     Ho  = H  + Ha
-    
+
+    assert bool(np.isfinite(Ha).all())
     assert np.isclose(Ha.max(), 0)
-    assert np.abs(Ha.min()) <= 9.464e+10
+    assert Ha.min() < 0
+    # BCs=['fixed', 'extend']: pressure endpoints remain prescribed, while
+    # both Y endpoints copy their adjacent interior value.  This directly
+    # tests the requested boundary semantics instead of an implementation-
+    # dependent amplitude from the former coupled-boundary bug.
+    xr.testing.assert_allclose(Ha.isel(LEV=0), xr.zeros_like(Ha.isel(LEV=0)))
+    xr.testing.assert_allclose(Ha.isel(LEV=-1), xr.zeros_like(Ha.isel(LEV=-1)))
+    np.testing.assert_allclose(
+        Ha.isel(Y=0), Ha.isel(Y=1), rtol=2e-3, atol=1e-6)
+    np.testing.assert_allclose(
+        Ha.isel(Y=-1), Ha.isel(Y=-2), rtol=2e-3, atol=1e-6)
 
 #%% plot
 # import proplot as pplt

@@ -56,7 +56,7 @@ for _mod in ('numba.core.errors', 'numba_cuda.errors'):
 # helpers
 # ---------------------------------------------------------------------------
 
-_NX = 101
+_NX = 100  # even so red-black coloring is valid across a periodic seam
 _UNDEF = -9.99e8
 _OPTARG = 1.85
 _MXLOOP = 200000
@@ -84,13 +84,30 @@ def _solve_kernel(A, B, F, BCx, S0, architect):
 
 
 def _kernel_problem(psi_true, bcx):
-    """Build A=1, B=-k^2 and F = psi'' + B*psi for the given psi."""
+    """Build A=1, B=-k^2 and F = psi'' + B*psi for the given psi.
+
+    For 'extend' a PURE Poisson (B=0) is used with
+    psi = cos(2 pi x) - cos(4 pi x)/4, which has psi' = 0 at BOTH ends,
+    a zero mean, AND psi'' = 0 at the ends.  The last property matters:
+    the extend (zero-gradient) closure drops the boundary points from
+    the discrete system, so the discrete compatibility condition is a
+    sum over INTERIOR points only -- forcing that vanishes at the
+    boundary keeps that sum O(h^2) close to zero.  A strong Helmholtz
+    term would additionally make extend + gauge-anchor ill-posed
+    (exponential homogeneous solutions).
+    """
     x = np.linspace(0.0, 1.0, _NX, endpoint=(bcx != 'periodic'))
     X = np.meshgrid(x)[0]
-    k2 = (np.pi if bcx != 'periodic' else 2.0 * np.pi) ** 2
     A = np.ones(_NX)
-    B = -k2 * np.ones(_NX)
-    F = -(k2 + k2) * psi_true          # psi'' = -k2*psi  =>  F = -2 k2 psi
+    if bcx == 'extend':
+        # psi = cos(2 pi x) - cos(4 pi x)/4  =>  psi'' as below
+        B = np.zeros(_NX)
+        F = (-4.0 * np.pi ** 2 * np.cos(2.0 * np.pi * X)
+             + 4.0 * np.pi ** 2 * np.cos(4.0 * np.pi * X))
+    else:
+        k2 = (np.pi if bcx == 'fixed' else 2.0 * np.pi) ** 2
+        B = -k2 * np.ones(_NX)
+        F = -(k2 + k2) * psi_true          # psi'' = -k2*psi  =>  F = -2 k2 psi
     S0 = np.zeros(_NX)
     return A, B, F, X[0], S0
 
@@ -109,14 +126,21 @@ class TestStandard1DCpuGpuConsistency:
             x = np.linspace(0, 1, _NX)
             psi = np.sin(np.pi * x)
         elif bcx == 'extend':
+            # see _kernel_problem: psi' = 0 and psi'' = 0 at both ends
             x = np.linspace(0, 1, _NX)
-            psi = np.cos(np.pi * x)
+            psi = np.cos(2.0 * np.pi * x) - np.cos(4.0 * np.pi * x) / 4.0
         else:
             x = np.linspace(0, 1, _NX, endpoint=False)
             psi = np.cos(2.0 * np.pi * x)
         A, B, F, _, S0 = _kernel_problem(psi, bcx)
         S, flags = _solve_kernel(A, B, F, bcx, S0, 'cpu')
         assert not flags[0], 'CPU overflow'
+        if bcx == 'extend':
+            # extend (Neumann at both ends) makes the system singular; the
+            # gauge anchor pins the first interior point to its initial
+            # guess (0), so the solution agrees with the analytic one up
+            # to a constant offset
+            S = S - S[1] + psi[1]
         err = float(np.max(np.abs(S - psi)))
         # 'extend' BC is a first-order (zero-gradient) approximation, so its
         # discretization error is O(dx) ~ 1.5e-2 rather than O(dx^2)
@@ -132,14 +156,18 @@ class TestStandard1DCpuGpuConsistency:
             x = np.linspace(0, 1, _NX)
             psi = np.sin(np.pi * x)
         elif bcx == 'extend':
+            # see _kernel_problem: psi' = 0 and psi'' = 0 at both ends
             x = np.linspace(0, 1, _NX)
-            psi = np.cos(np.pi * x)
+            psi = np.cos(2.0 * np.pi * x) - np.cos(4.0 * np.pi * x) / 4.0
         else:
             x = np.linspace(0, 1, _NX, endpoint=False)
             psi = np.cos(2.0 * np.pi * x)
         A, B, F, _, S0 = _kernel_problem(psi, bcx)
         S, flags = _solve_kernel(A, B, F, bcx, S0, 'gpu')
         assert not flags[0], 'GPU overflow'
+        if bcx == 'extend':
+            # see the CPU test: solution agrees up to a constant offset
+            S = S - S[1] + psi[1]
         err = float(np.max(np.abs(S - psi)))
         tol = {'fixed': 1e-4, 'extend': 3e-2, 'periodic': 1e-3}[bcx]
         assert err < tol, f'GPU error vs analytic ({bcx}): {err:.4e}'
@@ -153,8 +181,9 @@ class TestStandard1DCpuGpuConsistency:
             x = np.linspace(0, 1, _NX)
             psi = np.sin(np.pi * x)
         elif bcx == 'extend':
+            # see _kernel_problem: psi' = 0 and psi'' = 0 at both ends
             x = np.linspace(0, 1, _NX)
-            psi = np.cos(np.pi * x)
+            psi = np.cos(2.0 * np.pi * x) - np.cos(4.0 * np.pi * x) / 4.0
         else:
             x = np.linspace(0, 1, _NX, endpoint=False)
             psi = np.cos(2.0 * np.pi * x)
@@ -208,7 +237,7 @@ if __name__ == '__main__':
     ok = True
     for bcx, x, psi in [
             ('fixed',    np.linspace(0, 1, _NX),                np.sin(np.pi * np.linspace(0, 1, _NX))),
-            ('extend',   np.linspace(0, 1, _NX),                np.cos(np.pi * np.linspace(0, 1, _NX))),
+            ('extend',   np.linspace(0, 1, _NX),                np.cos(2 * np.pi * np.linspace(0, 1, _NX)) - np.cos(4 * np.pi * np.linspace(0, 1, _NX)) / 4.0),
             ('periodic', np.linspace(0, 1, _NX, endpoint=False), np.cos(2 * np.pi * np.linspace(0, 1, _NX, endpoint=False)))]:
         A, B, F, _, S0 = _kernel_problem(psi, bcx)
         S_cpu, _ = _solve_kernel(A, B, F, bcx, S0, 'cpu')

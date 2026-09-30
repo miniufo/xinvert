@@ -101,8 +101,10 @@ def test_omega_atmos():
     assert np.isclose(  WQG.min(), -0.32804008)
     assert np.isclose(WQvec.max(),  0.11733621)
     assert np.isclose(WQvec.min(), -0.37005570)
-    assert np.isclose(WQvTp.max(),  2.10157466)
-    assert np.isclose(WQvTp.min(), -0.69490683)
+    # WBC is non-zero only below the surface, where the forcing is missing.
+    # Values of icbc on invalid forcing cells must not enter the stencil and
+    # contaminate the valid atmospheric solution.
+    xr.testing.assert_allclose(WQvTp, WQvec)
 
 #%% plot cross section
 # import proplot as pplt

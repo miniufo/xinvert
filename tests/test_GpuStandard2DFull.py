@@ -52,7 +52,7 @@ for _mod in ('numba.core.errors', 'numba_cuda.errors'):
 # helpers
 # ---------------------------------------------------------------------------
 
-_NY, _NX = 41, 51
+_NY, _NX = 41, 50  # periodic x requires an even extent for parity coloring
 
 _IPARAMS = {
     'BCs'      : ['fixed', 'fixed'],

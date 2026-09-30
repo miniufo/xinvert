@@ -94,6 +94,7 @@ def decompose(p, mxLoop, tol):
     bs1d = _auto_bsize_1d(xc)
     bcx = max((xc + 15) // 16, 1)
     d_norm = cuda.device_array(2, dtype=np.float64)
+    d_metric = cuda.device_array(2, dtype=np.float64)
     check_interval = _compute_check_interval(mxLoop, tol)
 
     t0 = time.perf_counter()
@@ -102,12 +103,12 @@ def decompose(p, mxLoop, tol):
     loop = 0
     norm_prev = np.finfo(np.float64).max
     while True:
-        _extend_y_boundary[bcx, bs1d](d_S, yc, xc, p['undef'])
+        _extend_y_boundary[bcx, bs1d](d_S, yc, xc, p['undef'], -1, -1)
         for color in (0, 1):
             _sor_2d_rb[blocks, threads](d_S, d_A, d_B, d_C, d_F, yc, xc,
                                        True, p['delxSqr'], p['ratioQtr'],
                                        p['ratioSqr'], p['optArg'],
-                                       p['undef'], color)
+                                       p['undef'], color, 2, d_metric, False)
         loop += 1
         if loop % check_interval == 0 or loop >= mxLoop:
             ts = time.perf_counter()

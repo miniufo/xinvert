@@ -112,14 +112,17 @@ def test_stommel_real():
     u1, v1 = cal_flow(h1, dims=['lat','lon'], BCs=['extend', 'periodic'])
     u2, v2 = cal_flow(h2, dims=['lat','lon'], BCs=['extend', 'periodic'])
     
-    assert np.isclose(h1.min(), -437846.34375)
-    assert np.isclose(h1.max(),  536152.25000)
-    assert np.isclose(h2.min(), -414698.03125)
-    assert np.isclose(h2.max(),  826675.93750)
-    
-    assert np.isclose(h11.min(), -431810.0625)
-    assert np.isclose(h11.max(),  432051.2500)
-    assert np.isclose(h22.min(), -435084.8125)
-    assert np.isclose(h22.max(),  725193.1250)
-    
+    # snapshot values recalibrated after the extend gauge-anchor change
+    # (see cpus._find_boundary_anchor_2d): mixed extend/periodic systems
+    # are now determinate, shifting the last digits of these snapshots
+    assert np.isclose(h1.min(), -437846.31250)
+    assert np.isclose(h1.max(),  536147.75000)
+    assert np.isclose(h2.min(), -414699.93750)
+    assert np.isclose(h2.max(),  826668.75000)
+
+    assert np.isclose(h11.min(), -431809.90625)
+    assert np.isclose(h11.max(),  432034.56250)
+    assert np.isclose(h22.min(), -435085.71875)
+    assert np.isclose(h22.max(),  725163.56250)
+
 
