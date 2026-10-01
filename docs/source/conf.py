@@ -228,6 +228,9 @@ def _widen_pandoc_columns(columns=PANDOC_COLUMNS, wrap=PANDOC_WRAP):
     Only the json -> rst pandoc call is touched -- the one that carries
     ``--columns``.  Every other subprocess in the build passes through
     untouched.
+
+    The patch must keep ``subprocess.Popen`` *subscriptable*; see the
+    ``_Popen`` docstring below for what breaks otherwise.
     """
     import subprocess
     from os.path import basename
@@ -237,18 +240,32 @@ def _widen_pandoc_columns(columns=PANDOC_COLUMNS, wrap=PANDOC_WRAP):
 
     real_popen = subprocess.Popen
 
-    def _popen(cmd, *args, **kwargs):
-        if (isinstance(cmd, (list, tuple)) and cmd
-                and basename(str(cmd[0])).lower().startswith('pandoc')
-                and any(str(arg).startswith('--columns=') for arg in cmd)):
-            cmd = [f'--columns={columns}' if str(arg).startswith('--columns=')
-                   else arg for arg in cmd]
-            if wrap and not any(str(arg).startswith('--wrap') for arg in cmd):
-                cmd.append(f'--wrap={wrap}')
-        return real_popen(cmd, *args, **kwargs)
+    class _Popen(real_popen):
+        """``subprocess.Popen`` that widens pandoc's ``--columns``.
 
-    _popen._xinvert_wide_columns = True
-    subprocess.Popen = _popen
+        This subclasses ``Popen`` instead of shadowing it with a plain
+        function.  A plain function is not subscriptable, and some modules
+        evaluate ``subprocess.Popen[...]`` in an annotation at *import* time --
+        IPython's ``_process_win32`` does exactly that on Windows -- so
+        shadowing breaks them with ``TypeError: 'function' object is not
+        subscriptable``.  That fires during the docs build as soon as
+        ``nbsphinx`` imports ``ipywidgets``, which itself imports IPython.
+        Inheriting keeps ``__class_getitem__`` working, and the returned
+        objects are still real ``Popen`` instances.
+        """
+
+        def __init__(self, cmd, *args, **kwargs):
+            if (isinstance(cmd, (list, tuple)) and cmd
+                    and basename(str(cmd[0])).lower().startswith('pandoc')
+                    and any(str(arg).startswith('--columns=') for arg in cmd)):
+                cmd = [f'--columns={columns}' if str(arg).startswith('--columns=')
+                       else arg for arg in cmd]
+                if wrap and not any(str(arg).startswith('--wrap') for arg in cmd):
+                    cmd.append(f'--wrap={wrap}')
+            super().__init__(cmd, *args, **kwargs)
+
+    _Popen._xinvert_wide_columns = True
+    subprocess.Popen = _Popen
 
 
 def setup(app):
