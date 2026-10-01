@@ -92,7 +92,6 @@ html_logo = os.path.join('_static', 'xinvertLogo.png')
 html_theme = 'sphinx_rtd_theme'
 html_theme_options = {
     'logo_only': True,
-    'display_version': False,
     'collapse_navigation': True,
     'navigation_depth': 4,
     'prev_next_buttons_location': 'bottom',  # top and bottom

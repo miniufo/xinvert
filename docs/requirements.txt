@@ -10,3 +10,7 @@ ultraplot
 netCDF4
 scipy
 ipykernel
+
+# nbsphinx warns "nbsphinx_widgets_path not given and ipywidgets module
+# unavailable" without it, which fails the build under fail_on_warning.
+ipywidgets
