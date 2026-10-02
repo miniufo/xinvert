@@ -8,29 +8,37 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest",]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-
-      - name: setup conda environment
+      - name: Set up conda environment
         uses: conda-incubator/setup-miniconda@v3
         with:
-          miniconda-version: "latest"
+          miniconda-version: latest
           python-version: ${{ matrix.python-version }}
           environment-file: environment.yml
           activate-environment: xinvert
           auto-activate-base: false
-
-      - name: Check workspace
-        run: echo ${{ github.workspace }}
-
       - name: List installed packages
         shell: bash -l {0}
         run: conda list
-
-      - name: Test with pytest
+      - name: Test CPU path
         shell: bash -l {0}
-        run: python -m pytest
+        run: python -m pytest -q
+
+  gpu:
+    if: ${{ vars.XINVERT_GPU_RUNNER != '' }}
+    runs-on: ${{ vars.XINVERT_GPU_RUNNER }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniconda-version: latest
+          environment-file: environment.yml
+          activate-environment: xinvert
+          auto-activate-base: false
+      - name: Run GPU consistency tests
+        shell: bash -l {0}
+        run: python -m pytest -q tests/test_CpuGpuConsistency.py tests/test_GpuGeneral2D.py
