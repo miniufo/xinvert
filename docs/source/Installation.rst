@@ -57,29 +57,6 @@ CUDA 13 users can replace ``cu12`` / ``cuda-version=12`` with the
 corresponding CUDA 13 option.  An up-to-date NVIDIA driver is required in all
 cases.  CPU-only installations do not need ``numba-cuda``.
 
-Solver convergence and diagnostics
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-The default solver stopping rule preserves the legacy global-norm behavior.
-For accuracy-sensitive calculations, use the residual criterion explicitly::
-
-    iParams = {'tolerance': 1e-8, 'convergence': 'residual'}
-    psi = invert_Poisson(vor, dims=['lat', 'lon'], iParams=iParams)
-
-To inspect termination programmatically, request structured diagnostics. The
-solver returns the usual result plus a diagnostics dataset::
-
-    iParams['return_diagnostics'] = True
-    psi, diagnostics = invert_Poisson(vor, dims=['lat', 'lon'], iParams=iParams)
-    print(diagnostics.converged.item())
-    print(diagnostics.iterations.item())
-    print(diagnostics.error.item())
-    print(diagnostics.stop_reason.item())
-
-For inputs with extra dimensions such as ``time`` or ``member``, diagnostic
-variables retain those dimensions and report each inversion independently.
-The same behavior applies to Dask-backed inputs.
-
 Installation from github
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
