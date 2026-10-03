@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Core module of xinvert: SOR iteration solvers for elliptic PDEs.
 
@@ -7,15 +6,23 @@ Implements the low-level ``inv_standard3D`` / ``inv_general3D`` /
 :mod:`xinvert.cpus`, plus iteration-loop, convergence-check, and
 animation helpers used by the high-level wrappers in :mod:`xinvert.apps`.
 """
-import numpy as np
-import xarray as xr
+import numbers
 import sys
 import threading
 import warnings
-import numbers
-from .cpus import invert_standard_3D, invert_standard_2D, invert_standard_1D,\
-                    invert_general_3D, invert_general_2D, \
-                    invert_general_bih_2D, invert_standard_2D_full
+
+import numpy as np
+import xarray as xr
+
+from .cpus import (
+    invert_general_2D,
+    invert_general_3D,
+    invert_general_bih_2D,
+    invert_standard_1D,
+    invert_standard_2D,
+    invert_standard_2D_full,
+    invert_standard_3D,
+)
 from .utils import loop_noncore
 
 
@@ -195,11 +202,16 @@ _gpu_kernel_map = {}
 _ensure_cuda = None    # gpus.ensure_context, if the GPU module is available
 _gpu_import_error = None
 try:
-    from .gpus import (invert_standard_2D_gpu, invert_standard_2D_full_gpu,
-                       invert_standard_1D_gpu, invert_general_2D_gpu,
-                       invert_standard_3D_gpu, invert_general_3D_gpu,
-                       invert_general_bih_2D_gpu,
-                       ensure_context as _ensure_cuda)
+    from .gpus import ensure_context as _ensure_cuda
+    from .gpus import (
+        invert_general_2D_gpu,
+        invert_general_3D_gpu,
+        invert_general_bih_2D_gpu,
+        invert_standard_1D_gpu,
+        invert_standard_2D_full_gpu,
+        invert_standard_2D_gpu,
+        invert_standard_3D_gpu,
+    )
     _gpu_kernel_map[invert_standard_2D] = invert_standard_2D_gpu
     _gpu_kernel_map[invert_standard_2D_full] = invert_standard_2D_full_gpu
     _gpu_kernel_map[invert_standard_1D] = invert_standard_1D_gpu

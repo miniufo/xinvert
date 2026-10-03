@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Utility module of xinvert: data preprocessing helpers.
 
@@ -6,8 +5,8 @@ Provides ``loop_noncore`` for iterating over non-core dimensions,
 ``smooth9`` for 9-point smoothing, and ``coarsen`` for block-averaging
 xarray DataArrays with flexible boundary handling.
 """
-import numpy as np
 import numba as nb
+import numpy as np
 
 
 def loop_noncore(data, dims=None):

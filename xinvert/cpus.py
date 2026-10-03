@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 CPUs module of xinvert: numba-jitted SOR iteration kernels.
 
@@ -6,9 +5,8 @@ Contains the ``@nb.jit`` decorated inner loops (``invert_standard_3D``,
 ``invert_general_3D``, ``invert_general_2D_bih``, etc.) for maximum iteration
 speed, called by the high-level solvers in :mod:`xinvert.core`.
 """
-import numpy as np
 import numba as nb
-
+import numpy as np
 
 """
 Below are the numba functions
@@ -1055,13 +1053,13 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H, info,
                                 (S[k,j,1] - S[k,j,0])-(S[k,j,0] - S[k,j,-1])
                             ) + (
                             D[k,j,0] * (
-                                (S[k+1,j,0] - S[k-1,j,0])
+                                S[k+1,j,0] - S[k-1,j,0]
                             ) * ratio2 +
                             E[k,j,0] * (
-                                (S[k,j+1,0] - S[k,j-1,0])
+                                S[k,j+1,0] - S[k,j-1,0]
                             ) * ratio1 +
                             F[k,j,0] * (
-                                (S[k,j,1] - S[k,j,-1])
+                                S[k,j,1] - S[k,j,-1]
                             )) * delx / 2.0 + (
                             G[k,j,0] * S[k,j,0] - H[k,j,0]) * delxSqr
                         )
@@ -1094,13 +1092,13 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H, info,
                                 (S[k,j,i+1] - S[k,j,i])-(S[k,j,i] - S[k,j,i-1])
                             ) + (
                             D[k,j,i] * (
-                                (S[k+1,j,i] - S[k-1,j,i])
+                                S[k+1,j,i] - S[k-1,j,i]
                             ) * ratio2 +
                             E[k,j,i] * (
-                                (S[k,j+1,i] - S[k,j-1,i])
+                                S[k,j+1,i] - S[k,j-1,i]
                             ) * ratio1 +
                             F[k,j,i] * (
-                                (S[k,j,i+1] - S[k,j,i-1])
+                                S[k,j,i+1] - S[k,j,i-1]
                             )) * delx / 2.0 + (
                             G[k,j,i] * S[k,j,i] - H[k,j,i]) * delxSqr
                         )
@@ -1133,13 +1131,13 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H, info,
                                 (S[k,j,0] - S[k,j,-1])-(S[k,j,-1] - S[k,j,-2])
                             ) + (
                             D[k,j,-1] * (
-                                (S[k+1,j,-1] - S[k-1,j,-1])
+                                S[k+1,j,-1] - S[k-1,j,-1]
                             ) * ratio2 +
                             E[k,j,-1] * (
-                                (S[k,j+1,-1] - S[k,j-1,-1])
+                                S[k,j+1,-1] - S[k,j-1,-1]
                             ) * ratio1 +
                             F[k,j,-1] * (
-                                (S[k,j,0] - S[k,j,-2])
+                                S[k,j,0] - S[k,j,-2]
                             )) * delx / 2.0 + (
                             G[k,j,-1] * S[k,j,-1] - H[k,j,-1]) * delxSqr
                         )
@@ -1307,10 +1305,10 @@ def invert_general_2D(S, A, B, C, D, E, F, G, info,
                             (S[j,1] - S[j,0])-(S[j,0] - S[j,-1])
                         ) + (
                         D[j,0] * (
-                            (S[j+1,0] - S[j-1,0])
+                            S[j+1,0] - S[j-1,0]
                         ) * ratio +
                         E[j,0] * (
-                            (S[j,1] - S[j,-1])
+                            S[j,1] - S[j,-1]
                         )) * delx / 2.0 + (
                         F[j,0] * S[j,0] - G[j,0]) * delxSqr
                     )
@@ -1341,10 +1339,10 @@ def invert_general_2D(S, A, B, C, D, E, F, G, info,
                             (S[j,i+1] - S[j,i])-(S[j,i] - S[j,i-1])
                         ) + (
                         D[j,i] * (
-                            (S[j+1,i] - S[j-1,i])
+                            S[j+1,i] - S[j-1,i]
                         ) * ratio +
                         E[j,i] * (
-                            (S[j,i+1] - S[j,i-1])
+                            S[j,i+1] - S[j,i-1]
                         )) * delx / 2.0 + (
                         F[j,i] * S[j,i] - G[j,i]) * delxSqr
                     )
@@ -1375,10 +1373,10 @@ def invert_general_2D(S, A, B, C, D, E, F, G, info,
                             (S[j,0] - S[j,-1])-(S[j,-1] - S[j,-2])
                         ) + (
                         D[j,-1] * (
-                            (S[j+1,-1] - S[j-1,-1])
+                            S[j+1,-1] - S[j-1,-1]
                         ) * ratio +
                         E[j,-1] * (
-                            (S[j,0] - S[j,-2])
+                            S[j,0] - S[j,-2]
                         )) * delx / 2.0 + (
                         F[j,-1] * S[j,-1] - G[j,-1]) * delxSqr
                     )
@@ -1554,15 +1552,15 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                 if cond:
                     temp = (
                         A[j,0] * (
-                            (S[j+2,0] - 4.0*S[j+1,0] + 6.0*S[j,0]- 4.0*S[j-1,0] + S[j-2,0])
+                            S[j+2,0] - 4.0*S[j+1,0] + 6.0*S[j,0]- 4.0*S[j-1,0] + S[j-2,0]
                         ) * ratioSSr +
                         B[j,0] * (
-                            (    S[j+2,2] - 2.0*S[j+2,0] +     S[j+2,-2] +
+                                S[j+2,2] - 2.0*S[j+2,0] +     S[j+2,-2] +
                             -2.0*S[j  ,2] + 4.0*S[j  ,0] - 2.0*S[j  ,-2] +
-                                 S[j-2,2] - 2.0*S[j-2,0] +     S[j-2,-2])
+                                 S[j-2,2] - 2.0*S[j-2,0] +     S[j-2,-2]
                         ) * ratioSqr / 16.0 +
                         C[j,0] * (
-                            (S[j,2] - 4.0*S[j,1] + 6.0*S[j,0] - 4.0*S[j,-1] + S[j,-2])
+                            S[j,2] - 4.0*S[j,1] + 6.0*S[j,0] - 4.0*S[j,-1] + S[j,-2]
                         ) +
                         D[j,0] * (
                             (S[j+1,0] - S[j,0])-(S[j,0] - S[j-1,0])
@@ -1574,10 +1572,10 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                             (S[j,1] - S[j,0])-(S[j,0] - S[j,-1])
                         ) * delxSqr +
                         G[j,0] * (
-                            (S[j+1,0] - S[j-1,0])
+                            S[j+1,0] - S[j-1,0]
                         ) * delxTr / 2.0 * ratio +
                         H[j,0] * (
-                            (S[j,1] - S[j,-1])
+                            S[j,1] - S[j,-1]
                         ) * delxTr / 2.0 + (
                         I[j,0] * S[j,0] - J[j,0]) * delxSSr
                     )
@@ -1602,15 +1600,15 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                 if cond:
                     temp = (
                         A[j,1] * (
-                            (S[j+2,1] - 4.0*S[j+1,1] + 6.0*S[j,1]- 4.0*S[j-1,1] + S[j-2,1])
+                            S[j+2,1] - 4.0*S[j+1,1] + 6.0*S[j,1]- 4.0*S[j-1,1] + S[j-2,1]
                         ) * ratioSSr +
                         B[j,1] * (
-                            (    S[j+2,3] - 2.0*S[j+2,1] +     S[j+2,-1] +
+                                S[j+2,3] - 2.0*S[j+2,1] +     S[j+2,-1] +
                             -2.0*S[j  ,3] + 4.0*S[j  ,1] - 2.0*S[j  ,-1] +
-                                 S[j-2,3] - 2.0*S[j-2,1] +     S[j-2,-1])
+                                 S[j-2,3] - 2.0*S[j-2,1] +     S[j-2,-1]
                         ) * ratioSqr / 16.0 +
                         C[j,1] * (
-                            (S[j,3] - 4.0*S[j,2] + 6.0*S[j,1] - 4.0*S[j,0] + S[j,-1])
+                            S[j,3] - 4.0*S[j,2] + 6.0*S[j,1] - 4.0*S[j,0] + S[j,-1]
                         ) +
                         D[j,1] * (
                             (S[j+1,1] - S[j,1])-(S[j,1] - S[j-1,1])
@@ -1622,10 +1620,10 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                             (S[j,2] - S[j,1])-(S[j,1] - S[j,0])
                         ) * delxSqr +
                         G[j,1] * (
-                            (S[j+1,1] - S[j-1,1])
+                            S[j+1,1] - S[j-1,1]
                         ) * delxTr / 2.0 * ratio +
                         H[j,1] * (
-                            (S[j,2] - S[j,0])
+                            S[j,2] - S[j,0]
                         ) * delxTr / 2.0 + (
                         I[j,1] * S[j,1] - J[j,1]) * delxSSr
                     )
@@ -1650,15 +1648,15 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                 if cond:
                     temp = (
                         A[j,i] * (
-                            (S[j+2,i] - 4.0*S[j+1,i] + 6.0*S[j,i] - 4.0*S[j-1,i] + S[j-2,i])
+                            S[j+2,i] - 4.0*S[j+1,i] + 6.0*S[j,i] - 4.0*S[j-1,i] + S[j-2,i]
                         ) * ratioSSr +
                         B[j,i] * (
-                            (    S[j+2,i+2] - 2.0*S[j+2,i] +     S[j+2,i-2] +
+                                S[j+2,i+2] - 2.0*S[j+2,i] +     S[j+2,i-2] +
                             -2.0*S[j  ,i+2] + 4.0*S[j  ,i] - 2.0*S[j  ,i-2] +
-                                 S[j-2,i+2] - 2.0*S[j-2,i] +     S[j-2,i-2])
+                                 S[j-2,i+2] - 2.0*S[j-2,i] +     S[j-2,i-2]
                         ) * ratioSqr / 16.0 +
                         C[j,i] * (
-                            (S[j,i+2] - 4.0*S[j,i+1] + 6.0*S[j,i] - 4.0*S[j,i-1] + S[j,i-2])
+                            S[j,i+2] - 4.0*S[j,i+1] + 6.0*S[j,i] - 4.0*S[j,i-1] + S[j,i-2]
                         ) +
                         D[j,i] * (
                             (S[j+1,i] - S[j,i])-(S[j,i] - S[j-1,i])
@@ -1670,10 +1668,10 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                             (S[j,i+1] - S[j,i])-(S[j,i] - S[j,i-1])
                         ) * delxSqr +
                         G[j,i] * (
-                            (S[j+1,i] - S[j-1,i])
+                            S[j+1,i] - S[j-1,i]
                         ) * delxTr * ratio / 2.0 +
                         H[j,i] * (
-                            (S[j,i+1] - S[j,i-1])
+                            S[j,i+1] - S[j,i-1]
                         ) * delxTr / 2.0 + (
                         I[j,i] * S[j,i] - J[j,i]) * delxSSr
                     )
@@ -1698,15 +1696,15 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                 if cond:
                     temp = (
                         A[j,-2] * (
-                            (S[j+2,-2] - 4.0*S[j+1,-2] + 6.0*S[j,-2]- 4.0*S[j-1,-2] + S[j-2,-2])
+                            S[j+2,-2] - 4.0*S[j+1,-2] + 6.0*S[j,-2]- 4.0*S[j-1,-2] + S[j-2,-2]
                         ) * ratioSSr +
                         B[j,-2] * (
-                            (    S[j+2,0] - 2.0*S[j+2,-2] +     S[j+2,-4] +
+                                S[j+2,0] - 2.0*S[j+2,-2] +     S[j+2,-4] +
                             -2.0*S[j  ,0] + 4.0*S[j  ,-2] - 2.0*S[j  ,-4] +
-                                 S[j-2,0] - 2.0*S[j-2,-2] +     S[j-2,-4])
+                                 S[j-2,0] - 2.0*S[j-2,-2] +     S[j-2,-4]
                         ) * ratioSqr / 16.0 +
                         C[j,-2] * (
-                            (S[j,0] - 4.0*S[j,-1] + 6.0*S[j,-2] - 4.0*S[j,-3] + S[j,-4])
+                            S[j,0] - 4.0*S[j,-1] + 6.0*S[j,-2] - 4.0*S[j,-3] + S[j,-4]
                         ) +
                         D[j,-2] * (
                             (S[j+1,-2] - S[j,-2])-(S[j,-2] - S[j-1,-2])
@@ -1718,10 +1716,10 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                             (S[j,-1] - S[j,-2])-(S[j,-2] - S[j,-3])
                         ) * delxSqr +
                         G[j,-2] * (
-                            (S[j+1,-2] - S[j-1,-2])
+                            S[j+1,-2] - S[j-1,-2]
                         ) * delxTr / 2.0 * ratio +
                         H[j,-2] * (
-                            (S[j,-1] - S[j,-3])
+                            S[j,-1] - S[j,-3]
                         ) * delxTr / 2.0 + (
                         I[j,-2] * S[j,-2] - J[j,-2]) * delxSSr
                     )
@@ -1746,15 +1744,15 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                 if cond:
                     temp = (
                         A[j,-1] * (
-                            (S[j+2,-1] - 4.0*S[j+1,-1] + 6.0*S[j,-1]- 4.0*S[j-1,-1] + S[j-2,-1])
+                            S[j+2,-1] - 4.0*S[j+1,-1] + 6.0*S[j,-1]- 4.0*S[j-1,-1] + S[j-2,-1]
                         ) * ratioSSr +
                         B[j,-1] * (
-                            (    S[j+2,1] - 2.0*S[j+2,-1] +     S[j+2,-3] +
+                                S[j+2,1] - 2.0*S[j+2,-1] +     S[j+2,-3] +
                             -2.0*S[j  ,1] + 4.0*S[j  ,-1] - 2.0*S[j  ,-3] +
-                                 S[j-2,1] - 2.0*S[j-2,-1] +     S[j-2,-3])
+                                 S[j-2,1] - 2.0*S[j-2,-1] +     S[j-2,-3]
                         ) * ratioSqr / 16.0 +
                         C[j,-1] * (
-                            (S[j,1] - 4.0*S[j,0] + 6.0*S[j,-1] - 4.0*S[j,-2] + S[j,-3])
+                            S[j,1] - 4.0*S[j,0] + 6.0*S[j,-1] - 4.0*S[j,-2] + S[j,-3]
                         ) +
                         D[j,-1] * (
                             (S[j+1,-1] - S[j,-1])-(S[j,-1] - S[j-1,-1])
@@ -1766,10 +1764,10 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
                             (S[j,0] - S[j,-1])-(S[j,-1] - S[j,-2])
                         ) * delxSqr +
                         G[j,-1] * (
-                            (S[j+1,-1] - S[j-1,-1])
+                            S[j+1,-1] - S[j-1,-1]
                         ) * delxTr / 2.0 * ratio +
                         H[j,-1] * (
-                            (S[j,0] - S[j,-2])
+                            S[j,0] - S[j,-2]
                         ) * delxTr / 2.0 + (
                         I[j,-1] * S[j,-1] - J[j,-1]) * delxSSr
                     )
@@ -2016,14 +2014,12 @@ def _accumulate_update_metric(delta, value, max_update, max_value):
     normalization so the first non-zero sweep remains well defined.
     """
     update = abs(delta)
-    if update > max_update:
-        max_update = update
+    max_update = max(max_update, update)
 
     old_value = abs(value)
     new_value = abs(value + delta)
-    value_scale = old_value if old_value > new_value else new_value
-    if value_scale > max_value:
-        max_value = value_scale
+    value_scale = max(new_value, old_value)
+    max_value = max(max_value, value_scale)
 
     return max_update, max_value
 

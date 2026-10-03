@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 GPU module of xinvert: CUDA-accelerated SOR iteration kernels.
 
@@ -26,10 +25,10 @@ The GPU wrapper functions have the **same signature** as the numba kernels in
 :mod:`xinvert.cpus`, so they can be used as drop-in replacements via the
 ``architect`` dispatch in :mod:`xinvert.core._make_kernel`.
 """
-import numpy as np
 import threading
 import warnings
 
+import numpy as np
 from numba import cuda
 
 # Numba emits a ``NumbaPerformanceWarning`` at every kernel launch whose

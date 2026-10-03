@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 xinvert: invert geophysical fluid dynamics problems using SOR iteration.
 
@@ -16,31 +15,36 @@ the dtype selected by ``iParams['dtype']`` (``float32`` by default).
 optional ``icbc`` are converted to the selected compute dtype before the
 coefficient arrays are built.
 """
-from .core import inv_standard3D, \
-                  inv_standard2D, inv_standard2D_full, \
-                  inv_general3D, \
-                  inv_general2D,\
-                  inv_general2D_bih
-                  
-from .apps import invert_Poisson, \
-                  invert_GillMatsuno, invert_GillMatsunoFlux, \
-                  invert_geostrophic, \
-                  invert_Stommel, invert_StommelFlux, \
-                  invert_StommelMunk, \
-                  invert_StommelArons, \
-                  invert_Eliassen, \
-                  invert_BrethertonHaidvogel, \
-                  invert_Fofonoff, \
-                  invert_omega, \
-                  invert_PV2D, \
-                  invert_RefStateSWM, \
-                  invert_GeoAdjustment, \
-                  invert_RefState, \
-                  invert_3DOcean, \
-                  animate_iteration, cal_flow
-                  
-from .utils import loop_noncore
-
+from .apps import (
+    animate_iteration,
+    cal_flow,
+    invert_3DOcean,
+    invert_BrethertonHaidvogel,
+    invert_Eliassen,
+    invert_Fofonoff,
+    invert_GeoAdjustment,
+    invert_geostrophic,
+    invert_GillMatsuno,
+    invert_GillMatsunoFlux,
+    invert_omega,
+    invert_Poisson,
+    invert_PV2D,
+    invert_RefState,
+    invert_RefStateSWM,
+    invert_Stommel,
+    invert_StommelArons,
+    invert_StommelFlux,
+    invert_StommelMunk,
+)
+from .core import (
+    inv_general2D,
+    inv_general2D_bih,
+    inv_general3D,
+    inv_standard2D,
+    inv_standard2D_full,
+    inv_standard3D,
+)
 from .finitediffs import FiniteDiff, deriv, deriv2, padBCs
+from .utils import loop_noncore
 
 __version__ = "0.3.0"

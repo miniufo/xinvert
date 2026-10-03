@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Apps module of xinvert: high-level inversion helpers.
 
@@ -6,17 +5,26 @@ Provides user-facing wrappers (``invert_Poisson``, ``invert_GillMatsuno``,
 ``invert_StommelMunk``, ``invert_omega``, ``invert_PV2D``, etc.) that assemble
 model parameters and call the SOR solvers in :mod:`xinvert.core`.
 """
-import numpy as np
-import xarray as xr
 import copy
 import warnings
-from .utils import loop_noncore
-from .core import inv_standard3D, inv_standard2D, inv_standard1D,\
-                  inv_general3D, inv_general2D,\
-                  inv_general2D_bih, inv_standard2D_full,\
-                  _validate_inversion_bcs, _validate_inversion_dims,\
-                  _validate_solver_controls, _normalize_scalar_bcs
 
+import numpy as np
+import xarray as xr
+
+from .core import (
+    _normalize_scalar_bcs,
+    _validate_inversion_bcs,
+    _validate_inversion_dims,
+    _validate_solver_controls,
+    inv_general2D,
+    inv_general2D_bih,
+    inv_general3D,
+    inv_standard1D,
+    inv_standard2D,
+    inv_standard2D_full,
+    inv_standard3D,
+)
+from .utils import loop_noncore
 
 # default undefined value
 _undeftmp = -9.99e8
@@ -1678,13 +1686,7 @@ def __coeffs_Eliassen(force, dims, coords, mParams, iParams, icbc):
     
     maskF, initS, zero = __mask_FS(force, dims, iParams, icbc)
 
-    if coords.lower() == 'z-lat': # dims[0] is θ, dims[1] is lat
-        A = zero + Am
-        B = zero + Bm
-        C = zero + Cm
-        F = maskF.where(maskF!=_undeftmp, _undeftmp)
-    
-    elif coords.lower() == 'cartesian': # dims[0] is θ, dims[1] is r
+    if coords.lower() == 'z-lat' or coords.lower() == 'cartesian': # dims[0] is θ, dims[1] is lat
         A = zero + Am
         B = zero + Bm
         C = zero + Cm

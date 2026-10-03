@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Finite-differences module of xinvert: xarray-aware derivative operators.
 
@@ -11,7 +10,7 @@ import numpy as np
 import xarray as xr
 
 
-class FiniteDiff(object):
+class FiniteDiff:
     """
     This class wrap some basic finite-difference operators supported for
     Cartesian coordinates (coords='cartesian') or latitude/longitude
@@ -140,10 +139,9 @@ class FiniteDiff(object):
     
     
     def __repr__(self):
-        typ = '     Name,               BCs (l-r),     fills  => \'{:s}\' coords\n'\
-              .format(self.coords)
-        out = ['{:>1s}: {:>6s}  {:>24s}  {:>8s}\n'.format(
-               str(dim), str(name), str(self.BCs[dim]), str(self.fill[dim]))
+        typ = f'     Name,               BCs (l-r),     fills  => \'{self.coords:s}\' coords\n'\
+
+        out = [f'{dim!s:>1s}: {name!s:>6s}  {self.BCs[dim]!s:>24s}  {self.fill[dim]!s:>8s}\n'
                for dim, name in self.dmap.items()]
         
         return typ + ''.join(out)
