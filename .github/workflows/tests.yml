@@ -12,9 +12,9 @@ jobs:
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Set up conda environment
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@835234971496cad1653abb28a638a281cf32541f
         with:
           miniconda-version: latest
           python-version: ${{ matrix.python-version }}
@@ -32,8 +32,8 @@ jobs:
     if: ${{ vars.XINVERT_GPU_RUNNER != '' }}
     runs-on: ${{ vars.XINVERT_GPU_RUNNER }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: conda-incubator/setup-miniconda@v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: conda-incubator/setup-miniconda@835234971496cad1653abb28a638a281cf32541f
         with:
           miniconda-version: latest
           environment-file: environment.yml

@@ -188,7 +188,7 @@ def _print_live(msg):
         if reg is not None:
             try:
                 reg.pop(ident, None)
-            except Exception:
+            except KeyError:
                 pass
     out.write(msg + '\n')   # single write => atomic line
     out.flush()
