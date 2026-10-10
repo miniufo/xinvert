@@ -6,8 +6,8 @@ Provides user-facing wrappers (``invert_Poisson``, ``invert_GillMatsuno``,
 model parameters and call the SOR solvers in :mod:`xinvert.core`.
 """
 import copy
+import difflib
 import warnings
-
 import numpy as np
 import xarray as xr
 
@@ -33,35 +33,51 @@ _undeftmp = -9.99e8
 default_iParams = {
     # boundary conditions for the 2D slice
     # if 3D, should be ['fixed', 'fixed', 'fixed']
-    'BCs'      : ['fixed', 'fixed'],
+    # usually in the order of ['lat', 'lon'] or ['y', 'x']
+    # can be 'fixed', 'extend', or 'periodic'
+    'BCs': ['fixed', 'fixed'],
+
     # undefined value in the array
-    'undef'    : np.nan,
+    'undef': np.nan,
+
     # compute precision of the solver (both coefficients and solution
     # arrays are allocated natively in this dtype).  float32 halves the
     # memory footprint and roughly doubles GPU throughput; use
     # 'float64' when accuracy matters more than speed.
-    'dtype'    : np.float32,
+    'dtype': np.float32,
+
     # max loop count, exceed which the iteration is stopped
-    'mxLoop'   : 5000,
-    # tolerance, smaller than which the iteration is stopped
-    'tolerance': 1e-8,
-    # convergence metric.  'norm' preserves the historical relative change
-    # of mean(abs(solution)); 'residual' uses the maximum diagonally
-    # preconditioned equation residual produced by an SOR sweep.
-    'convergence': 'norm',
-    # Opt in to ``(solution, diagnostics)`` without changing the historical
-    # DataArray-only return value.
-    'return_diagnostics': False,
+    'mxLoop': 5000,
+
+    # tolerance of float32, smaller than which the iteration is stopped
+    # could be smaller if dtype=float64
+    'tolerance': 8e-7,
+
+    # Diagnostic history interval in SOR sweeps.  Non-positive values disable
+    # diagnostics and retains the automatic convergence-check schedule;
+    # a positive integer returns (solution, diagnostics) and records the
+    # selected error metric at that interval.
+    'diag_interval': 0,
+
     # optimal argument for SOR, 1 stand for G-S iteration.
     # This argument will be automatically updated according to grids
-    'optArg'   : None,
+    # for real cases, the "best" one may only be obtained empirically through scanning
+    # this is affected by BCs, coefficients on the l.h.s, land/sea masks etc.
+    'optArg': None,
+
     # Whether or not print the information of the iteration
+    # This is done once an inversion if finished
+    # Diagnostics can only be obtained after all the inversion tasks.
     'printInfo': True,
-    # Whether or not print out debug info.
-    'debug'    : False,
-    # computing architecture: 'cpu' (numba) or 'gpu' (cuda);
+
+    # Whether or not print out debug info for inversion parameters.
+    'debug': False,
+
+    # computing architecture: 'cpu' (lexicographic), 'cpu-mc'
+    # (experimental multi-core multi-color), or 'gpu' (cuda);
     # case-insensitive, e.g. 'CPU', 'GPU', ' Gpu ' all work
     'architect': 'cpu',
+
     # GPU thread-block shape for 2D kernels.  None = auto, i.e. the
     # built-in default (16, 16), defined as gpus._DEFAULT_BLOCK_2D (same
     # fallback applies when calling the GPU wrapper directly without
@@ -1057,10 +1073,10 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
     ######  2. calculating the parameters  ######
     if dimLen == 2:
         ps = __cal_params2D(maskF[dims[0]], maskF[dims[1]], coords,
-                            Rearth=mParams['Rearth'])
+                            BCs=iParams['BCs'], Rearth=mParams['Rearth'])
     elif dimLen == 3:
         ps = __cal_params3D(maskF[dims[0]], maskF[dims[1]], maskF[dims[2]], coords,
-                            Rearth=mParams['Rearth'])
+                            BCs=iParams['BCs'], Rearth=mParams['Rearth'])
     else:
         raise ValueError('dimension length should be one of [2, 3]')
     
@@ -1412,32 +1428,32 @@ def __template(coef_func, inv_func, dimLen,
     
     Parameters
     ----------
-    coef_func: function
-        Function for calculating the coefficients of the equations.
-    inv_func: function
-        Function for the inversion.
-    dimLen: int
-        Problems of 2D or 3D, should be one of [2, 3].
-    F: xarray.DataArray
+    coef_func : callable
+        Coefficient builder following the private contract documented below.
+    inv_func : callable
+        Matching low-level xarray inversion wrapper from :mod:`xinvert.core`.
+    dimLen : int
+        Number of inversion dimensions; one of 1, 2, or 3.
+    F : xarray.DataArray
         A given forcing.
-    dims: list
+    dims : sequence of str
         Dimension combination for the inversion e.g., ['lev', 'lat', 'lon']
         for 3D case and ['lat', 'lon'] for 2D case.
-    coords: str, optional
+    coords : str, optional
         Coordinates in ['lat-lon', 'cartesian'] are supported.
-    icbc: xarray.DataArray
+    icbc : xarray.DataArray or None, optional
         Prescribe initial condition/guess (IC) and boundary conditions (BC).
-    validParams: list of str
+    validParams : sequence of str or None, optional
         Valid mParams for a specific model.
-    mParams: dict, optional
-		Parameters that depends on a specific model.
-    iParams: dict, optional
+    mParams : dict or None, optional
+        Parameters that depend on a specific model.
+    iParams : dict or None, optional
         Iteration parameters.
         
     Returns
     -------
-    xarray.DataArray
-        Results of the SOR inversion.
+    xarray.DataArray or tuple of (xarray.DataArray, xarray.Dataset)
+        SOR solution, plus diagnostics when ``diag_interval`` is positive.
     """
     dims = _validate_inversion_dims(F, dims, dimLen)
     
@@ -1452,13 +1468,13 @@ def __template(coef_func, inv_func, dimLen,
     ######  2. calculating the parameters  ######
     if dimLen == 1:
         ps = __cal_params1D(maskF[dims[0]], coords,
-                            Rearth=mParams['Rearth'])
+                            BCs=iParams['BCs'], Rearth=mParams['Rearth'])
     elif dimLen == 2:
         ps = __cal_params2D(maskF[dims[0]], maskF[dims[1]], coords,
-                            Rearth=mParams['Rearth'])
+                            BCs=iParams['BCs'], Rearth=mParams['Rearth'])
     elif dimLen == 3:
         ps = __cal_params3D(maskF[dims[0]], maskF[dims[1]], maskF[dims[2]], coords,
-                            Rearth=mParams['Rearth'])
+                            BCs=iParams['BCs'], Rearth=mParams['Rearth'])
     else:
         raise ValueError('dimension length should be one of [2, 3]')
         
@@ -1476,7 +1492,7 @@ def __template(coef_func, inv_func, dimLen,
     
     ######  3. inverting the solution  ######
     result = inv_func(*coeffs, maskF, initS, dims, iParams)
-    if iParams.get('return_diagnostics', False):
+    if iParams['diag_interval'] > 0:
         S, diagnostics = result
     else:
         S = result
@@ -1488,11 +1504,37 @@ def __template(coef_func, inv_func, dimLen,
     S = S.where(maskF != _undeftmp,
                 other=iParams['undef']).rename('inverted')
 
-    if iParams.get('return_diagnostics', False):
+    if iParams['diag_interval'] > 0:
         return S, diagnostics
     return S
 
 
+# Private coefficient builders below share one internal contract:
+#
+# Parameters
+# ----------
+# source : xarray.DataArray
+#     Model forcing (the parameter name reflects the physical quantity).
+# dims : sequence of str
+#     Solver dimensions in equation-axis order.
+# coords : str
+#     Coordinate geometry controlling metric factors.
+# mParams : dict
+#     Validated model-specific physical parameters.
+# iParams : dict
+#     Effective inversion parameters, including dtype, undef, and BCs.
+# icbc : xarray.DataArray or None
+#     Initial guess and prescribed fixed-boundary values.
+#
+# Returns
+# -------
+# masked_forcing : xarray.DataArray
+#     Right-hand side with invalid cells replaced by the internal sentinel.
+# initial_solution : xarray.DataArray
+#     Broadcast initial/boundary field in the solver dtype.
+# coefficients : tuple of xarray.DataArray
+#     Operator coefficients in the order required by the matching low-level
+#     ``inv_*`` function.  Every array preserves the source dimensions.
 def __coeffs_Poisson(force, dims, coords, mParams, iParams, icbc):
     """Calculating coefficients for Poisson equation."""
     maskF, initS, zero = __mask_FS(force, dims, iParams, icbc)
@@ -2305,6 +2347,11 @@ def _solve_dtype(iParams):
     else raises so typos fail loudly instead of silently changing
     precision.
 
+    Parameters
+    ----------
+    iParams : dict
+        Effective inversion parameters containing the optional ``dtype`` key.
+
     Returns
     -------
     numpy.dtype
@@ -2329,7 +2376,97 @@ def _solve_dtype(iParams):
     return dt
 
 
-def __cal_params3D(dim3_var, dim2_var, dim1_var, coords,
+def __optimal_sor_parameter(counts, spacings, bcs):
+    r"""Estimate Young's optimal SOR factor for an anisotropic grid.
+
+    ``counts`` include boundary points.  Fixed boundaries use the lowest
+    Dirichlet mode; periodic and extend directions admit a constant mode.  If
+    every direction is periodic or extend, the singular global constant mode
+    is excluded and the slowest non-constant mode is used.
+
+    The result is exact for the corresponding separable constant-coefficient
+    model problem, but only an estimate for variable coefficients, masks,
+    mixed derivatives, higher-order operators, and spherical metrics.
+
+    Parameters
+    ----------
+    counts : sequence of int
+        Total grid-point count in each solver direction, including boundary
+        points.  The order must match ``spacings`` and ``bcs``.
+    spacings : sequence of float
+        Positive uniform grid spacing for each direction.  Angular spacings
+        must be converted to the linear units used by the operator first.
+    bcs : sequence of {'fixed', 'periodic', 'extend'}
+        One boundary-condition name per direction.  ``fixed`` selects the
+        lowest Dirichlet mode; the other two admit a constant mode.
+
+    Returns
+    -------
+    float
+        Estimated optimal SOR relaxation factor in the interval ``[1, 2)``.
+
+    Raises
+    ------
+    ValueError
+        If lengths differ, a grid has fewer than three points, a spacing is
+        non-positive/non-finite, or a boundary name is unsupported.
+
+    Notes
+    -----
+    For an anisotropic separable model, the Jacobi spectral-radius estimate is
+
+    ``rho = sum(h_d**-2 * cos(theta_d)) / sum(h_d**-2)``
+
+    and Young's relation gives
+    ``omega = 2 / (1 + sqrt(1 - rho**2))``.  If all directions admit a
+    constant mode, the singular all-constant mode is excluded before choosing
+    the slowest remaining mode.
+    """
+    counts = np.asarray(counts, dtype=np.int64)
+    spacings = np.asarray(spacings, dtype=np.float64)
+    bcs = [str(bc).strip().lower() for bc in bcs]
+
+    if len(counts) != len(spacings) or len(counts) != len(bcs):
+        raise ValueError('counts, spacings, and BCs must have equal lengths')
+    if (np.any(counts < 3) or np.any(~np.isfinite(spacings)) or
+            np.any(spacings <= 0)):
+        raise ValueError(
+            'automatic optArg requires at least 3 points and finite, '
+            'positive grid spacings in every dimension')
+
+    weights = 1.0 / spacings**2
+    mode_cosines = np.ones(len(counts), dtype=np.float64)
+    has_fixed = False
+
+    for axis, (count, bc) in enumerate(zip(counts, bcs)):
+        if bc == 'fixed':
+            # count-2 interior unknowns -> theta = pi/(count-1)
+            mode_cosines[axis] = np.cos(np.pi / (count - 1.0))
+            has_fixed = True
+        elif bc not in ('periodic', 'extend'):
+            raise ValueError(
+                f"unsupported BC {bc!r} in automatic optArg calculation")
+
+    if has_fixed:
+        rho = np.sum(weights * mode_cosines) / np.sum(weights)
+    else:
+        # Exclude the singular all-constant mode.  The dominant remaining
+        # eigenmode varies along whichever axis gives the largest rho.
+        candidates = []
+        for axis, (count, bc) in enumerate(zip(counts, bcs)):
+            theta = (2.0 * np.pi / count if bc == 'periodic'
+                     else np.pi / (count - 1.0))
+            candidate = np.ones(len(counts), dtype=np.float64)
+            candidate[axis] = np.cos(theta)
+            candidates.append(
+                np.sum(weights * candidate) / np.sum(weights))
+        rho = max(candidates)
+
+    rho = float(np.clip(abs(rho), 0.0, np.nextafter(1.0, 0.0)))
+    return 2.0 / (1.0 + np.sqrt(1.0 - rho*rho))
+
+
+def __cal_params3D(dim3_var, dim2_var, dim1_var, coords, BCs=None,
                    Rearth=default_mParams['Rearth'], debug=False):
     r"""Pre-calculate some parameters needed in SOR for the 3D cases.
 
@@ -2341,13 +2478,20 @@ def __cal_params3D(dim3_var, dim2_var, dim1_var, coords,
         Dimension variable of second dimension (e.g., lat).
     dim1_var: xarray.DataArray
         Dimension variable of first  dimension (e.g., lon).
-    debug: boolean
+    coords : str
+        Coordinate geometry, currently ``'lat-lon'`` or ``'cartesian'``.
+    BCs : sequence of str or None, optional
+        Boundary condition for each axis in ``(dim3, dim2, dim1)`` order.
+    Rearth : float, optional
+        Earth radius used to convert angular horizontal spacing to metres.
+    debug: bool, optional
         Print result for debugging. The default is False.
 
     Returns
     -------
-    re: dict
-        Pre-calculated parameters.
+    dict
+        Grid counts, physical spacings, spacing ratios and automatic
+        ``optArg`` used by the low-level 3-D solver.
     """
     gc3  = len(dim3_var)
     gc2  = len(dim2_var)
@@ -2373,10 +2517,10 @@ def __cal_params3D(dim3_var, dim2_var, dim1_var, coords,
     ratio1Sqr = ratio1 ** 2.0
     ratio2Sqr = ratio2 ** 2.0
     del1Sqr   = del1 ** 2.0
-    epsilon   = (np.sin(np.pi/(2.0*gc1+2.0)) **2.0 +
-                 np.sin(np.pi/(2.0*gc2+2.0)) **2.0 +
-                 np.sin(np.pi/(2.0*gc3+3.0)) **2.0)
-    optArg    = 2.0 / (1.0 + np.sqrt((2.0 - epsilon) * epsilon))
+    if BCs is None:
+        BCs = ['fixed', 'fixed', 'fixed']
+    optArg = __optimal_sor_parameter(
+        (gc3, gc2, gc1), (abs(del3), abs(del2), abs(del1)), BCs)
     
     if debug:
         print('dim3_var: ', dim3_var)
@@ -2407,7 +2551,8 @@ def __cal_params3D(dim3_var, dim2_var, dim1_var, coords,
     return re
 
 
-def __cal_params2D(dim2_var, dim1_var, coords, Rearth=default_mParams['Rearth']):
+def __cal_params2D(dim2_var, dim1_var, coords, BCs=None,
+                   Rearth=default_mParams['Rearth']):
     r"""Pre-calculate some parameters needed in SOR.
 
     Parameters
@@ -2416,13 +2561,18 @@ def __cal_params2D(dim2_var, dim1_var, coords, Rearth=default_mParams['Rearth'])
         Dimension variable of second dimension (e.g., lat).
     dim1_var: xarray.DataArray
         Dimension variable of first  dimension (e.g., lon).
-    debug: boolean
-        Print result for debugging. The default is False.
+    coords : str
+        One of ``'lat-lon'``, ``'z-lat'``, ``'z-lon'`` or ``'cartesian'``.
+    BCs : sequence of str or None, optional
+        Boundary condition for each axis in ``(dim2, dim1)`` order.
+    Rearth : float, optional
+        Earth radius used for angular-to-linear spacing conversion.
 
     Returns
     -------
-    re: dict
-        Pre-calculated parameters.
+    dict
+        Grid counts, physical spacings, spacing ratios and automatic
+        ``optArg`` used by the low-level 2-D solver.
     """
     gc2  = len(dim2_var)
     gc1  = len(dim1_var)
@@ -2451,8 +2601,10 @@ def __cal_params2D(dim2_var, dim1_var, coords, Rearth=default_mParams['Rearth'])
     del1Sqr  = del1 ** 2.0
     del1Tr   = del1 ** 3.0
     del1SSr  = del1 ** 4.0
-    epsilon  = np.sin(np.pi/(2.0*gc1+2.0))**2 + np.sin(np.pi/(2.0*gc2+2.0))**2
-    optArg   = 2.0 / (1.0 + np.sqrt((2.0 - epsilon) * epsilon))
+    if BCs is None:
+        BCs = ['fixed', 'fixed']
+    optArg = __optimal_sor_parameter(
+        (gc2, gc1), (abs(del2), abs(del1)), BCs)
     
     # store all and return
     re = {}
@@ -2473,20 +2625,26 @@ def __cal_params2D(dim2_var, dim1_var, coords, Rearth=default_mParams['Rearth'])
     return re
 
 
-def __cal_params1D(dim1_var, coords, Rearth=default_mParams['Rearth']):
+def __cal_params1D(dim1_var, coords, BCs=None,
+                   Rearth=default_mParams['Rearth']):
     r"""Pre-calculate some parameters needed in SOR.
 
     Parameters
     ----------
     dim1_var: xarray.DataArray
         Dimension variable of first  dimension (e.g., lon).
-    debug: boolean
-        Print result for debugging. The default is False.
+    coords : str
+        Coordinate geometry.  The current 1-D solver accepts ``'lat'``.
+    BCs : sequence of str or None, optional
+        Single boundary-condition entry for ``dim1_var``.
+    Rearth : float, optional
+        Earth radius used to convert angular spacing to metres.
 
     Returns
     -------
-    re: dict
-        Pre-calculated parameters.
+    dict
+        Grid count, physical spacing, squared spacing and automatic
+        ``optArg`` used by the low-level 1-D solver.
     """
     gc1  = len(dim1_var)
     del1 = dim1_var.diff(dim1_var.name).values[0] # assumed uniform
@@ -2499,8 +2657,9 @@ def __cal_params1D(dim1_var, coords, Rearth=default_mParams['Rearth']):
                         ', should be [lat-lon, cartesian]')
     
     del1Sqr = del1 ** 2.0
-    epsilon = np.sin(np.pi/(2.0*gc1+2.0))**2
-    optArg  = 2.0 / (1.0 + np.sqrt((2.0 - epsilon) * epsilon))
+    if BCs is None:
+        BCs = ['fixed']
+    optArg = __optimal_sor_parameter((gc1,), (abs(del1),), BCs)
     
     # store all and return
     re = {}
@@ -2514,9 +2673,52 @@ def __cal_params1D(dim1_var, coords, Rearth=default_mParams['Rearth']):
 
 
 def __update(default, users, valid=None):
-    """Update default invert parameters with user-defined ones."""
+    """Merge user parameters into a deep copy of a default mapping.
+
+    Parameters
+    ----------
+    default : dict
+        Default parameter mapping.  Passing :data:`default_iParams` enables
+        strict unknown-key validation and typo suggestions.
+    users : dict or None
+        User overrides.  Values equal to ``None`` leave defaults unchanged.
+    valid : collection of str or None, optional
+        Allowed keys for model-specific parameters.
+
+    Returns
+    -------
+    dict
+        Independent merged mapping; neither input mapping is modified.
+
+    Raises
+    ------
+    ValueError
+        If an inversion key is unknown or a model parameter is not applicable.
+    """
     if users is None:
         users = {}
+
+    if default is default_iParams:
+        unknown = [key for key in users if key not in default_iParams]
+        if unknown:
+            details = []
+            choices = list(default_iParams)
+            renamed = {
+                'diagnose': 'diag_interval',
+                'return_diagnostic': 'diag_interval',
+                'return_diagnostics': 'diag_interval',
+                'check_interval': 'diag_interval',
+                'diagnostic_interval': 'diag_interval',
+            }
+            for key in unknown:
+                match = ([renamed[key]] if key in renamed else
+                         difflib.get_close_matches(key, choices, n=1)
+                         if isinstance(key, str) else [])
+                hint = f"; did you mean {match[0]!r}?" if match else ''
+                details.append(f"{key!r}{hint}")
+            raise ValueError(
+                'unknown iParams parameter(s): ' + ', '.join(details) +
+                f'; valid parameters are {choices}')
     
     if valid is not None and users != default:
         for k, v in users.items():
@@ -2533,11 +2735,39 @@ def __update(default, users, valid=None):
 
 
 def __uniform_interval(coord1D, value):
+    """Check that a one-dimensional coordinate has uniform spacing.
+
+    Parameters
+    ----------
+    coord1D : xarray.DataArray
+        One-dimensional coordinate variable.
+    value : float
+        Reference interval, normally the first coordinate difference.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    ValueError
+        If any interval differs from ``value`` beyond ``rtol=5e-4``.
+    """
     if not np.isclose(coord1D.diff(coord1D.name), value, rtol=5e-04).all():
         raise ValueError(f'coordinate {coord1D.name} is non-uniform:\n{coord1D}')
 
 def __print_params(params):
-    """Print parameters for debugging."""
+    """Debug print effective grid, iteration, and boundary parameters.
+
+    Parameters
+    ----------
+    params : dict
+        Combined model, grid, and inversion parameter mapping.
+
+    Returns
+    -------
+    None
+    """
     print('dtype      : ', params.get('dtype'))
     if 'ratio' in params:
         print('dim grids  : ',
@@ -2552,8 +2782,8 @@ def __print_params(params):
               params['mxLoop'])
         print('tolerance  : ',
               params['tolerance'])
-        print('convergence: ',
-              params.get('convergence', 'norm'))
+        print('diag intvl : ',
+              params.get('diag_interval', 0))
         print('printInfo  : ',
               params['printInfo'])
         print('debug      : ',
@@ -2577,8 +2807,8 @@ def __print_params(params):
               params['mxLoop'])
         print('tolerance  : ',
               params['tolerance'])
-        print('convergence: ',
-              params.get('convergence', 'norm'))
+        print('diag intvl : ',
+              params.get('diag_interval', 0))
         print('printInfo  : ',
               params['printInfo'])
         print('debug      : ',
@@ -2600,8 +2830,8 @@ def __print_params(params):
               params['mxLoop'])
         print('tolerance  : ',
               params['tolerance'])
-        print('convergence: ',
-              params.get('convergence', 'norm'))
+        print('diag intvl : ',
+              params.get('diag_interval', 0))
         print('printInfo  : ',
               params['printInfo'])
         print('debug      : ',

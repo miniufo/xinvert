@@ -10,10 +10,20 @@ import numbers
 import sys
 import threading
 import warnings
+from functools import partial
 
 import numpy as np
 import xarray as xr
 
+from .cpu_mc import (
+    invert_general_2D_mc,
+    invert_general_3D_mc,
+    invert_general_bih_2D_mc,
+    invert_standard_1D_mc,
+    invert_standard_2D_full_mc,
+    invert_standard_2D_mc,
+    invert_standard_3D_mc,
+)
 from .cpus import (
     invert_general_2D,
     invert_general_3D,
@@ -24,174 +34,6 @@ from .cpus import (
     invert_standard_3D,
 )
 from .utils import loop_noncore
-
-
-def _validate_inversion_dims(F, dims, expected):
-    """Return a validated dimension list for a DataArray inversion."""
-    if not isinstance(F, xr.DataArray):
-        raise ValueError(
-            f'forcing must be an xarray.DataArray, got {type(F).__name__}')
-    if isinstance(dims, str):
-        if expected == 1:
-            dims = [dims]
-        else:
-            raise ValueError(
-                f'dims must contain {expected} dimension names, not one string')
-    elif isinstance(dims, (list, tuple)):
-        dims = list(dims)
-    else:
-        raise ValueError(
-            f'dims must be a list or tuple of {expected} strings, '
-            f'got {type(dims).__name__}')
-
-    if len(dims) != expected:
-        raise ValueError(
-            f'{expected} dimensions are needed for inversion, got {len(dims)}')
-    if not all(isinstance(dim, str) for dim in dims):
-        raise ValueError('every entry in dims must be a string')
-    if len(set(dims)) != len(dims):
-        raise ValueError(f'dims contains duplicate dimensions: {dims}')
-
-    missing = [dim for dim in dims if dim not in F.dims]
-    if missing:
-        raise ValueError(
-            f'inversion dimensions {missing} are not present in forcing; '
-            f'available dimensions are {list(F.dims)}')
-    return dims
-
-
-def _validate_solver_controls(iParams):
-    """Validate inexpensive scalar controls before dispatching a solver."""
-    mx_loop = iParams.get('mxLoop')
-    if (isinstance(mx_loop, (bool, np.bool_)) or
-            not isinstance(mx_loop, numbers.Integral) or mx_loop <= 0):
-        raise ValueError(
-            f"iParams['mxLoop'] must be a positive integer, got {mx_loop!r}")
-
-    tolerance = iParams.get('tolerance')
-    if (isinstance(tolerance, (bool, np.bool_)) or
-            not isinstance(tolerance, numbers.Real) or
-            not np.isfinite(tolerance)):
-        raise ValueError(
-            f"iParams['tolerance'] must be a finite real number, "
-            f"got {tolerance!r}")
-
-    undef = iParams.get('undef')
-    if (isinstance(undef, (bool, np.bool_)) or
-            not isinstance(undef, numbers.Real)):
-        raise ValueError(
-            f"iParams['undef'] must be a real scalar (NaN is allowed), "
-            f"got {undef!r}")
-
-
-def _normalize_scalar_bcs(bcs, dim_len, *, parameter='BCs', valid=None):
-    """Return normalized BCs for APIs using one scalar BC per dimension."""
-    if not isinstance(bcs, (list, tuple)):
-        raise ValueError(
-            f"{parameter} must be a list or tuple containing one string "
-            "per inversion dimension; endpoint dictionaries are supported "
-            "by FiniteDiff only"
-        )
-    if len(bcs) != dim_len:
-        raise ValueError(
-            f"{parameter} has {len(bcs)} entries, but this operation "
-            f"uses {dim_len} dimensions"
-        )
-
-    normalized = []
-    for axis, bc in enumerate(bcs):
-        if not isinstance(bc, str):
-            choices = f' in {valid}' if valid is not None else ''
-            raise ValueError(
-                f"{parameter}[{axis}] must be a string{choices}, "
-                f"got {type(bc).__name__}; endpoint pairs or dictionaries "
-                "are supported by FiniteDiff only"
-            )
-        value = bc.strip().lower()
-        if valid is not None and value not in valid:
-            raise ValueError(
-                f"{parameter}[{axis}]={bc!r} is invalid; "
-                f"expected one of {valid}"
-            )
-        normalized.append(value)
-    return normalized
-
-
-def _validate_inversion_bcs(iParams, dim_len):
-    """Validate scalar-per-dimension BCs and warn for pending kernels."""
-    bcs = iParams.get('BCs')
-    marker = iParams.get('_validated_BCs')
-    if (isinstance(bcs, (list, tuple)) and
-            marker == (dim_len, tuple(bcs))):
-        return
-
-    valid = ('fixed', 'extend', 'periodic')
-    normalized = _normalize_scalar_bcs(
-        bcs, dim_len, parameter="iParams['BCs']", valid=valid)
-
-    iParams['BCs'] = normalized
-    iParams['_validated_BCs'] = (dim_len, tuple(normalized))
-
-    if dim_len == 3 and normalized[0] != 'fixed':
-        warnings.warn(
-            f"BCs[0]={normalized[0]!r} for the z dimension is accepted but "
-            "not implemented by the 3-D SOR kernels; the requested z-boundary "
-            "update will not be applied",
-            RuntimeWarning,
-            stacklevel=3,
-        )
-
-    y_index = dim_len - 2
-    if dim_len >= 2 and normalized[y_index] == 'periodic':
-        warnings.warn(
-            f"BCs[{y_index}]='periodic' for the y dimension is accepted but "
-            "not implemented by the SOR kernels; only periodic x (the last "
-            "dimension) is currently implemented",
-            RuntimeWarning,
-            stacklevel=3,
-        )
-
-# Diagnostic printInfo output: live, thread-safe, distribution-safe.
-#
-# With dask='parallelized' the per-time-step inversions run concurrently
-# in dask worker threads (the numba kernels release the GIL via
-# nogil=True), and each call prints its line as soon as it finishes.
-# Two pitfalls are handled in :func:`_print_live`:
-#
-# 1. Line splicing: ipykernel's OutStream buffers writes and flushes on
-#    newline, so a thread split across two ``write`` calls (as ``print``
-#    does: msg, then '\n') can be spliced by a concurrent thread into a
-#    corrupted line.  We therefore emit each line as ONE atomic write.
-#
-# 2. Output misattribution: ipykernel binds each NEW thread to the parent
-#    header (i.e. the cell) that spawned it.  dask reuses its worker pool
-#    across cells, so on a re-run those threads still carry the previous
-#    cell's parent header and their output is attributed to a finished
-#    cell -- the current cell shows nothing.  Before writing we drop this
-#    thread's stale registration so the header falls back to ipykernel's
-#    global, which is always the *currently executing* cell.
-#
-# dask.distributed serialisation: the ``_kernel_`` closure only ever
-# references this module-level *function* (transferred by reference by
-# cloudpickle), never a lock or buffer, so the graph stays picklable and
-# worker processes print to their own stdout (visible in worker logs).
-def _print_live(msg):
-    """Print one diagnostic line atomically and immediately.
-
-    Safe to call from any thread; only touches ipykernel internals when
-    they exist (no-op under a plain Python interpreter).
-    """
-    out = sys.stdout
-    ident = threading.get_ident()
-    for attr in ('_thread_to_parent', '_thread_to_parent_header'):
-        reg = getattr(out, attr, None)
-        if reg is not None:
-            try:
-                reg.pop(ident, None)
-            except KeyError:
-                pass
-    out.write(msg + '\n')   # single write => atomic line
-    out.flush()
 
 # ---------------------------------------------------------------------------
 # GPU kernel registry: maps CPU numba kernel → GPU equivalent
@@ -225,6 +67,20 @@ except ImportError as exc:
     # error.  Other exceptions are deliberately not swallowed: they indicate
     # a bug in the GPU module rather than a missing optional dependency.
     _gpu_import_error = exc
+
+
+# Experimental multi-core CPU registry.  Unsupported operators fail
+# explicitly instead of silently falling back to lexicographic CPU SOR.
+_cpu_mc_kernel_map = {
+    invert_standard_1D: invert_standard_1D_mc,
+    invert_standard_3D: invert_standard_3D_mc,
+    invert_general_2D: invert_general_2D_mc,
+    invert_general_3D: invert_general_3D_mc,
+    invert_general_bih_2D: invert_general_bih_2D_mc,
+    invert_standard_2D: invert_standard_2D_mc,
+    invert_standard_2D_full: invert_standard_2D_full_mc,
+}
+_cpu_mc_warning_emitted = False
 
 
 # default undefined value
@@ -674,7 +530,287 @@ def inv_general2D_bih(A, B, C, D, E, F, G, H, I, J, S, dims, iParams):
 """
 Below are the helper methods of xinvert
 """
+def _validate_inversion_dims(F, dims, expected):
+    """Return a validated dimension list for a DataArray inversion.
+
+    Parameters
+    ----------
+    F : xarray.DataArray
+        Forcing field whose dimensions define the available axes.
+    dims : str or sequence of str
+        Requested inversion dimensions.  A bare string is accepted only for
+        a one-dimensional inversion.
+    expected : int
+        Required number of inversion dimensions.
+
+    Returns
+    -------
+    list of str
+        Validated dimension names in solver-axis order.
+
+    Raises
+    ------
+    ValueError
+        If the input is not a DataArray or the dimensions are missing,
+        duplicated, incorrectly typed, or have the wrong length.
+    """
+    if not isinstance(F, xr.DataArray):
+        raise ValueError(
+            f'forcing must be an xarray.DataArray, got {type(F).__name__}')
+    if isinstance(dims, str):
+        if expected == 1:
+            dims = [dims]
+        else:
+            raise ValueError(
+                f'dims must contain {expected} dimension names, not one string')
+    elif isinstance(dims, (list, tuple)):
+        dims = list(dims)
+    else:
+        raise ValueError(
+            f'dims must be a list or tuple of {expected} strings, '
+            f'got {type(dims).__name__}')
+
+    if len(dims) != expected:
+        raise ValueError(
+            f'{expected} dimensions are needed for inversion, got {len(dims)}')
+    if not all(isinstance(dim, str) for dim in dims):
+        raise ValueError('every entry in dims must be a string')
+    if len(set(dims)) != len(dims):
+        raise ValueError(f'dims contains duplicate dimensions: {dims}')
+
+    missing = [dim for dim in dims if dim not in F.dims]
+    if missing:
+        raise ValueError(
+            f'inversion dimensions {missing} are not present in forcing; '
+            f'available dimensions are {list(F.dims)}')
+    return dims
+
+
+def _validate_solver_controls(iParams):
+    """Validate inexpensive scalar controls before dispatching a solver.
+
+    Parameters
+    ----------
+    iParams : dict
+        Effective inversion parameters.  ``mxLoop``, ``tolerance``, ``undef``
+        and ``diag_interval`` are checked here.
+
+    Returns
+    -------
+    None
+        Validation is performed in place without modifying ``iParams``.
+
+    Raises
+    ------
+    ValueError
+        If a control has an invalid type, range, or finite-value status.
+    """
+    mx_loop = iParams.get('mxLoop')
+    if (isinstance(mx_loop, (bool, np.bool_)) or
+            not isinstance(mx_loop, numbers.Integral) or mx_loop <= 0):
+        raise ValueError(
+            f"iParams['mxLoop'] must be a positive integer, got {mx_loop!r}")
+
+    tolerance = iParams.get('tolerance')
+    if (isinstance(tolerance, (bool, np.bool_)) or
+            not isinstance(tolerance, numbers.Real) or
+            not np.isfinite(tolerance) or tolerance < 0):
+        raise ValueError(
+            f"iParams['tolerance'] must be a non-negative finite real number, "
+            f"got {tolerance!r}")
+
+    undef = iParams.get('undef')
+    if (isinstance(undef, (bool, np.bool_)) or
+            not isinstance(undef, numbers.Real)):
+        raise ValueError(
+            f"iParams['undef'] must be a real scalar (NaN is allowed), "
+            f"got {undef!r}")
+
+    diag_interval = iParams.get('diag_interval', 0)
+    if (isinstance(diag_interval, (bool, np.bool_)) or
+            not isinstance(diag_interval, numbers.Integral)):
+        raise ValueError(
+            "iParams['diag_interval'] must be an integer, "
+            f"got {diag_interval!r}")
+
+
+def _normalize_scalar_bcs(bcs, dim_len, *, parameter='BCs', valid=None):
+    """Normalize APIs that accept one boundary-condition name per axis.
+
+    Parameters
+    ----------
+    bcs : sequence of str
+        Boundary names in solver-axis order.
+    dim_len : int
+        Number of inversion dimensions and therefore required BC entries.
+    parameter : str, optional
+        Parameter label used in validation messages.
+    valid : sequence of str or None, optional
+        Allowed normalized names.  ``None`` disables membership checking.
+
+    Returns
+    -------
+    list of str
+        Lower-case, whitespace-stripped boundary names.
+
+    Raises
+    ------
+    ValueError
+        If the container, length, element type, or boundary name is invalid.
+    """
+    if not isinstance(bcs, (list, tuple)):
+        raise ValueError(
+            f"{parameter} must be a list or tuple containing one string "
+            "per inversion dimension; endpoint dictionaries are supported "
+            "by FiniteDiff only"
+        )
+    if len(bcs) != dim_len:
+        raise ValueError(
+            f"{parameter} has {len(bcs)} entries, but this operation "
+            f"uses {dim_len} dimensions"
+        )
+
+    normalized = []
+    for axis, bc in enumerate(bcs):
+        if not isinstance(bc, str):
+            choices = f' in {valid}' if valid is not None else ''
+            raise ValueError(
+                f"{parameter}[{axis}] must be a string{choices}, "
+                f"got {type(bc).__name__}; endpoint pairs or dictionaries "
+                "are supported by FiniteDiff only"
+            )
+        value = bc.strip().lower()
+        if valid is not None and value not in valid:
+            raise ValueError(
+                f"{parameter}[{axis}]={bc!r} is invalid; "
+                f"expected one of {valid}"
+            )
+        normalized.append(value)
+    return normalized
+
+
+def _validate_inversion_bcs(iParams, dim_len):
+    """Validate inversion BCs and cache their normalized representation.
+
+    Parameters
+    ----------
+    iParams : dict
+        Effective inversion parameters. ``BCs`` is normalized in place and a
+        private validation marker is added.
+    dim_len : int
+        Number of inversion dimensions.
+
+    Returns
+    -------
+    None
+
+    Warns
+    -----
+    RuntimeWarning
+        When a syntactically valid boundary is not implemented by the current
+        SOR kernels, such as periodic y or non-fixed z boundaries.
+    """
+    bcs = iParams.get('BCs')
+    marker = iParams.get('_validated_BCs')
+    if (isinstance(bcs, (list, tuple)) and
+            marker == (dim_len, tuple(bcs))):
+        return
+
+    valid = ('fixed', 'extend', 'periodic')
+    normalized = _normalize_scalar_bcs(
+        bcs, dim_len, parameter="iParams['BCs']", valid=valid)
+
+    iParams['BCs'] = normalized
+    iParams['_validated_BCs'] = (dim_len, tuple(normalized))
+
+    if dim_len == 3 and normalized[0] != 'fixed':
+        warnings.warn(
+            f"BCs[0]={normalized[0]!r} for the z dimension is accepted but "
+            "not implemented by the 3-D SOR kernels; the requested z-boundary "
+            "update will not be applied",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+    y_index = dim_len - 2
+    if dim_len >= 2 and normalized[y_index] == 'periodic':
+        warnings.warn(
+            f"BCs[{y_index}]='periodic' for the y dimension is accepted but "
+            "not implemented by the SOR kernels; only periodic x (the last "
+            "dimension) is currently implemented",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+# Diagnostic printInfo output: live, thread-safe, distribution-safe.
+#
+# With dask='parallelized' the per-time-step inversions run concurrently
+# in dask worker threads (the numba kernels release the GIL via
+# nogil=True), and each call prints its line as soon as it finishes.
+# Two pitfalls are handled in :func:`_print_live`:
+#
+# 1. Line splicing: ipykernel's OutStream buffers writes and flushes on
+#    newline, so a thread split across two ``write`` calls (as ``print``
+#    does: msg, then '\n') can be spliced by a concurrent thread into a
+#    corrupted line.  We therefore emit each line as ONE atomic write.
+#
+# 2. Output misattribution: ipykernel binds each NEW thread to the parent
+#    header (i.e. the cell) that spawned it.  dask reuses its worker pool
+#    across cells, so on a re-run those threads still carry the previous
+#    cell's parent header and their output is attributed to a finished
+#    cell -- the current cell shows nothing.  Before writing we drop this
+#    thread's stale registration so the header falls back to ipykernel's
+#    global, which is always the *currently executing* cell.
+#
+# dask.distributed serialisation: the ``_kernel_`` closure only ever
+# references this module-level *function* (transferred by reference by
+# cloudpickle), never a lock or buffer, so the graph stays picklable and
+# worker processes print to their own stdout (visible in worker logs).
+def _print_live(msg):
+    """Print one diagnostic line atomically and immediately.
+
+    Safe to call from any thread; only touches ipykernel internals when
+    they exist (no-op under a plain Python interpreter).
+
+    Parameters
+    ----------
+    msg : str
+        Complete line without the trailing newline.
+
+    Returns
+    -------
+    None
+    """
+    out = sys.stdout
+    ident = threading.get_ident()
+    for attr in ('_thread_to_parent', '_thread_to_parent_header'):
+        reg = getattr(out, attr, None)
+        if reg is not None:
+            try:
+                reg.pop(ident, None)
+            except KeyError:
+                pass
+    out.write(msg + '\n')   # single write => atomic line
+    out.flush()
+
 def _get_info(F, dims):
+    """Build printable labels for every non-inversion slice.
+
+    Parameters
+    ----------
+    F : xarray.DataArray
+        Forcing field, possibly with batch dimensions such as ``time``.
+    dims : sequence of str
+        Dimensions consumed by the elliptic solver.
+
+    Returns
+    -------
+    info : str or xarray.DataArray
+        ``'{}'`` for a scalar batch, otherwise one formatted coordinate label
+        per combination of non-core coordinates.
+    ncdims : list of str
+        Non-core dimensions in their iteration order.
+    """
     info = []
     for selDict in loop_noncore(F, dims):
         parts = []
@@ -700,7 +836,7 @@ def _get_info(F, dims):
 def _make_kernel(kernel_func, grid_args, iParams):
     """Create a kernel function for xr.apply_ufunc that wraps an SOR function.
 
-    Dispatches to a CPU (numba) or GPU (cuda) kernel based on
+    Dispatches to a CPU, multi-color CPU, or GPU kernel based on
     ``iParams['architect']`` (default ``'cpu'``).
 
     Both CPU and GPU kernels share the same call signature::
@@ -725,12 +861,33 @@ def _make_kernel(kernel_func, grid_args, iParams):
     callable
         A kernel function suitable for ``xr.apply_ufunc``.
     """
+    global _cpu_mc_warning_emitted
+
     # case-insensitive (and whitespace-tolerant): 'GPU', ' GPU ' etc. all work
     architect = str(iParams.get('architect', 'cpu')).strip().lower()
-    convergence = _convergence_code(iParams.get('convergence', 'norm'))
+    diag_interval = max(int(iParams.get('diag_interval', 0)), 0)
+    check_interval = diag_interval or 0
 
     if architect == 'cpu':
-        func = kernel_func
+        func = partial(
+            kernel_func,
+            check_interval=check_interval)
+    elif architect == 'cpu-mc':
+        if not _cpu_mc_warning_emitted:
+            warnings.warn(
+                "xinvert's CPU multi-color backend is experimental and "
+                "uses dependency-safe color sweeps",
+                UserWarning,
+                stacklevel=3,
+            )
+            _cpu_mc_warning_emitted = True
+        func = _cpu_mc_kernel_map.get(kernel_func)
+        if func is None:
+            raise NotImplementedError(
+                "CPU multi-color kernel not implemented for "
+                f"'{kernel_func.__name__}'; currently supported: "
+                f"{[k.__name__ for k in _cpu_mc_kernel_map]}")
+        func = partial(func, check_interval=check_interval)
     elif architect == 'gpu':
         warnings.warn(
             "xinvert's GPU backend is experimental; numerical kernels, "
@@ -752,9 +909,9 @@ def _make_kernel(kernel_func, grid_args, iParams):
                 f"GPU kernel not implemented for '{kernel_func.__name__}', "
                 f"available: {[k.__name__ for k in _gpu_kernel_map]}")
         # Inject per-call GPU block config from iParams (None = auto default)
-        from functools import partial
         func = partial(func,
-                       block_2d=iParams.get('gpu_block2d'))
+                       block_2d=iParams.get('gpu_block2d'),
+                       check_interval=(diag_interval or None))
         # Initialise the CUDA context in the main thread: numba-cuda manages
         # contexts thread-locally, and dask worker threads would otherwise
         # crash with CUDA_ERROR_NOT_INITIALIZED on their first launch.
@@ -762,22 +919,40 @@ def _make_kernel(kernel_func, grid_args, iParams):
             _ensure_cuda()
     else:
         raise ValueError(
-            f"unsupported architect '{architect}', should be 'cpu' or 'gpu' "
+            f"unsupported architect '{architect}', should be 'cpu', "
+            f"'cpu-mc', or 'gpu' "
             f"(case-insensitive)")
 
     def _kernel_(s, *args):
+        """Solve one vectorized slice and optionally return raw diagnostics.
+
+        Parameters
+        ----------
+        s : numpy.ndarray
+            Writable solution slice supplied by ``xarray.apply_ufunc``.
+        *args : numpy.ndarray or str
+            Coefficient/forcing slices followed by the printable slice label.
+
+        Returns
+        -------
+        numpy.ndarray or tuple of (numpy.ndarray, numpy.ndarray)
+            Updated solution, plus the internal flag/history array when
+            diagnostics are enabled.
+        """
         *coeffs, info = args
         s.setflags(write=1)
         o = s
-        flags = np.array([0, 0, 0], dtype='float64')
+        diagnostic_count = ((int(iParams['mxLoop']) + diag_interval - 1) //
+                            diag_interval if diag_interval else 0)
+        flags = np.full(3 + diagnostic_count, np.nan, dtype='float64')
+        flags[:3] = 0.0
 
         func(o, *coeffs, info, *grid_args,
              iParams['optArg'], _undeftmp, flags,
-             iParams['mxLoop'], iParams['tolerance'], convergence)
+             iParams['mxLoop'], iParams['tolerance'])
 
         if iParams['printInfo']:
-            metric = 'residual' if convergence == 1 else 'norm change'
-            msg = (f'{info} loops {flags[2]:4.0f}, {metric} is '
+            msg = (f'{info} loops {flags[2]:4.0f}, residual is '
                    f'{flags[1]:e}')
             if flags[0]:
                 msg = msg + ' (overflow!)'
@@ -785,7 +960,7 @@ def _make_kernel(kernel_func, grid_args, iParams):
             # cloudpickle, keeping the closure picklable
             _print_live(msg)
 
-        if iParams.get('return_diagnostics', False):
+        if diag_interval:
             return o, flags
         return o
 
@@ -794,8 +969,31 @@ def _make_kernel(kernel_func, grid_args, iParams):
 
 def _apply_solver(kernel, inputs, input_core_dims, solution_dims, solution,
                   iParams):
-    """Apply one vectorized solver and optionally expose per-slice status."""
-    if not iParams.get('return_diagnostics', False):
+    """Apply one vectorized solver and optionally expose diagnostics.
+
+    Parameters
+    ----------
+    kernel : callable
+        Slice-level function returned by :func:`_make_kernel`.
+    inputs : sequence of xarray.DataArray
+        Solution template, coefficients, forcing, and printable slice labels.
+    input_core_dims : sequence of sequence of str
+        Core dimensions corresponding one-to-one with ``inputs``.
+    solution_dims : sequence of str
+        Core dimensions of the inverted field.
+    solution : xarray.DataArray
+        Template used to determine the output floating-point dtype.
+    iParams : dict
+        Effective inversion parameters.
+
+    Returns
+    -------
+    xarray.DataArray or tuple of (xarray.DataArray, xarray.Dataset)
+        The solution alone when ``diag_interval <= 0``; otherwise the solution and
+        labelled per-slice diagnostics.
+    """
+    diag_interval = max(int(iParams.get('diag_interval', 0)), 0)
+    if diag_interval == 0:
         return xr.apply_ufunc(
             kernel, *inputs,
             input_core_dims=input_core_dims,
@@ -806,6 +1004,8 @@ def _apply_solver(kernel, inputs, input_core_dims, solution_dims, solution,
             output_dtypes=[solution.dtype],
         )
 
+    diagnostic_count = (
+        int(iParams['mxLoop']) + diag_interval - 1) // diag_interval
     result, raw = xr.apply_ufunc(
         kernel, *inputs,
         input_core_dims=input_core_dims,
@@ -813,7 +1013,7 @@ def _apply_solver(kernel, inputs, input_core_dims, solution_dims, solution,
         dask='parallelized',
         dask_gufunc_kwargs={
             'allow_rechunk': True,
-            'output_sizes': {'diagnostic': 3},
+            'output_sizes': {'diagnostic': 3 + diagnostic_count},
         },
         vectorize=True,
         output_dtypes=[solution.dtype, np.float64],
@@ -822,46 +1022,52 @@ def _apply_solver(kernel, inputs, input_core_dims, solution_dims, solution,
 
 
 def _diagnostics_from_flags(raw, iParams):
-    """Convert the kernel flag vector into a labelled diagnostics Dataset."""
+    """Convert the internal flag array to labelled solver diagnostics.
+
+    Parameters
+    ----------
+    raw : xarray.DataArray
+        Array whose final ``diagnostic`` axis stores overflow, final residual,
+        iteration count, and sampled residual history.
+    iParams : dict
+        Effective parameters supplying tolerance, iteration limit, and
+        diagnostic interval.
+
+    Returns
+    -------
+    xarray.Dataset
+        ``converged``, ``iterations``, ``error``, ``final_error`` and
+        ``stop_reason`` with all non-inversion dimensions preserved.
+    """
     overflow = raw.isel(diagnostic=0, drop=True).astype(bool)
-    error = raw.isel(diagnostic=1, drop=True)
+    final_error = raw.isel(diagnostic=1, drop=True)
     iterations = raw.isel(diagnostic=2, drop=True).astype(np.int64)
     tolerance = float(iParams['tolerance'])
-    converged = (~overflow) & np.isfinite(error) & (tolerance > 0.0) & (
-        error < tolerance)
+    converged = (~overflow) & np.isfinite(final_error) & (tolerance > 0.0) & (
+        final_error < tolerance)
 
     reason = xr.full_like(iterations, 'max_iterations', dtype=object)
     reason = xr.where(converged, 'converged', reason)
     reason = xr.where(overflow, 'overflow', reason)
 
+    interval = int(iParams['diag_interval'])
+    history = raw.isel(diagnostic=slice(3, None)).rename(
+        {'diagnostic': 'iteration'})
+    iteration = np.minimum(
+        np.arange(1, history.sizes['iteration'] + 1, dtype=np.int64) * interval,
+        int(iParams['mxLoop']))
+    history = history.assign_coords(iteration=iteration).rename('error')
+
     diagnostics = xr.Dataset({
         'converged': converged,
         'iterations': iterations,
-        'error': error,
+        'error': history,
+        'final_error': final_error,
         'stop_reason': reason,
     })
     diagnostics.attrs.update({
-        'convergence': ('residual' if _convergence_code(
-            iParams.get('convergence', 'norm')) == 1 else 'norm'),
         'tolerance': tolerance,
         'max_iterations': int(iParams['mxLoop']),
+        'diag_interval': interval,
     })
     return diagnostics
-
-
-def _convergence_code(value):
-    """Validate a public convergence-mode value and return its kernel code."""
-    mode = str(value).strip().lower().replace('-', '_')
-    aliases = {
-        'norm': 0,
-        'solution_norm': 0,
-        'legacy': 0,
-        'residual': 1,
-        'preconditioned_residual': 1,
-    }
-    if mode not in aliases:
-        raise ValueError(
-            f"unsupported convergence mode '{value}', should be 'norm' or "
-            "'residual' (case-insensitive)"
-        )
-    return aliases[mode]

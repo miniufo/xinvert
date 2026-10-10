@@ -139,6 +139,13 @@ class FiniteDiff:
     
     
     def __repr__(self):
+        """Return a table of dimension mappings, endpoint BCs, and fills.
+
+        Returns
+        -------
+        str
+            Human-readable finite-difference configuration.
+        """
         typ = f'     Name,               BCs (l-r),     fills  => \'{self.coords:s}\' coords\n'\
 
         out = [f'{dim!s:>1s}: {name!s:>6s}  {self.BCs[dim]!s:>24s}  {self.fill[dim]!s:>8s}\n'
@@ -711,8 +718,28 @@ def deriv2(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1):
 helper methods.
 """
 def _dimsBCs(dims, BCs):
-    """
-    Align dims and BCs with default one ('extend').
+    """Normalize dimensions and finite-difference boundary mappings.
+
+    Parameters
+    ----------
+    dims : str or sequence of str
+        Dimensions acted on by a finite-difference operation.
+    BCs : str, dict or None
+        A scalar boundary name applied to every dimension, a mapping from
+        dimension to ``(lower, upper)`` names, or ``None`` for ``extend`` on
+        both sides of every dimension.
+
+    Returns
+    -------
+    dims : list of str
+        Normalized dimension list.
+    BCs : dict
+        Mapping from every requested dimension to its endpoint pair.
+
+    Notes
+    -----
+    Missing dimensions in a supplied mapping are filled with
+    ``('extend', 'extend')``.  The mapping may be updated in place.
     """
     if isinstance(dims, str):
         dims = [dims]
@@ -736,6 +763,22 @@ def _dimsBCs(dims, BCs):
     return dims, BCs
 
 def _overwriteBCs(BCsNew, BCsOld):
+    """Overlay boundary-condition overrides on an existing mapping.
+
+    Parameters
+    ----------
+    BCsNew : str, dict or None
+        New boundary specification.  A string applies to both endpoints of
+        all existing dimensions; a mapping updates matching dimensions only.
+    BCsOld : dict
+        Existing ``dimension -> (lower, upper)`` boundary mapping.
+
+    Returns
+    -------
+    dict
+        Updated copy of ``BCsOld``.  If ``BCsNew`` is ``None``, the original
+        mapping is returned unchanged.
+    """
     if BCsNew is None:
         return BCsOld
     
@@ -758,6 +801,22 @@ def _overwriteBCs(BCsNew, BCsOld):
     return BCs
 
 def _overwriteFills(fillsNew, fillsOld):
+    """Overlay endpoint fill values on an existing fill mapping.
+
+    Parameters
+    ----------
+    fillsNew : number, dict or None
+        Scalar fill applied to both endpoints of every existing dimension, a
+        mapping of per-dimension replacements, or ``None`` for no change.
+    fillsOld : dict
+        Existing ``dimension -> (lower, upper)`` fill-value mapping.
+
+    Returns
+    -------
+    dict
+        Updated copy of ``fillsOld``.  If ``fillsNew`` is ``None``, the
+        original mapping is returned unchanged.
+    """
     if fillsNew is None:
         return fillsOld
     
@@ -775,4 +834,3 @@ def _overwriteFills(fillsNew, fillsOld):
                 fills[f] = fillsNew[f]
     
     return fills
-
