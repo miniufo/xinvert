@@ -9,19 +9,35 @@ Copyright 2018. All rights reserved. Use is subject to license terms.
 import xarray as xr
 import numpy as np
 
-def test_optArg():
-    nx, ny = 100, 100
-    
-    gridx = xr.DataArray(np.arange(nx), dims=['X'], coords={'X': np.arange(nx)})
-    gridy = xr.DataArray(np.arange(ny), dims=['Y'], coords={'Y': np.arange(ny)})
-    
-    gy, gx = xr.broadcast(gridy, gridx)
-    
-    epsilon = np.sin(np.pi/(2.*gx+2.))**2. + np.sin(np.pi/(2.*gy+2.))**2.
-    
-    optArg = 2./(1.+np.sqrt(epsilon*(2.-epsilon)))
+import xinvert.apps as apps
 
-    assert np.logical_and(optArg >=1, optArg <=2).all()
+def test_optArg():
+    omega = apps.__optimal_sor_parameter(
+        (80, 100), (2.0, 1.0), ('fixed', 'fixed'))
+    weights = np.array([1.0 / 4.0, 1.0])
+    rho = np.sum(weights * [np.cos(np.pi / 79.0),
+                            np.cos(np.pi / 99.0)]) / weights.sum()
+    expected = 2.0 / (1.0 + np.sqrt(1.0 - rho*rho))
+
+    assert omega == expected
+    assert 1.0 <= omega < 2.0
+
+
+def test_optarg_changes_with_grid_anisotropy():
+    isotropic = apps.__optimal_sor_parameter(
+        (30, 60), (1.0, 1.0), ('fixed', 'fixed'))
+    anisotropic = apps.__optimal_sor_parameter(
+        (30, 60), (4.0, 1.0), ('fixed', 'fixed'))
+
+    assert anisotropic != isotropic
+
+
+def test_optarg_respects_periodic_lowest_mode():
+    omega = apps.__optimal_sor_parameter(
+        (30, 60), (1.0, 1.0), ('fixed', 'periodic'))
+    rho = (np.cos(np.pi / 29.0) + 1.0) / 2.0
+    expected = 2.0 / (1.0 + np.sqrt(1.0 - rho*rho))
+    assert omega == expected
 
 
 #%% plot wind and streamfunction

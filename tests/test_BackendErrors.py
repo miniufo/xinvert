@@ -7,7 +7,7 @@ from xinvert.cpus import invert_standard_2D
 
 
 def _params(architect):
-    return {'architect': architect, 'convergence': 'norm'}
+    return {'architect': architect}
 
 
 def test_missing_gpu_dependency_has_actionable_error(monkeypatch):
@@ -35,5 +35,5 @@ def test_unimplemented_gpu_kernel_is_distinct_from_missing_dependency(
 
 
 def test_invalid_architecture_is_rejected():
-    with pytest.raises(ValueError, match="should be 'cpu' or 'gpu'"):
+    with pytest.raises(ValueError, match="should be 'cpu', 'cpu-mc', or 'gpu'"):
         core._make_kernel(invert_standard_2D, [], _params('tpu'))

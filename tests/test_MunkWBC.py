@@ -37,9 +37,12 @@ def test_Munk_ideal():
     
     # invert
     iParams = {
+        # Preserve the historical snapshot precision explicitly.
+        'dtype': 'float32',
         'BCs'      : ['fixed', 'fixed'],
         'mxLoop'   : 4000,
-        'tolerance': 1e-14,
+        # Fixed-work historical snapshot, not a converged reference.
+        'tolerance': 0.0,
         'optArg'   : 1.0,
         'undef'    : np.nan,
     }
@@ -56,8 +59,8 @@ def test_Munk_ideal():
     assert h1.dims  == h2.dims  == curl_tau.dims
     # snapshot values recalibrated after the extend gauge-anchor /
     # sparse-check changes (see cpus._find_boundary_anchor_2d)
-    assert np.isclose(h1.max(), 388651.96875)
-    assert np.isclose(h2.max(), 399666.59375)
+    assert np.isclose(h1.max(), 388651.96875, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h2.max(), 399666.59375, rtol=1e-5, atol=1e-8)
 
 
 def test_Munk_real():
@@ -70,9 +73,12 @@ def test_Munk_real():
     
     # invert
     iParams = {
+        # Preserve the historical snapshot precision explicitly.
+        'dtype': 'float32',
         'BCs'      : ['fixed', 'periodic'],
         'mxLoop'   : 4000,
-        'tolerance': 1e-14,
+        # Fixed-work historical snapshot, not a converged reference.
+        'tolerance': 0.0,
         'optArg'   : 1.0,
         'undef'    : np.nan,
     }
@@ -84,7 +90,7 @@ def test_Munk_real():
     
     assert h1.shape == curl.shape
     assert h1.dims  == curl.dims
-    assert np.isclose(np.abs(h1).max(), 1103780.25)
+    assert np.isclose(np.abs(h1).max(), 1103780.25, rtol=1e-5, atol=1e-8)
     
 
 

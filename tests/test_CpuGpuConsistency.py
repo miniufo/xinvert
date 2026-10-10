@@ -251,7 +251,7 @@ if __name__ == '__main__':
         ok = err_cpu < 1e-2 and err_gpu < 1e-2 and diff < 1e-3
         print('RESULT:', 'PASS' if ok else 'FAIL')
         print()
-        print('See tests/benchmark_cpu_gpu.py for multi-scale speedup numbers.')
+        print('See benchmarks/benchmark_cpu_gpu.py for multi-scale speedup numbers.')
     else:
         ok = err_cpu < 1e-2
         print('GPU path SKIPPED (no CUDA). Only CPU correctness was verified.')
@@ -260,4 +260,4 @@ if __name__ == '__main__':
         print('To actually test the GPU, run on a machine with a CUDA-capable GPU')
         print('and a CUDA-enabled numba install, then:')
         print('    python tests/test_CpuGpuConsistency.py')
-        print('    python tests/benchmark_cpu_gpu.py')
+        print('    python benchmarks/benchmark_cpu_gpu.py')

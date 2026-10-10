@@ -50,9 +50,12 @@ def test_RefStateSWM():
 
     ################### invert using Stommel-Munk model ##################
     iParams = {
+        # Preserve the historical snapshot precision explicitly.
+        'dtype': 'float32',
         'BCs'      : ['fixed'],
         'mxLoop'   : 5000,
-        'tolerance': 1e-18,
+        # Fixed-work historical snapshot, not a converged reference.
+        'tolerance': 0.0,
         'undef'    : np.nan,
         'debug'    : False,
         'printInfo': False}
@@ -74,6 +77,6 @@ def test_RefStateSWM():
     # uref = Cref / (2.0 * np.pi * r) - 7.292e-5 * r
     href = Mref.differentiate('lat') / (2.0 * np.pi * r) / (6371200. * np.deg2rad(1.))
     
-    assert np.isclose(href[:, 2:-7], ds1.href[:, 2:-7], rtol=3e-2).all()
+    assert np.isclose(href[:, 2:-7], ds1.href[:, 2:-7], rtol=3e-2, atol=1e-8).all()
 
 

@@ -1,0 +1,205 @@
+{
+  "metadata": {
+    "python": "3.13.7",
+    "platform": "Linux-6.14.0-29-generic-x86_64-with-glibc2.39",
+    "cpu": "x86_64",
+    "cpu_threads": 1,
+    "cpu_mc_threads": 8,
+    "architectures": [
+      "cpu",
+      "gpu"
+    ],
+    "mode": "fixed",
+    "dtype": "float64",
+    "tolerance": 0.0,
+    "max_iterations": 1000,
+    "diag_interval": 1000,
+    "repeat_small": 5,
+    "repeat_large": 2,
+    "large_grid": 2048,
+    "trace_grid": 512
+  },
+  "solves": [
+    {
+      "seconds_median": 0.10279613733291626,
+      "seconds_samples": [
+        0.10329532995820045,
+        0.10279613733291626,
+        0.1026868186891079,
+        0.10267208516597748,
+        0.10301876440644264
+      ],
+      "iterations": 1000,
+      "final_residual": 6.35201599441382e-16,
+      "converged": false,
+      "grid": 128,
+      "architect": "cpu",
+      "repeat": 5
+    },
+    {
+      "seconds_median": 0.07829459384083748,
+      "seconds_samples": [
+        0.08243663609027863,
+        0.07823556661605835,
+        0.07799189165234566,
+        0.07829459384083748,
+        0.07903020456433296
+      ],
+      "iterations": 1000,
+      "final_residual": 6.956477176288008e-16,
+      "converged": false,
+      "grid": 128,
+      "architect": "gpu",
+      "repeat": 5
+    },
+    {
+      "seconds_median": 0.41086626797914505,
+      "seconds_samples": [
+        0.41086626797914505,
+        0.4109308570623398,
+        0.41214220970869064,
+        0.40965794026851654,
+        0.4106226973235607
+      ],
+      "iterations": 1000,
+      "final_residual": 3.729038485251513e-11,
+      "converged": false,
+      "grid": 256,
+      "architect": "cpu",
+      "repeat": 5
+    },
+    {
+      "seconds_median": 0.08004073798656464,
+      "seconds_samples": [
+        0.07963547483086586,
+        0.08097950369119644,
+        0.08004073798656464,
+        0.08016607165336609,
+        0.07951151952147484
+      ],
+      "iterations": 1000,
+      "final_residual": 1.2295776209867882e-11,
+      "converged": false,
+      "grid": 256,
+      "architect": "gpu",
+      "repeat": 5
+    },
+    {
+      "seconds_median": 1.6639025397598743,
+      "seconds_samples": [
+        1.6719159446656704,
+        1.6613688133656979,
+        1.6764875687658787,
+        1.6602378822863102,
+        1.6639025397598743
+      ],
+      "iterations": 1000,
+      "final_residual": 3.2844693961612658e-06,
+      "converged": false,
+      "grid": 512,
+      "architect": "cpu",
+      "repeat": 5
+    },
+    {
+      "seconds_median": 0.1081836074590683,
+      "seconds_samples": [
+        0.12224533408880234,
+        0.12232344970107079,
+        0.1081836074590683,
+        0.10763446986675262,
+        0.10782035440206528
+      ],
+      "iterations": 1000,
+      "final_residual": 6.969048764146406e-07,
+      "converged": false,
+      "grid": 512,
+      "architect": "gpu",
+      "repeat": 5
+    },
+    {
+      "seconds_median": 9.84321566671133,
+      "seconds_samples": [
+        9.85657199844718,
+        9.820358477532864,
+        9.849622309207916,
+        9.817989945411682,
+        9.84321566671133
+      ],
+      "iterations": 1000,
+      "final_residual": 0.00020984905917074888,
+      "converged": false,
+      "grid": 1024,
+      "architect": "cpu",
+      "repeat": 5
+    },
+    {
+      "seconds_median": 0.3761327415704727,
+      "seconds_samples": [
+        0.41882941126823425,
+        0.3765192814171314,
+        0.3749375455081463,
+        0.3761327415704727,
+        0.3751439340412617
+      ],
+      "iterations": 1000,
+      "final_residual": 8.271655804522967e-05,
+      "converged": false,
+      "grid": 1024,
+      "architect": "gpu",
+      "repeat": 5
+    },
+    {
+      "seconds_median": 27.35420772433281,
+      "seconds_samples": [
+        27.313512060791254,
+        27.394903387874365
+      ],
+      "iterations": 1000,
+      "final_residual": 0.0005902007887601714,
+      "converged": false,
+      "grid": 2048,
+      "architect": "cpu",
+      "repeat": 2
+    },
+    {
+      "seconds_median": 1.4834287837147713,
+      "seconds_samples": [
+        1.4980409182608128,
+        1.4688166491687298
+      ],
+      "iterations": 1000,
+      "final_residual": 0.0005403493873541745,
+      "converged": false,
+      "grid": 2048,
+      "architect": "gpu",
+      "repeat": 2
+    },
+    {
+      "seconds_median": 110.60419746674597,
+      "seconds_samples": [
+        110.61897459998727,
+        110.58942033350468
+      ],
+      "iterations": 1000,
+      "final_residual": 0.0007760731301818391,
+      "converged": false,
+      "grid": 4096,
+      "architect": "cpu",
+      "repeat": 2
+    },
+    {
+      "seconds_median": 5.854829264804721,
+      "seconds_samples": [
+        5.862852569669485,
+        5.846805959939957
+      ],
+      "iterations": 1000,
+      "final_residual": 0.0011190846658701299,
+      "converged": false,
+      "grid": 4096,
+      "architect": "gpu",
+      "repeat": 2
+    }
+  ],
+  "residual_traces": {}
+}

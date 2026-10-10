@@ -37,10 +37,13 @@ def test_stommel_idealized():
     
     # invert
     iParams = {
+        # Preserve the historical snapshot precision explicitly.
+        'dtype': 'float32',
         'BCs'      : ['fixed', 'fixed'],
         'mxLoop'   : 5000,
         'optArg'   : 1.9,
-        'tolerance': 1e-12,
+        # Fixed-work historical snapshot, not a converged reference.
+        'tolerance': 0.0,
     }
     
     mParams1 = {'beta': 0   , 'R': R, 'D': depth}
@@ -89,10 +92,13 @@ def test_stommel_real():
     
     # invert
     iParams = {
+        # Preserve the historical snapshot precision explicitly.
+        'dtype': 'float32',
         'BCs'      : ['extend', 'periodic'],
         'mxLoop'   : 5000,
         'optArg'   : 1,
-        'tolerance': 1e-12,
+        # Fixed-work historical snapshot, not a converged reference.
+        'tolerance': 0.0,
         'undef'    : np.nan,
     }
     
@@ -115,14 +121,14 @@ def test_stommel_real():
     # snapshot values recalibrated after the extend gauge-anchor change
     # (see cpus._find_boundary_anchor_2d): mixed extend/periodic systems
     # are now determinate, shifting the last digits of these snapshots
-    assert np.isclose(h1.min(), -437846.31250)
-    assert np.isclose(h1.max(),  536147.75000)
-    assert np.isclose(h2.min(), -414699.93750)
-    assert np.isclose(h2.max(),  826668.75000)
+    assert np.isclose(h1.min(), -437846.31250, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h1.max(),  536147.75000, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h2.min(), -414699.93750, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h2.max(),  826668.75000, rtol=1e-5, atol=1e-8)
 
-    assert np.isclose(h11.min(), -431809.90625)
-    assert np.isclose(h11.max(),  432034.56250)
-    assert np.isclose(h22.min(), -435085.71875)
-    assert np.isclose(h22.max(),  725163.56250)
+    assert np.isclose(h11.min(), -431809.90625, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h11.max(),  432034.56250, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h22.min(), -435085.71875, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h22.max(),  725163.56250, rtol=1e-5, atol=1e-8)
 
 

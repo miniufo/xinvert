@@ -18,9 +18,12 @@ def test_BrethertonHaidvogel():
     assert topo.shape == (201, 301)
     
     iParams = {
+        # Preserve the historical snapshot precision explicitly.
+        'dtype': 'float32',
         'BCs'      : ['fixed', 'fixed'],
         'mxLoop'   : 3000,
-        'tolerance': 1e-16,
+        # Fixed-work historical snapshot, not a converged reference.
+        'tolerance': 0.0,
         'undef'    : np.nan,
     }
     
@@ -39,6 +42,6 @@ def test_BrethertonHaidvogel():
     
     KE = (u1**2 + v1**2).sum() / 2
     
-    assert np.isclose(KE.values, 0.0812731)
+    assert np.isclose(KE.values, 0.0812731, rtol=1e-5, atol=1e-8)
 
 

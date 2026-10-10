@@ -27,9 +27,12 @@ def test_GillMatsuno_idealized():
     
     # invert
     iParams = {
+        # Preserve the historical snapshot precision explicitly.
+        'dtype': 'float32',
         'BCs'      : ['fixed', 'periodic'],
         'mxLoop'   : 2000,
-        'tolerance': 1e-8,
+        # Fixed-work historical snapshot, not a converged reference.
+        'tolerance': 0.0,
         'optArg'   : 1.4,
     }
     
@@ -52,9 +55,9 @@ def test_GillMatsuno_idealized():
     assert (h1 <= 0).all()
     assert (np.abs(h2) <= 370).all()
     assert (h3 <= 0).all()
-    assert np.isclose(((u1**2+v1**2)/2).sum(), 4351.62244687)
-    assert np.isclose(((u2**2+v2**2)/2).sum(), 5833.33192343)
-    assert np.isclose(((u3**2+v3**2)/2).sum(), 5100.85325027)
+    assert np.isclose(((u1**2+v1**2)/2).sum(), 4351.62244687, rtol=1e-5, atol=1e-8)
+    assert np.isclose(((u2**2+v2**2)/2).sum(), 5833.33192343, rtol=1e-5, atol=1e-8)
+    assert np.isclose(((u3**2+v3**2)/2).sum(), 5100.85325027, rtol=1e-5, atol=1e-8)
 
 
 def test_GillMatsuno_real():
@@ -64,9 +67,12 @@ def test_GillMatsuno_real():
     
     # invert
     iParams = {
+        # Preserve the historical snapshot precision explicitly.
+        'dtype': 'float32',
         'BCs'      : ['fixed', 'periodic'],
         'mxLoop'   : 2000,
-        'tolerance': 1e-12,
+        # Fixed-work historical snapshot, not a converged reference.
+        'tolerance': 0.0,
         'optArg'   : 1.4,
     }
     
@@ -88,8 +94,8 @@ def test_GillMatsuno_real():
     assert (np.abs(h1) <= 1200).all()
     assert (np.abs(h2) <= 1200).all()
     assert (np.abs(h3) <= 1000).all()
-    assert np.isclose(((u1**2+v1**2)/2).sum(), 137039.11)
-    assert np.isclose(((u2**2+v2**2)/2).sum(), 110614.41)
-    assert np.isclose(((u3**2+v3**2)/2).sum(),  77191.09)
+    assert np.isclose(((u1**2+v1**2)/2).sum(), 137039.11, rtol=1e-5, atol=1e-8)
+    assert np.isclose(((u2**2+v2**2)/2).sum(), 110614.41, rtol=1e-5, atol=1e-8)
+    assert np.isclose(((u3**2+v3**2)/2).sum(),  77191.09, rtol=1e-5, atol=1e-8)
 
 

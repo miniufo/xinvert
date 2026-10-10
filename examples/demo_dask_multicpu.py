@@ -12,7 +12,7 @@ Data: Data/SODA_curl.nc  (12 time steps, 300 x 720, var = curl)
 
 Run from project root::
 
-    python tests/demo_dask_multicpu.py
+    python examples/demo_dask_multicpu.py
 """
 import os
 import sys

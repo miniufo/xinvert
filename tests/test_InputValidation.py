@@ -50,16 +50,52 @@ def test_mxloop_must_be_a_positive_integer(mx_loop):
         _validate_solver_controls(params)
 
 
-@pytest.mark.parametrize('tolerance', [np.nan, np.inf, True, '1e-8'])
+@pytest.mark.parametrize(
+    'tolerance', [-1e-8, np.nan, np.inf, True, '1e-8'])
 def test_tolerance_must_be_finite_real(tolerance):
     params = {'mxLoop': 1, 'tolerance': tolerance, 'undef': np.nan}
-    with pytest.raises(ValueError, match='finite real'):
+    with pytest.raises(ValueError, match='non-negative finite real'):
         _validate_solver_controls(params)
 
 
-def test_nonpositive_tolerance_remains_supported_to_disable_early_stop():
+def test_zero_tolerance_remains_available_for_internal_fixed_runs():
     _validate_solver_controls(
-        {'mxLoop': np.int64(2), 'tolerance': -1e-8, 'undef': np.nan})
+        {'mxLoop': np.int64(2), 'tolerance': 0.0, 'undef': np.nan})
+
+
+@pytest.mark.parametrize('interval', [1.5, True, '10', None])
+def test_diag_interval_must_be_an_integer(interval):
+    params = {
+        'mxLoop': 10, 'tolerance': 1e-8, 'undef': np.nan,
+        'diag_interval': interval,
+    }
+    with pytest.raises(ValueError, match='must be an integer'):
+        _validate_solver_controls(params)
+
+
+@pytest.mark.parametrize('interval', [-1, 0, 1, np.int64(7)])
+def test_valid_diag_intervals(interval):
+    _validate_solver_controls({
+        'mxLoop': 10, 'tolerance': 1e-8, 'undef': np.nan,
+        'diag_interval': interval,
+    })
+
+
+def test_nonpositive_diag_interval_returns_solution_only():
+    result = apps.invert_Poisson(
+        xr.DataArray(np.zeros((3, 3)), dims=['y', 'x']),
+        ['y', 'x'], coords='cartesian',
+        iParams={'diag_interval': -1, 'mxLoop': 1})
+    assert isinstance(result, xr.DataArray)
+
+
+def test_unknown_iparams_key_has_spelling_suggestion():
+    with pytest.raises(
+            ValueError, match="did you mean 'diag_interval'"):
+        apps.invert_Poisson(
+            xr.DataArray(np.zeros((3, 3)), dims=['y', 'x']),
+            ['y', 'x'], coords='cartesian',
+            iParams={'return_diagnostic': True})
 
 
 @pytest.mark.parametrize('undef', [True, 'nan', 1 + 2j])

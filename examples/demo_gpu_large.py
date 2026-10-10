@@ -12,7 +12,7 @@ grids (600 x 1440, 1200 x 2880) to demonstrate GPU scaling.
 
 Run from project root::
 
-    python tests/demo_gpu_large.py
+    python examples/demo_gpu_large.py
 
 If no GPU is available, only CPU timings are reported.
 """

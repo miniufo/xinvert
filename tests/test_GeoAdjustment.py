@@ -28,7 +28,7 @@ def test_adjustment():
 	iParams = {
 	    'BCs'      : ['extend'],
 	    'mxLoop'   : 100000,
-	    'tolerance': -1e-11,
+	    'tolerance': 0,
 	    'optArg'   : 1.8,
 	    'undef'    : -9999,
 	}
