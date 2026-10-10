@@ -114,3 +114,35 @@ To use different endpoint conditions when calculating a derivative, construct
 ``FiniteDiff`` directly as in the example above.  Passing an endpoint pair or
 dictionary to ``cal_flow`` raises ``ValueError`` rather than silently changing
 its meaning.
+
+Relationship to xarray
+----------------------
+
+``cal_flow`` delegates its spatial derivatives to ``FiniteDiff``.  For a
+centered first derivative, ``FiniteDiff`` first creates one ghost point at
+each endpoint with `xarray.DataArray.pad
+<https://docs.xarray.dev/en/stable/generated/xarray.DataArray.pad.html>`_, then
+evaluates the padded field with `xarray.DataArray.differentiate
+<https://docs.xarray.dev/en/stable/generated/xarray.DataArray.differentiate.html>`_.
+The xinvert boundary names map to xarray padding modes as follows:
+
+.. list-table::
+   :header-rows: 1
+
+   * - xinvert BC
+     - xarray ``pad`` mode
+   * - ``fixed``
+     - ``constant`` with the corresponding ``fill`` value
+   * - ``extend``
+     - ``edge``
+   * - ``reflect``
+     - ``reflect``
+   * - ``periodic``
+     - ``wrap``
+
+These are xinvert boundary-condition names, not options accepted directly by
+``DataArray.differentiate``.  The xarray method exposes ``edge_order`` rather
+than physical boundary conditions and is limited to a one-dimensional
+coordinate in Cartesian geometry.  Refer to the linked xarray API pages for
+the underlying padding and differentiation behavior, while using the xinvert
+names in ``FiniteDiff`` and ``cal_flow``.

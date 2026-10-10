@@ -25,9 +25,10 @@ using its `Zenodo DOI <https://doi.org/10.5281/zenodo.7801501>`__.
    
    Installation
    notebooks/00_Introduction
-   Examples
-   BoundaryConditions
    Architecture
+   BoundaryConditions
+   Diagnostics
+   Examples
    Benchmark
    Contributors
 

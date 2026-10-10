@@ -21,7 +21,12 @@ Nowadays [`xarray`](http://xarray.pydata.org/en/stable/) becomes a popular data 
 
 More importantly, this could be generalized into a numerical solver for elliptical equation using [SOR](https://mathworld.wolfram.com/SuccessiveOverrelaxationMethod.html) method, with spatially-varying coefficients.  Various popular inversion problems in geofluid dynamics will be illustrated as examples.
 
-One problem with SOR is that the speed of iteration using **explicit loops in Python** will be **e-x-t-r-e-m-e-l-y ... s-l-o-w**!  A very suitable solution here is to use [`numba`](https://numba.pydata.org/).  In addition, [`xarray`](http://xarray.pydata.org/en/stable/)'s [`dask`](https://docs.dask.org/en/latest/) backend can improve performance through parallel computing.
+One problem with SOR is that the speed of iteration using **explicit loops in Python** will be **e-x-t-r-e-m-e-l-y ... s-l-o-w**!  A very suitable solution here is to use [`numba`](https://numba.pydata.org/).  In addition, through using [`xarray`](http://xarray.pydata.org/en/stable/)'s [`dask`](https://docs.dask.org/en/latest/) backend for parallel computing, the speed of the inversion could be further improved using multiple CPU cores.  Now, we could also make use of CUDA GPU for further acceleration, with a Red-Black SOR kernel achieving up to **~17× speedup** over the CPU for large grids (measured on an RTX 3090; see the [benchmark docs](https://xinvert.readthedocs.io/en/latest/Benchmark.html)).  See this [notebook](./docs/source/notebooks/Parallel_inversions.ipynb) for more details of CPU/GPU parallel computing, and this [docs](https://xinvert.readthedocs.io/en/latest/Benchmark.html) for benchmark of the inversion speed.
+
+> **Experimental GPU backend:** CUDA support is available for testing and
+> evaluation, but is not yet part of xinvert's stable API. Kernel behavior,
+> configuration options, and performance characteristics may still change.
+> Use the CPU backend for production workflows that require the stable path.
 
 Classical problems include Gill-Matsuno model, Stommel-Munk model, QG omega model, PV inversion model, Swayer-Eliassen balance model...  A complete list of the classical inversion problems can be found at [this notebook](./docs/source/notebooks/00_Introduction.ipynb).
 
@@ -37,12 +42,18 @@ Why `xinvert`?
 ---
 ## 2. How to install
 **Requirements**
-`xinvert` supports Python 3.9 and newer and requires `xarray`, `dask`, `numpy`, and `numba`.
+`xinvert` supports Python 3.9 and newer and requires `xarray`, `dask`, `numpy`, and `numba`. GPU acceleration additionally requires an NVIDIA GPU with a compatible driver/runtime and the maintained `numba-cuda` package.
 
 
 **Install via pip**
 ```bash
 pip install xinvert
+```
+
+**Install GPU support**
+```bash
+pip install "xinvert[gpu]"                 # existing CUDA runtime
+pip install xinvert "numba-cuda[cu12]"    # install CUDA 12 runtime libraries
 ```
 
 **Install via conda**
@@ -85,6 +96,37 @@ psi = animate_iteration(invert_Poisson, vor, iParams=iParams,
 ```
 
 See the animation at the top.
+
+Xinvert uses a normalized, diagonally preconditioned residual for stopping.
+Its history can optionally be returned for analysis:
+
+```python
+iParams = {
+    'tolerance': 1e-8,
+    # Return diagnostic history sampled every 20 SOR sweeps.
+    'diag_interval': 20,
+}
+psi, diagnostics = invert_Poisson(
+    vor, dims=['lat', 'lon'], iParams=iParams)
+
+print(diagnostics.converged.item())
+print(diagnostics.iterations.item())
+print(diagnostics.final_error.item())
+print(diagnostics.stop_reason.item())  # 'converged', 'max_iterations', ...
+diagnostics.error.plot(x='iteration', yscale='log')
+```
+
+The default ``diag_interval=0`` returns only the solution and uses xinvert's
+automatic convergence-check interval.  See the
+[diagnostic analysis documentation](https://xinvert.readthedocs.io/en/latest/Diagnostics.html)
+for the Dataset schema, batched time-series examples, and the difference
+between diagnostics and `printInfo`.
+
+For inputs with non-solver dimensions such as `time` or `member`, every
+diagnostic variable retains those dimensions and reports each inversion
+independently.  This also works with Dask-backed arrays.
+
+
 
 ## 5 Cite
 

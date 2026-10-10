@@ -3,11 +3,10 @@
 Architecture
 ============
 
-xinvert uses a three-layer architecture for solving elliptic partial
-differential equations (Poisson, omega, Gill-Matsuno, Stommel-Munk, etc.)
-encountered in geophysical fluid dynamics.  The equations are solved at the
-bottom layer by SOR (Successive Over-Relaxation) iteration, with two compute
-back-ends: CPU (numba) and GPU (CUDA).
+xinvert solves elliptic equations with successive over-relaxation (SOR).  The
+same high-level applications can run on a numba CPU backend or an experimental
+multi-color CPU or CUDA GPU backend, while retaining xarray dimensions,
+coordinates and batching.
 
 Three-layer design
 ------------------
@@ -15,446 +14,205 @@ Three-layer design
 ::
 
     ┌──────────────────────────────────────────────────────────────┐
-    │  apps.py  — top layer: physical-model layer                  │
-    │  invert_Poisson / invert_omega / invert_GillMatsuno / ...    │
-    │    responsibility: compute coefficients A/B/C/F for a given  │
-    │    physical equation, then delegate to the core layer        │
+    │ apps.py  — physical equations                                │
+    │ coefficients, masks, grid parameters and user-facing calls   │
     ├──────────────────────────────────────────────────────────────┤
-    │  core.py  — middle layer: xarray bridge layer                │
-    │  inv_standard2D / inv_standard3D / inv_general2D / ...       │
-    │    responsibility: schedule non-core dims via xr.apply_ufunc │
-    │    and call a low-level kernel; _make_kernel() is the ONLY   │
-    │    architecture dispatch point                               │
+    │ core.py  — xarray bridge                                     │
+    │ validation, vectorized batch scheduling and diagnostics      │
     ├──────────────────────────────────────────────────────────────┤
-    │  cpus.py  — bottom layer: CPU kernels (numba @njit)          │
-    │  gpus.py  — bottom layer: GPU kernels (numba @cuda.jit)      │
-    │    responsibility: pure numpy arrays + scalar parameters,    │
-    │    execute the SOR iteration loop                            │
+    │ cpus.py / cpu_mc.py / gpus.py — numerical kernels            │
+    │ SOR sweeps, boundary updates and residual checks             │
     └──────────────────────────────────────────────────────────────┘
 
-Data flow
----------
+For example, ``invert_Poisson`` first constructs the equation coefficients in
+``apps.py``.  ``core.py`` then applies the selected low-level solver over the
+requested spatial dimensions with ``xarray.apply_ufunc``.  Dimensions not
+listed in ``dims`` (for example ``time`` or ``member``) are independent batch
+dimensions and are preserved in the result.
 
-Using ``invert_Poisson`` as an example::
+Selecting a backend
+-------------------
 
-    user call
-      │  invert_Poisson(F, dims=['lat','lon'], iParams={'architect':'gpu'})
-      ▼
-    apps.py: __template(__coeffs_Poisson, inv_standard2D, 2, F, dims, ...)
-      │  1. __coeffs_Poisson → compute coefficients (A, B, C) and forcing F
-      │  2. __cal_params2D   → compute grid params (gc2, gc1, del1Sqr, ratioSqr, ...)
-      │  3. call inv_standard2D(A, B, C, F, S, dims, iParams)
-      ▼
-    core.py: inv_standard2D(A, B, C, F, S, dims, iParams)
-      │  1. assemble grid_args = [gc2, gc1, BCy, BCx, del1Sqr, ratioQtr, ratioSqr]
-      │  2. _make_kernel(kernel_func, grid_args, iParams)
-      │     ├─ iParams['architect'] == 'cpu' → use cpus.invert_standard_2D
-      │     └─ iParams['architect'] == 'gpu' → use gpus.invert_standard_2D_gpu
-      │  3. xr.apply_ufunc(_kernel_, S, A, B, C, F, info, ...)
-      ▼
-    cpus.py / gpus.py: kernel(S, A, B, C, F, info, *grid_args, optArg, undef, flags, mxLoop, tolerance)
-      │  CPU: kernel runs the full while(True) iteration loop internally
-      │  GPU: Python wrapper runs a while loop, launching Red/Black CUDA kernels each iteration
-      └─ modifies S (in-place), sets flags[overflow, error, loops]
-
-Architecture dispatch (architect)
----------------------------------
-
-.. warning::
-
-   The GPU backend is experimental.  Selecting ``architect='gpu'`` emits a
-   ``UserWarning`` so production users do not opt into an unstable backend
-   accidentally.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 15 15 25 15 30
-
-   * - Parameter
-     - Location
-     - Allowed values
-     - Default
-     - Description
-   * - ``architect``
-     - ``iParams``
-     - ``'cpu'``, ``'gpu'``
-     - ``'cpu'``
-     - Compute back-end selection
-
-Any other value raises: ``ValueError: unsupported architect 'xxx', should be 'cpu' or 'gpu'``
-
-Dispatch location
-~~~~~~~~~~~~~~~~~
-
-Dispatch happens inside ``_make_kernel()`` in ``core.py`` — this is the
-**only coupling point between the core layer and the bottom layer**:
+The backend is selected only through ``iParams['architect']``. CPU is the
+default; use ``'cpu-mc'`` for the experimental multi-core, multi-color CPU
+solver or ``'gpu'`` for CUDA. Names are case-insensitive and surrounding
+whitespace is ignored. All three backends implement the same seven elliptic
+solver templates used by the ordinary inversion applications. There are no
+equation families implemented only on one or two backends. CPU-mc and GPU
+remain experimental; the Poisson benchmark does not imply the same speedup
+for other templates. Existing boundary-mode restrictions still apply,
+including fixed z boundaries for 3D inversion. MultiGrid is outside this
+support claim.
 
 .. code-block:: python
 
-    def _make_kernel(kernel_func, grid_args, iParams):
-        architect = iParams.get('architect', 'cpu')
+    # CPU (default)
+    solution = invert_Poisson(forcing, dims=['lat', 'lon'])
 
-        if architect == 'cpu':
-            func = kernel_func                          # numba @njit kernel
-        elif architect == 'gpu':
-            func = _gpu_kernel_map[kernel_func]         # look up GPU equivalent
-        else:
-            raise ValueError(...)
+    # Multi-core, multi-color CPU (experimental)
+    solution = invert_Poisson(
+        forcing, dims=['lat', 'lon'], iParams={'architect': 'cpu-mc'},
+    )
 
-        def _kernel_(s, *args):
-            # ... call func; CPU/GPU interfaces are identical ...
-        return _kernel_
+    # GPU
+    solution = invert_Poisson(
+        forcing, dims=['lat', 'lon'], iParams={'architect': 'gpu'},
+    )
 
-GPU kernel registry
-~~~~~~~~~~~~~~~~~~~
 
-``core.py`` maintains a registry ``_gpu_kernel_map`` that is populated at
-module-load time:
-
-.. code-block:: python
-
-    # top of core.py
-    _gpu_kernel_map = {}
-    try:
-        from .gpus import (invert_standard_2D_gpu,
-                           invert_standard_2D_full_gpu,
-                           invert_standard_1D_gpu,
-                           invert_standard_3D_gpu,
-                           invert_general_2D_gpu,
-                           invert_general_3D_gpu,
-                           invert_general_bih_2D_gpu)
-        _gpu_kernel_map[invert_standard_2D] = invert_standard_2D_gpu
-        _gpu_kernel_map[invert_standard_2D_full] = invert_standard_2D_full_gpu
-        _gpu_kernel_map[invert_standard_1D] = invert_standard_1D_gpu
-        _gpu_kernel_map[invert_standard_3D] = invert_standard_3D_gpu
-        _gpu_kernel_map[invert_general_2D] = invert_general_2D_gpu
-        _gpu_kernel_map[invert_general_3D] = invert_general_3D_gpu
-        _gpu_kernel_map[invert_general_bih_2D] = invert_general_bih_2D_gpu
-    except ImportError as exc:
-        _gpu_import_error = exc
-
-Every kernel in ``cpus.py`` has a registered GPU counterpart.  Catching only
-``ImportError`` keeps CPU-only installations importable while allowing actual
-bugs in the GPU module to surface.  The captured import error is chained into
-an actionable installation message if GPU execution is requested.  Should a
-kernel ever be added without a GPU version, requesting ``architect='gpu'`` for
-it raises::
-
-    NotImplementedError: GPU kernel not implemented for invert_standard_2D
-
-CPU vs GPU implementation comparison
--------------------------------------
+CPU and GPU implementation
+--------------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 40 40
+   :widths: 22 39 39
 
    * - Aspect
-     - CPU (cpus.py)
-     - GPU (gpus.py)
-   * - Decorator
-     - ``@nb.njit``
-     - ``@cuda.jit`` (kernels) + Python wrapper
-   * - Iteration control
-     - ``while True`` inside the kernel
-     - ``while True`` in the Python wrapper
-   * - Per call
-     - runs all iterations
-     - launches one kernel per stencil color each iteration
+     - CPU
+     - GPU
+   * - Implementation
+     - numba ``@njit``
+     - numba ``@cuda.jit`` kernels with a Python loop
+   * - SOR ordering
+     - lexicographic, point by point
+     - dependency-safe multi-color sweeps
    * - Parallelism
-     - serial (point-by-point update)
-     - massively parallel (dependency-safe multi-color update)
-   * - Convergence check
-     - ``absNorm2D`` inside the kernel
-     - GPU reduction kernel → host comparison
+     - one spatial solve per CPU kernel call
+     - grid points of one color update in parallel
+   * - Residual
+     - maximum accumulated inside the kernel
+     - two atomic maxima copied to the host at each check
    * - Data location
-     - numpy host arrays
-     - CUDA device arrays
-   * - Function signature
-     - identical
-     - identical
+     - NumPy host arrays
+     - CUDA device arrays during the solve
+   * - Batch dimensions
+     - vectorized by xarray/Dask
+     - vectorized by xarray/Dask; GPU solves are serialized per process
 
-Multi-color SOR principle
--------------------------
+The CPU and GPU algorithms use different update orderings, so their
+intermediate iteration paths are not bitwise identical.  They solve the same
+discrete equation and use the same residual stopping definition.  Numerical
+agreement is covered by the corresponding ``tests/test_Gpu*.py`` tests.  See
+:doc:`Benchmark` for measured performance and accuracy.
 
-Classical SOR is inherently serial (each point update depends on the latest
-neighbour values), so it cannot be parallelised directly.  For a five-point
-nearest-neighbour stencil, Red-Black SOR partitions the grid into two colours
-in a checkerboard pattern::
+Multi-color SOR on CPU and GPU
+------------------------------
+
+Classical SOR uses newly updated neighbouring values and is therefore serial.
+The ``cpu-mc`` and GPU backends partition the stencil dependency graph into
+colors. Every point of one color can update concurrently, followed by a
+synchronization before the next color:
+
+::
 
     R B R B R
     B R B R B
     R B R B R
 
-1. **Red phase**: all red points update in parallel (their neighbours are all
-   black, read at the old value).
-2. **Black phase**: all black points update in parallel (their neighbours are
-   all red, already updated).
-
-Together the two phases form one Red-Black SOR iteration.
-
-The coloring must match the complete stencil dependency graph.  xinvert
-therefore selects the scheme from the active coefficients:
+xinvert selects the coloring from the active stencil:
 
 * two colors for five-point 2-D and seven-point 3-D operators;
-* four colors, ``(j % 2, i % 2)``, when a 2-D mixed derivative couples
-  diagonal neighbours;
-* five colors, ``(j + 2*i) % 5``, for the biharmonic stencil, which also
-  couples points two cells apart.
+* four colors when a 2-D mixed derivative couples diagonal neighbours;
+* five colors on GPU and nine colors on CPU-mc for the biharmonic stencil,
+  which couples points up to two cells away in each direction.
 
-Each color is launched as a separate kernel, providing a device-wide
-synchronization between dependent colors.  A periodic x boundary must also
-preserve the coloring across its seam: parity schemes require an even x grid
-length, while the five-color biharmonic scheme requires a multiple of five.
-Incompatible GPU grids raise ``ValueError`` rather than running with a data
-race; the CPU backend has no such restriction.
+.. important::
 
-GPU convergence-check strategy
-------------------------------
+   With ``BCs`` specifying ``'periodic'`` in x, the number of x grid points
+   must preserve the backend's coloring:
 
-The GPU wrapper cannot check convergence every iteration cheaply, because each
-check requires a host-device synchronisation.  Two optimisations are applied:
+   * Second-order equations: GPU and CPU-mc require an even x length.
+   * Biharmonic equations (e.g. Stommel--Munk): GPU requires a multiple of
+     five; CPU-mc requires a multiple of three.
 
-Adaptive check interval
-~~~~~~~~~~~~~~~~~~~~~~~
+   An incompatible length raises ``ValueError`` before SOR iteration begins;
+   xinvert does not silently switch backends or change the grid. Choose a
+   compatible grid or set ``iParams['architect'] = 'cpu'``, which has no
+   coloring restriction. These constraints apply only to periodic x, not
+   fixed or extend boundaries. Count the actual x grid points, without
+   duplicating the periodic endpoint.
 
-``_compute_check_interval(mxLoop, tolerance)`` scales the check interval with
-the total iteration budget so that the number of host-device synchronisations
-stays roughly constant regardless of problem size:
+Automatic SOR relaxation factor
+-------------------------------
 
-- **tolerance > 0** (real convergence run): ``clamp(mxLoop/50, 10, 100)``
-  e.g. mxLoop = 1000 → 20, 5000 → 100, 10000 → 100, 100000 → 100
-- **tolerance ≤ 0** (fixed-iteration / benchmark, no early exit): only an
-  overflow guard is needed, so a larger interval is safe:
-  ``clamp(mxLoop/20, 50, 500)``
-  e.g. mxLoop = 1000 → 50, 5000 → 250, 10000 → 500, 100000 → 500
-
-On non-check iterations only the Red + Black update kernels run; the norm
-reduction kernel and host sync are skipped entirely.
-
-Shared norm-evaluation helper
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``_evaluate_gpu_norm(...)`` reduces the ``[sum|S|, count]`` atomic accumulators
-into a convergence signal that mirrors the CPU ``absNorm*`` metric:
+When ``iParams['optArg']`` is ``None``, xinvert estimates `Young's optimal SOR
+factor <https://doi.org/10.1016/C2013-0-11733-3>`_ from the spectral radius of
+an anisotropic, constant-coefficient Jacobi model:
 
 .. math::
 
-    \text{norm} = \frac{1}{N}\sum |S|,\qquad
-    \text{error} = \frac{|\text{norm} - \text{norm}_{prev}|}{\text{norm}_{prev}}
+    \rho_J = \frac{\sum_d h_d^{-2}\cos\theta_d}
+                   {\sum_d h_d^{-2}}, \qquad
+    \omega = \frac{2}{1+\sqrt{1-\rho_J^2}}.
 
-These two helpers are dimension-agnostic and are shared by every GPU wrapper
-except the 1-D one.  The 2-D family (standard, full, general, biharmonic) runs
-through ``_run_sor_2d_loop`` and the 3-D family (standard, general) through
-``_run_sor_3d_loop``, so each wrapper only supplies its own update kernel;
-``invert_standard_1D_gpu`` keeps its own inline loop, since a 1-D sweep has no
-row-structured boundary handling to share.
+Here :math:`h_d` is the grid spacing in direction :math:`d`, and :math:`N_d`
+is the total number of grid points including boundaries.
 
-Convergence modes
-~~~~~~~~~~~~~~~~~
+.. list-table::
+   :header-rows: 1
 
-``iParams['convergence']`` selects the stopping metric:
+   * - Boundary
+     - Mode in a mixed-boundary problem
+     - First non-constant mode when all axes are free
+   * - ``fixed``
+     - :math:`\theta_d=\pi/(N_d-1)`
+     - not applicable
+   * - ``periodic``
+     - :math:`\theta_d=0`
+     - :math:`\theta_d=2\pi/N_d`
+   * - ``extend``
+     - :math:`\theta_d=0`
+     - :math:`\theta_d=\pi/(N_d-1)`
 
-- ``'norm'`` (the backward-compatible default) uses the historical relative
-  change in ``mean(abs(S))`` shown above.  It is inexpensive, but two scalar
-  norms can be almost equal while individual grid points are still changing.
-- ``'residual'`` uses the normalized maximum SOR correction
+When every direction is periodic or extend, the all-constant null mode is
+excluded.  Xinvert evaluates the first non-constant mode along each axis and
+uses the candidate with the largest :math:`\rho_J`.
 
-  .. math::
+For a two-dimensional fixed-boundary grid,
 
-      r_D = \frac{\max_i |\Delta S_i|}
-                  {\max_i\max(|S_i^{old}|, |S_i^{new}|)}.
+.. math::
 
-  Since an SOR update satisfies
-  :math:`\Delta S_i = \omega D_{ii}^{-1}(L(S)-F)_i`, this is a
-  diagonally-preconditioned equation residual.  Unlike the legacy scalar
-  norm-change test, local errors cannot cancel each other.  If the solution
-  scale is zero, the absolute maximum correction is used.
+    \rho_J =
+    \frac{h_y^{-2}\cos(\pi/(N_y-1))+
+          h_x^{-2}\cos(\pi/(N_x-1))}
+         {h_y^{-2}+h_x^{-2}}.
 
-The residual accumulator is enabled only on convergence-check sweeps.  GPU
-updates use two atomic maxima and copy two scalars to the host at a check;
-non-check sweeps retain the normal fast path.  CPU and GPU therefore use the
-same metric and check schedule.  ``tolerance <= 0`` still means a fixed
-iteration run in either mode.
+The finer direction therefore carries more spectral weight.  The expression
+is exact for the matching separable constant-coefficient model, but is an
+estimate for variable coefficients, masks, mixed derivatives and biharmonic
+operators.  A user-supplied ``optArg`` always overrides it.
 
-Structured solver diagnostics
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The automatic value depends on grid geometry and boundary conditions, not on
+the forcing.  It is shared across ``time`` or other batch dimensions when the
+left-hand-side operator and effective domain do not change.  If coefficients
+or masks vary between slices, their true optimal values may also vary.
 
-The historical API returns only the solution ``DataArray``.  Setting
-``iParams['return_diagnostics'] = True`` opts into a two-item return value::
+For spherical latitude-longitude problems, longitude spacing in the actual
+operator contains :math:`\cos\phi`.  No single rectangular-grid closed form is
+exact at every latitude, so xinvert's value is a nominal global estimate.  A
+representative empirical scan may improve repeated production solves.
 
-    solution, diagnostics = invert_Poisson(
-        forcing, dims=['y', 'x'], coords='cartesian',
-        iParams={'convergence': 'residual',
-                 'return_diagnostics': True})
+Residual checks and diagnostics
+-------------------------------
 
-``diagnostics`` is an ``xarray.Dataset`` containing:
+CPU and GPU stop on the same normalized, diagonally preconditioned residual.
+Checks use an automatic interval unless ``iParams['diag_interval']`` is a
+positive integer.  A positive value also returns the sampled history as an
+``xarray.Dataset``.  The residual definition, interval behavior, Dataset
+layout and plotting examples are documented in :doc:`Diagnostics`.
 
-- ``converged`` -- whether the selected error metric reached ``tolerance``;
-- ``iterations`` -- the number of completed SOR sweeps;
-- ``error`` -- the final checked norm change or preconditioned residual;
-- ``stop_reason`` -- ``'converged'``, ``'max_iterations'``, or ``'overflow'``.
+GPU execution notes
+-------------------
 
-Dataset attributes record ``convergence``, ``tolerance``, and
-``max_iterations``.  Each variable retains all non-core dimensions, so a
-time-series, ensemble, or Dask-backed inversion exposes one status record per
-independent solve.  Kernel flags are returned through a second generalized
-ufunc output; no shared mutable collector is used, which keeps threaded and
-distributed execution deterministic.
+The two-dimensional CUDA block defaults to ``(16, 16)`` and can be overridden
+per call with ``iParams['gpu_block2d']``.  Compute precision is controlled by
+``iParams['dtype']``; ``float32`` is the default and ``float64`` is available
+for accuracy-sensitive work.
 
-Configurable thread-block shape
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The GPU 2-D thread-block shape defaults to ``(16, 16)`` and can be overridden
-**per call** via ``iParams['gpu_block2d']`` (no module reload needed):
-
-.. code-block:: python
-
-    iParams['gpu_block2d'] = (32, 8)   # warp-coalesced thin block
-
-A block-shape sweep (see :doc:`Benchmark`) showed that square blocks are ~3 %
-faster than warp-coalesced thin blocks for the 2-D stencil, because stencil
-access is two-dimensional and square blocks give better cache locality.
-
-The 1-D boundary/norm kernels have **no user-facing block parameter**: their
-block size is chosen adaptively by ``_auto_bsize_1d(n)`` from the extent each
-kernel actually sweeps (32 for *n* < 64, 128 for *n* < 512, else 256).  Since
-these kernels are off the hot loop, the block size has negligible effect on
-total runtime, so the parameter was removed to keep the API surface small.
-``gpu_block2d`` in ``iParams`` is the only remaining GPU tuning knob.
-
-Compute precision is controlled by ``iParams['dtype']`` (default
-``np.float32``; ``np.float64`` or the strings ``'float32'``/``'float64'``
-are also accepted).  The forcing is cast *before* masking, so the
-solution, the mask and every coefficient array are allocated natively in
-the target dtype -- no full-size float64 intermediates are ever created
-when computing in float32, halving peak memory and (on the GPU) roughly
-doubling effective memory bandwidth.
-
-GPU with dask datasets
-~~~~~~~~~~~~~~~~~~~~~~
-
-When the input is dask-backed and ``architect='gpu'``, each time step
-becomes a dask task and the result stays **lazy** — compute is deferred
-until the user requests it (``.compute()``, ``.to_netcdf()``, plotting,
-...), so results can be streamed to disk chunk by chunk without ever
-holding the whole dataset in memory.
-
-GPU solves are bounded to one at a time per process
-(``gpus._GPU_MAX_CONCURRENT``): concurrent solves gain nothing (kernels
-serialise on the default stream, and the blocking convergence-check syncs
-create a convoy effect — measured ~0.4x on small grids), while each
-in-flight solve holds ~5 device buffers in VRAM.  With the semaphore in
-place, dask's worker threads simply pipeline disk I/O against the GPU
-solves.  Note that numba-cuda manages CUDA contexts thread-locally, so
-``gpus.ensure_context()`` is called once in the main thread at dispatch
-time; without it, dask worker threads would fail with
-``CUDA_ERROR_NOT_INITIALIZED`` on their first launch.
-
-Live ``printInfo`` output under parallelism
--------------------------------------------
-
-With ``dask='parallelized'`` the per-time-step inversions run concurrently in
-dask worker threads (the numba kernels release the GIL via ``nogil=True``), and
-each call prints its diagnostic line as soon as it finishes.  Plain ``print``
-does not survive this setting, for two reasons:
-
-**1. Line splicing.**  ``print(msg)`` issues *two* ``write`` calls — ``msg``,
-then ``'\n'``.  ipykernel's ``OutStream`` flushes on newline, so a concurrent
-thread can interleave between the two writes and splice two messages into one
-corrupted line.
-
-**2. Output misattribution.**  ipykernel binds each *new* thread to the parent
-header (the cell) that spawned it.  dask reuses its worker pool across cells,
-so on a re-run those threads still carry the *previous* cell's parent header
-and their output is attributed to a finished cell — the current cell appears to
-produce nothing.
-
-``core._print_live`` handles both:
-
-.. code-block:: python
-
-    def _print_live(msg):
-        out   = sys.stdout
-        ident = threading.get_ident()
-        # drop this thread's stale parent-header registration so the header
-        # falls back to ipykernel's global = the *currently executing* cell
-        for attr in ('_thread_to_parent', '_thread_to_parent_header'):
-            reg = getattr(out, attr, None)
-            if reg is not None:
-                try:
-                    reg.pop(ident, None)
-                except Exception:
-                    pass
-        out.write(msg + '\n')   # single write => one atomic line
-        out.flush()
-
-Notes:
-
-* It is a **module-level function**, not a closure.  The ``_kernel_`` closure
-  only ever *references* it, and cloudpickle transfers referenced module-level
-  functions **by reference** — so the dask graph stays picklable.  Capturing a
-  lock or buffer in the closure would break ``dask.distributed``.
-* It only touches ipykernel internals **when they exist**; under a plain Python
-  interpreter both ``getattr`` calls return ``None`` and the function degrades
-  to a normal atomic ``print``.
-* Under ``dask.distributed`` the worker processes print to their own stdout,
-  visible in the worker logs rather than in the client notebook.
-
-Regression checks live in ``tests/test_jupyter_printinfo.py`` (executes a real
-2-cell notebook through ``nbclient`` and asserts every cell sees all 12 lines)
-and ``tests/test_distributed.py`` (asserts the graph serialises and solves
-correctly under a real ``distributed.Client``).
-
-How to add a new GPU kernel
----------------------------
-
-Using ``invert_general_2D_gpu`` as an example:
-
-1. Implement it in ``gpus.py``:
-
-.. code-block:: python
-
-    def invert_general_2D_gpu(S, A, B, C, D, E, F, G, info,
-                               yc, xc, delx, BCy, BCx,
-                               delxSqr, ratio, ratioQtr, ratioSqr,
-                               optArg, undef, flags, mxLoop, tolerance):
-        # 1. transfer data to GPU
-        # 2. while loop: Red/Black kernel + norm kernel (reuse the shared
-        #    _compute_check_interval and _evaluate_gpu_norm helpers)
-        # 3. copy result back, set flags
-
-2. Register it in ``core.py``:
-
-.. code-block:: python
-
-    from .gpus import invert_general_2D_gpu
-    _gpu_kernel_map[invert_general_2D] = invert_general_2D_gpu
-
-3. No changes needed in ``apps.py``:
-
-The ``invert_*`` functions in ``apps.py`` are completely unchanged; users
-enable GPU via ``iParams={'architect': 'gpu'}``.
-
-User usage
-----------
-
-.. code-block:: python
-
-    import xinvert
-
-    # CPU (default)
-    S = xinvert.invert_Poisson(F, dims=['lat', 'lon'])
-
-    # GPU
-    S = xinvert.invert_Poisson(F, dims=['lat', 'lon'],
-                                iParams={'architect': 'gpu'})
-
-    # GPU with custom parameters
-    S = xinvert.invert_Poisson(F, dims=['lat', 'lon'],
-                                iParams={'architect': 'gpu',
-                                         'mxLoop': 10000,
-                                         'tolerance': 1e-10})
+With Dask-backed input, non-spatial slices remain lazy until ``compute()``,
+writing, or plotting is requested.  GPU solves are limited to one at a time
+per process because concurrent default-stream solves increase VRAM use without
+improving throughput.  Dask can still overlap surrounding I/O and scheduling.
 
 File structure
 --------------
@@ -463,56 +221,10 @@ File structure
 
     xinvert/
     ├── __init__.py      # package exports
-    ├── apps.py          # top layer: physical models (Poisson, omega, ...)
-    ├── core.py          # middle layer: xarray bridge + _make_kernel dispatcher
-    ├── cpus.py          # bottom layer: CPU kernels (numba @njit)
-    ├── gpus.py          # bottom layer: GPU kernels (numba @cuda.jit)
-    ├── utils.py         # utility functions
-    └── finitediffs.py   # finite-difference utilities
-
-GPU implementation status
--------------------------
-
-Every CPU kernel now has a GPU counterpart, so ``architect='gpu'`` works for
-all equation types:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 26 30 32 12
-
-   * - Equation type
-     - CPU kernel
-     - GPU kernel
-     - Status
-   * - standard 2D (Poisson etc.)
-     - ``invert_standard_2D``
-     - ``invert_standard_2D_gpu``
-     - ✅ implemented
-   * - standard 2D full (flux form)
-     - ``invert_standard_2D_full``
-     - ``invert_standard_2D_full_gpu``
-     - ✅ implemented
-   * - standard 1D
-     - ``invert_standard_1D``
-     - ``invert_standard_1D_gpu``
-     - ✅ implemented
-   * - standard 3D (omega etc.)
-     - ``invert_standard_3D``
-     - ``invert_standard_3D_gpu``
-     - ✅ implemented
-   * - general 2D (GillMatsuno etc.)
-     - ``invert_general_2D``
-     - ``invert_general_2D_gpu``
-     - ✅ implemented
-   * - general 3D (3DOcean etc.)
-     - ``invert_general_3D``
-     - ``invert_general_3D_gpu``
-     - ✅ implemented
-   * - general 2D bih (StommelMunk etc.)
-     - ``invert_general_bih_2D``
-     - ``invert_general_bih_2D_gpu``
-     - ✅ implemented
-
-Correctness of each pair is checked by the matching ``tests/test_Gpu*.py``
-script, which compares the analytic solution and the CPU result against the
-GPU result (``pytest`` skips the GPU cases when no CUDA device is present).
+    ├── apps.py          # physical equations and coefficient construction
+    ├── core.py          # validation, xarray bridge and diagnostics
+    ├── cpus.py          # numba CPU kernels
+    ├── cpu_mc.py        # experimental multi-core multi-color CPU kernels
+    ├── gpus.py          # CUDA kernels and GPU iteration loops
+    ├── finitediffs.py   # finite-difference utilities
+    └── utils.py         # shared utilities
