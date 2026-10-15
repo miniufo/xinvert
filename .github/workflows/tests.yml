@@ -41,4 +41,4 @@ jobs:
           auto-activate-base: false
       - name: Run GPU consistency tests
         shell: bash -l {0}
-        run: python -m pytest -q tests/test_Gpu*.py tests/test_CpuGpuConsistency.py tests/test_backend_math.py tests/test_backend_apps.py tests/test_Convergence.py
+        run: python -m pytest -q tests/test_Gpu*.py tests/test_CpuGpuConsistency.py tests/test_backend_math.py tests/test_backend_apps.py tests/test_masked_poisson.py tests/test_masked_applications.py tests/test_Convergence.py tests/test_animation_streaming.py
