@@ -28,6 +28,7 @@ using its `Zenodo DOI <https://doi.org/10.5281/zenodo.7801501>`__.
    Architecture
    BoundaryConditions
    DomainTopology
+   Projection
    Diagnostics
    Examples
    Benchmark
