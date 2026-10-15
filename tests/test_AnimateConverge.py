@@ -10,7 +10,7 @@ import xarray as xr
 from xinvert import animate_iteration
 
 
-def test_animate():
+def test_animate(tmp_path):
     ds = xr.open_dataset('./Data/Helmholtz_atmos.nc')
     
     assert ds.sizes == {'time': 2, 'lat': 73, 'lon': 144}
@@ -23,10 +23,13 @@ def test_animate():
         'BCs': ['fixed','periodic']
     }
     
-    sf = animate_iteration('Poisson', vor, dims=['lat','lon'], iParams=iParams,
-                           loop_per_frame=1, max_frames=40)
-    
-    assert sf.dims == ('iter', 'lat', 'lon')
-    assert len(sf.iter) == 40
-    assert sf[0].dims == vor.dims
+    output = tmp_path / 'atmos_animation.nc'
+    animate_iteration('Poisson', vor, dims=['lat','lon'], iParams=iParams,
+                      loop_per_frame=1, max_frames=40, output=output)
+    with xr.open_dataset(output) as result:
+        sf = result.inverted
+        assert sf.dims == ('iter', 'lat', 'lon')
+        assert len(sf.iter) == 40
+        assert sf[0].dims == vor.dims
+        assert result.attrs['completed_frames'] == 40
 

@@ -232,9 +232,10 @@ File structure
     xinvert/
     ├── __init__.py      # package exports
     ├── apps.py          # physical equations and coefficient construction
+    ├── animate.py       # streaming iteration frames and NetCDF output
     ├── core.py          # validation, xarray bridge and diagnostics
     ├── cpus.py          # numba CPU kernels
     ├── cpu_mc.py        # experimental multi-core multi-color CPU kernels
     ├── gpus.py          # CUDA kernels and GPU iteration loops
     ├── finitediffs.py   # finite-difference utilities
-    └── utils.py         # shared utilities
+    └── utils.py         # flow diagnostics, experimental MultiGrid and utilities

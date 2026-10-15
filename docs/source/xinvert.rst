@@ -10,6 +10,14 @@ xinvert.apps module
    :undoc-members:
    :show-inheritance:
 
+xinvert.animate module
+----------------------
+
+.. automodule:: xinvert.animate
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 xinvert.core module
 -------------------
 

@@ -15,9 +15,8 @@ the dtype selected by ``iParams['dtype']`` (``float32`` by default).
 optional ``icbc`` are converted to the selected compute dtype before the
 coefficient arrays are built.
 """
+from .animate import animate_iteration
 from .apps import (
-    animate_iteration,
-    cal_flow,
     invert_3DOcean,
     invert_BrethertonHaidvogel,
     invert_Eliassen,
@@ -45,6 +44,6 @@ from .core import (
     inv_standard3D,
 )
 from .finitediffs import FiniteDiff, deriv, deriv2, padBCs
-from .utils import loop_noncore
+from .utils import cal_flow, loop_noncore
 
 __version__ = "0.3.2"

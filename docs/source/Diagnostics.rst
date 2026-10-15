@@ -125,6 +125,83 @@ A ratio between successive samples is one possible convergence-rate measure::
 Xinvert does not store a separate convergence-rate variable because several
 definitions are useful in practice and each can be derived from ``error``.
 
+Streaming iteration frames
+--------------------------
+
+``animate_iteration`` writes full solution snapshots synchronously, rather
+than returning an in-memory or Dask-backed frame array. Specify a new output
+file; an existing path raises ``FileExistsError``::
+
+    from xinvert import animate_iteration
+    import xarray as xr
+
+    animate_iteration(
+        'Poisson', forcing, dims=['lat', 'lon'],
+        iParams={'architect': 'gpu'},
+        loop_per_frame=20, max_frames=100, output='iteration.nc',
+    )
+    frames = xr.open_dataset('iteration.nc', chunks={'iter': 1})
+
+Use ``complevels=1`` through ``9`` to losslessly compress the ``inverted``
+variable with zlib; ``complevels=0`` (the default) disables compression.
+For example, add ``complevels=4`` to the call above. The public parameter
+maps to the standard NetCDF ``complevel`` setting; with xarray's
+``to_netcdf`` the equivalent configuration is
+``encoding={'inverted': {'zlib': True, 'complevel': 4}}``.
+Coordinates are not compressed by this option.
+
+The call executes immediately. By default it returns ``None``; explicitly
+set ``iParams['diag_interval']`` to a positive integer to return scalar
+diagnostics instead of a frame array::
+
+    diagnostics = animate_iteration(
+        'Poisson', forcing, dims=['lat', 'lon'],
+        iParams={'architect': 'gpu', 'diag_interval': 10},
+        loop_per_frame=20, max_frames=100, output='diagnosed_iteration.nc',
+    )
+    diagnostics.error.plot.line(x='iteration', yscale='log')
+    print(diagnostics.attrs['completed_frames'])
+
+The diagnostic interval is independent of the frame interval. Error and
+signed solution extrema are sampled at that interval and at the final sweep;
+GPU diagnostics do not download a complete frame. The returned Dataset uses
+the same layout as inversion diagnostics and retains singleton batch
+coordinates. Because animation disables convergence stopping, its effective
+tolerance is zero, ``converged`` is false and ``stop_reason`` is
+``'max_iterations'``; these describe fixed work, not a proof of inaccuracy.
+Diagnostics are returned in memory, not automatically saved to the frame file.
+Their scalar history grows with the number of checkpoints, so a very small
+interval over an extremely long run still has a memory cost.
+
+``completed_frames`` and ``status`` are always attributes of the output file;
+they are also attributes of the optional returned diagnostics. For example::
+
+    with xr.open_dataset('iteration.nc') as frames:
+        count = frames.attrs['completed_frames']
+        if count > 0:
+            last_complete = frames.inverted.isel(iter=count - 1)
+
+Each frame represents
+exactly ``loop_per_frame`` additional sweeps; early convergence is disabled.
+The file variable ``inverted`` has an ``iter`` dimension whose coordinate
+counts cumulative SOR sweeps. Other dimensions and coordinates are preserved.
+CPU, CPU-mc and GPU use the same sequential output workflow. GPU uploads its
+solution and coefficients once and reuses a resident CUDA workspace until
+the call ends. Only one snapshot is downloaded at a time.
+
+The numerical workspace and live frame buffers do not grow with frame count.
+Each frame is written and flushed before the next is computed; no temporary
+files are created. A complete spatial problem and its coefficient/work arrays
+must still fit in RAM and, for GPU, VRAM. Disk capacity and memory used by
+other processes remain external constraints.
+
+If a solve or write fails, the file is closed without removing earlier
+frames. Inspect ``status`` and ``completed_frames`` attributes, and use only
+``inverted.isel(iter=slice(0, completed_frames))``: an interrupted write may
+leave an incomplete trailing frame. This is a progress record, not an
+automatic restart/checkpoint format. Calling ``load()`` on the saved complete
+history can still exhaust RAM; read selected frames or operate lazily.
+
 ``diag_interval`` versus ``printInfo``
 --------------------------------------
 
