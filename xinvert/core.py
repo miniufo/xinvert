@@ -815,7 +815,7 @@ def _get_info(F, dims):
     ncdims : list of str
         Non-core dimensions in their iteration order.
     """
-    info = []
+    labels = []
     for selDict in loop_noncore(F, dims):
         parts = []
         for k, v in selDict.items():
@@ -826,13 +826,23 @@ def _get_info(F, dims):
             else:
                 s = str(v)
             parts.append(f'{k}: {s}')
-        info.append('{' + ', '.join(parts) + '}' if parts else '{}')
+        labels.append('{' + ', '.join(parts) + '}' if parts else '{}')
     ncdims = list(selDict.keys()) # non-core dimensions
     
     if ncdims == []:
         info = '{}'
     else:
-        info = xr.DataArray(np.array(info), dims=ncdims, coords={dim: F[dim] for dim in ncdims})
+        # Derive the label array from ``F`` itself so the non-core
+        # coordinates are carried over verbatim.  Declaring them anew in a
+        # fresh ``xr.DataArray`` lets pandas rebuild the index from values,
+        # which may change its resolution (``datetime64[s]`` becomes
+        # ``datetime64[ns]`` for instance).  ``xr.apply_ufunc`` joins its
+        # arguments with ``join='exact'`` by default, so such a mismatch is
+        # rejected even though the labels describe exactly the slices of
+        # ``F``.
+        info = F.isel({dim: 0 for dim in dims}).copy(data=np.array(labels))
+        info.name = None
+        info.attrs = {}
     
     return info, ncdims
 
