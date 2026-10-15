@@ -44,6 +44,16 @@ for other templates. Existing boundary-mode restrictions still apply,
 including fixed z boundaries for 3D inversion. MultiGrid is outside this
 support claim.
 
+For Poisson, ``iParams['internal_bcs'] = 'neumann'`` automatically identifies
+the active mask per spatial slice on all three backends. See
+:doc:`BoundaryConditions` for the external/internal boundary diagram and
+:doc:`DomainTopology` for compatibility and gauge details. Internal Neumann
+also supports PV2D, diagonal Eliassen, geostrophic, Bretherton--Haidvogel and
+Fofonoff and RefState on all three backends. Nonzero mixed terms, general
+first-derivative, 1-D/3-D and fourth-order operators, and animation still
+raise explicit unsupported errors. Reaction and ellipticity restrictions
+are documented in :doc:`DomainTopology`.
+
 .. code-block:: python
 
     # CPU (default)

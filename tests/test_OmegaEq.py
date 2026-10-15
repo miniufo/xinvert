@@ -94,6 +94,12 @@ def test_omega_atmos():
                          iParams=iParams, mParams=mParams)
     WQvec = invert_omega(FQvec, dims=['LEV', 'lat', 'lon'],
                          iParams=iParams, mParams=mParams)
+    # WBC is non-zero only below the surface, where the forcing is missing.
+    # Under the default internal_bcs='fixed', a finite icbc value on an
+    # invalid cell is prescribed Dirichlet data for its valid neighbours,
+    # so the below-ground guess is no longer inert by itself.  Zero it
+    # where the forcing is invalid to keep this about the initial guess.
+    WBC   = WBC.where(np.isfinite(FQvec), 0)
     WQvTp = invert_omega(FQvec, dims=['LEV', 'lat', 'lon'], icbc=WBC,
                          iParams=iParams, mParams=mParams)
     
@@ -101,9 +107,6 @@ def test_omega_atmos():
     assert np.isclose(  WQG.min(), -0.32804008)
     assert np.isclose(WQvec.max(),  0.11733621)
     assert np.isclose(WQvec.min(), -0.37005570)
-    # WBC is non-zero only below the surface, where the forcing is missing.
-    # Values of icbc on invalid forcing cells must not enter the stencil and
-    # contaminate the valid atmospheric solution.
     xr.testing.assert_allclose(WQvTp, WQvec)
 
 # Historical plotting and external-data experiments are archived in

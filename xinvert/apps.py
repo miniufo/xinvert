@@ -37,6 +37,9 @@ default_iParams = {
     # can be 'fixed', 'extend', or 'periodic'
     'BCs': ['fixed', 'fixed'],
 
+    # Internal wet/dry faces: historical fixed-zero, or zero-flux Neumann.
+    'internal_bcs': 'fixed',
+
     # undefined value in the array
     'undef': np.nan,
 
@@ -138,13 +141,23 @@ def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
     mParams: dict, optional
         Model parameters.  None for the Poisson model.
     iParams: dict, optional
-        Iteration parameters.
+        Iteration parameters. ``internal_bcs='fixed'`` (default) keeps
+        historical fixed-zero inactive neighbours. ``'neumann'`` automatically
+        identifies wet/dry faces per slice and imposes zero normal flux on
+        CPU, CPU-mc or GPU; Cartesian and nonpolar lat-lon grids are supported.
     
     Returns
     -------
     xarray.DataArray
         Results of the SOR inversion.
     """
+    choice = (iParams or {}).get('internal_bcs', 'fixed')
+    if not isinstance(choice, str) or choice.strip().lower() not in ('fixed', 'neumann'):
+        raise ValueError("iParams['internal_bcs'] must be 'fixed' or 'neumann'")
+    if choice.strip().lower() == 'neumann':
+        from .masked_poisson import invert_masked_poisson
+        return invert_masked_poisson(
+            F, dims, coords, icbc, mParams, iParams)
     return __template(__coeffs_Poisson, inv_standard2D, 2, F, dims, coords,
                       icbc, ['g', 'Omega', 'Rearth'], mParams, iParams)
 
@@ -1460,6 +1473,18 @@ def __template(coef_func, inv_func, dimLen,
     iParams = __update(default_iParams, iParams)
     _validate_inversion_bcs(iParams, dimLen)
     _validate_solver_controls(iParams)
+    if (iParams['internal_bcs'].strip().lower() == 'neumann' and
+            not getattr(coef_func, '_supports_internal_bcs', False)):
+        if dimLen == 2 and inv_func in (inv_standard2D, inv_standard2D_full):
+            from .masked_poisson import invert_masked_standard
+            return invert_masked_standard(
+                F, dims, coords, icbc, mParams,
+                {key: value for key, value in iParams.items() if key in default_iParams},
+                coef_func, validParams, inv_func is inv_standard2D_full)
+        raise NotImplementedError(
+            "internal_bcs='neumann' currently requires a two-dimensional "
+            "diagonal divergence-form operator; first-derivative, 1-D, 3-D "
+            "and fourth-order operators require separate boundary implementations")
     mParams = __update(default_mParams, mParams, validParams)
     
     ######  1. calculating the coefficients  ######
@@ -1592,14 +1617,14 @@ def __coeffs_RefState(Q, dims, coords, mParams, iParams, icbc):
         
         A = zero + sinL
         B = zero
-        C = zero + Gamma * g / Q / maskF[dims[1]]
-        F = maskF.where(maskF!=_undeftmp, _undeftmp)
+        C = (zero + Gamma * g / Q / maskF[dims[1]]).where(maskF!=_undeftmp, 0)
+        F = zero.where(maskF!=_undeftmp, _undeftmp)
     
     elif coords.lower() == 'cartesian': # dims[0] is θ, dims[1] is r
         A = zero + 2.0 * ang0 / maskF[dims[1]]**3.0
         B = zero
-        C = zero + Gamma * g / Q / maskF[dims[1]]
-        F = maskF.where(maskF!=_undeftmp, _undeftmp)
+        C = (zero + Gamma * g / Q / maskF[dims[1]]).where(maskF!=_undeftmp, 0)
+        F = zero.where(maskF!=_undeftmp, _undeftmp)
 
     else:
         raise ValueError('unsupported coords ' + coords +
@@ -2326,10 +2351,15 @@ def __mask_FS(F, dims, iParams, icbc):
         # ``icbc`` is both the initial guess and the prescribed fixed-boundary
         # field.  Use it on every valid grid point; extend boundaries are
         # overwritten by the boundary kernel and periodic endpoints remain
-        # ordinary unknowns.  Invalid forcing cells stay zero: the current
-        # coefficient construction also stores zeros there, so placing the
-        # internal sentinel in S would contaminate neighbouring stencils.
-        initS = xr.where(invalid, 0, icbc)
+        # ordinary unknowns. Fixed internal cells retain finite prescribed
+        # values, but missing values and sentinels must never enter stencils.
+        # Neumann eliminates these faces and therefore ignores their values.
+        boundary = icbc.where(np.isfinite(icbc) & (icbc != _undeftmp), 0)
+        if not np.isnan(iParams['undef']):
+            boundary = boundary.where(icbc != iParams['undef'], 0)
+        if iParams.get('internal_bcs', 'fixed').strip().lower() == 'neumann':
+            boundary = 0
+        initS = xr.where(invalid, boundary, icbc)
 
         if initS.dtype != dt:
             initS = initS.astype(dt)

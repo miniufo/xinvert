@@ -605,6 +605,10 @@ def _validate_solver_controls(iParams):
     ValueError
         If a control has an invalid type, range, or finite-value status.
     """
+    internal = iParams.get('internal_bcs', 'fixed')
+    if not isinstance(internal, str) or internal.strip().lower() not in ('fixed', 'neumann'):
+        raise ValueError("iParams['internal_bcs'] must be 'fixed' or 'neumann'")
+
     mx_loop = iParams.get('mxLoop')
     if (isinstance(mx_loop, (bool, np.bool_)) or
             not isinstance(mx_loop, numbers.Integral) or mx_loop <= 0):
@@ -862,6 +866,11 @@ def _make_kernel(kernel_func, grid_args, iParams):
         A kernel function suitable for ``xr.apply_ufunc``.
     """
     global _cpu_mc_warning_emitted
+
+    if iParams.get('internal_bcs', 'fixed').strip().lower() == 'neumann':
+        raise NotImplementedError(
+            "internal_bcs='neumann' is available through supported high-level applications, "
+            "not the low-level generic templates")
 
     # case-insensitive (and whitespace-tolerant): 'GPU', ' GPU ' etc. all work
     architect = str(iParams.get('architect', 'cpu')).strip().lower()

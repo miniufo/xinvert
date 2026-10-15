@@ -48,6 +48,7 @@ setup(
         "xarray",
         "dask",
         "numba",
+        "scipy",
     ],
 
     extras_require={

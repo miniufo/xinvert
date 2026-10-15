@@ -18,6 +18,22 @@ xinvert.core module
    :undoc-members:
    :show-inheritance:
 
+xinvert.domain module
+---------------------
+
+.. automodule:: xinvert.domain
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+xinvert.internal_bcs module
+---------------------------
+
+.. automodule:: xinvert.internal_bcs
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 xinvert.finitediffs module
 --------------------------
 

@@ -66,8 +66,55 @@ The not-yet-implemented values remain accepted so that the public interface
 does not need to change when their numerical kernels are added.  Do not rely on
 their numerical result until the warning is removed in a future release.
 
+External versus internal boundaries
+----------------------------------------
+
+``iParams['BCs']`` describes the array perimeter, in the same axis order as
+``dims``. ``iParams['internal_bcs']`` describes active--inactive interfaces
+inside that perimeter. A regional ocean can have fixed values at its open
+outer edges and zero normal gradient along its coast.
+
+.. image:: _static/bcs_vs_internal_bcs.png
+   :width: 90%
+   :alt: LLC wet-dry mask with purple array perimeter and red coastal faces
+
+The left panel shows the validity mask from one interpolated LLC4320 SSH
+slice. The right panel marks the array perimeter in dashed purple and the
+wet--dry interfaces in red. The purple frame identifies outer boundary
+locations; it does not turn inactive edge cells into solved cells. A cropped
+regional mask is used for illustration, not a native LLC mesh.
+
+.. code-block:: python
+
+   solution = invert_Poisson(
+       forcing, dims=['lat', 'lon'],
+       iParams={
+           'architect': 'gpu',  # also 'cpu' and 'cpu-mc'
+           'BCs': ['fixed', 'fixed'],
+           'internal_bcs': 'neumann',
+       },
+   )
+
+``'fixed'`` is the default and uses finite ``icbc`` values at inactive
+neighbours, or zero when no boundary value is supplied.
+``'neumann'`` removes the blocked face flux and its centre-coefficient
+contribution. Topology is inferred automatically per spatial slice, including
+changing time masks. A component without fixed-boundary connections requires
+compatible zero-net forcing; see :doc:`DomainTopology` for the discrete
+equation, gauge, and validation details. Internal Neumann supports Poisson,
+PV2D, RefState, diagonal Eliassen, geostrophic, Bretherton--Haidvogel and Fofonoff on all
+three backends. Components whose reaction term removes the constant
+nullspace do not require zero-net forcing or a gauge shift. Nonzero mixed
+coefficients, general first-derivative operators, 1-D/3-D,
+fourth-order operators and animation remain unsupported and fail explicitly.
+The generic low-level templates do not interpret this setting.
+
 Initial guesses and missing values
 ----------------------------------
+
+For a complete closed-domain face-vector decomposition built on this solver,
+see :doc:`Projection`. It supports Cartesian and nonpolar regular lat-lon
+grids, including periodic x, with consistent face-gradient/divergence operators.
 
 When supplied, ``icbc`` is used as the initial guess on every valid grid point,
 not only on fixed boundaries.  It may omit non-inversion dimensions: for
@@ -75,10 +122,12 @@ example, a ``(lat, lon)`` initial guess is broadcast over the ``time`` dimension
 of a ``(time, lat, lon)`` forcing array.  All shared coordinates must match the
 forcing exactly.
 
-Grid points where the forcing is undefined ignore the corresponding ``icbc``
-value and remain zero in the internal solution.  The forcing sentinel prevents
-SOR updates there, and the final output is restored to the user-selected
-``undef`` value.
+Grid points where the forcing is undefined are not updated. With default
+internal fixed mode, neighbouring equations read their finite ``icbc`` values.
+Absent, non-finite or undefined boundary values fall back to zero. The final
+output at inactive cells is restored to the user-selected ``undef`` value.
+With internal Neumann, those neighbour terms are
+removed instead, so inactive values cannot affect the active solution.
 
 Asymmetric endpoints belong to FiniteDiff
 -----------------------------------------
