@@ -36,7 +36,7 @@ Why `xinvert`?
 - **Genearlize all the steady-state problems:** All the known steady-state problems in geophysical fluid dynamics can be easily adapted to fit the solvers;
 - **Very short parameter list:** Passing a single `xarray` forcing is enough for the inversion.  Coordinates information is already encapsulated.
 - **Flexible model parameters:** Model parameters can be either a constant, or varying with a specific dimension (like Coriolis $f$), or fully varying with space and time, due to the use of `xarray`'s broadcasting capability;
-- **Parallel inverting:** The use of `xarray`, and thus `dask` allow parallel inverting, which is almost transparent to the user;
+- **Parallel inverting:** The use of `xarray`, and thus `dask` allow multi-core CPU parallel inverting, as well as GPU inverting.  One only needs to change the parameter `architect='CPU'/'GPU'/'CPU-mc'`, and the internal implementation is almost transparent to the user;
 - **Pure Python code for C-code speed:** The use of `numba` allow pure python code in this package but native speed;
 
 ---
@@ -71,6 +71,20 @@ python -m pip install .
 
 ---
 ## 3. Examples:
+The classic Poisson equation for streamfunction can be inverted by:
+```python
+from xinvert import invert_Poisson
+
+iParams = {
+    'BCs'      : ['fixed', 'periodic'], # fixed north/south and periodic east/west BCs
+    'mxLoop'   : 1000,                  # maximum loop count
+    'tolerance': 1e-6,                  # for dtype float32
+    'architect': 'GPU',                 # use GPU
+}
+
+sf = invert_Poisson(vorticiy, dims=['lat','lon'], iParams=iParams)
+```
+
 This is a list of the problems that can be solved by `xinvert`:
 
 |    Gallery    |    Gallery    |
@@ -103,28 +117,18 @@ Its history can optionally be returned for analysis:
 ```python
 iParams = {
     'tolerance': 1e-8,
-    # Return diagnostic history sampled every 20 SOR sweeps.
-    'diag_interval': 20,
+    'diag_interval': 20,  # diagnose every 20 SOR iterations
 }
 psi, diagnostics = invert_Poisson(
     vor, dims=['lat', 'lon'], iParams=iParams)
 
-print(diagnostics.converged.item())
-print(diagnostics.iterations.item())
-print(diagnostics.final_error.item())
-print(diagnostics.stop_reason.item())  # 'converged', 'max_iterations', ...
 diagnostics.error.plot(x='iteration', yscale='log')
 ```
 
-The default ``diag_interval=0`` returns only the solution and uses xinvert's
-automatic convergence-check interval.  See the
+Through plotting the error, one can observe the convergence rate at regular
+interation interval.  The default ``diag_interval=0`` returns only the solution.  See
 [diagnostic analysis documentation](https://xinvert.readthedocs.io/en/latest/Diagnostics.html)
-for the Dataset schema, batched time-series examples, and the difference
-between diagnostics and `printInfo`.
-
-For inputs with non-solver dimensions such as `time` or `member`, every
-diagnostic variable retains those dimensions and reports each inversion
-independently.  This also works with Dask-backed arrays.
+for more details.
 
 
 
