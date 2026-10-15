@@ -78,6 +78,10 @@ def test_backend_discrete_solution_and_equation_residual(architect, kind, dtype)
     assert 0 < diagnostics[2] < 10000
     np.testing.assert_allclose(solved, truth, atol=accuracy, rtol=accuracy)
     np.testing.assert_array_equal(solved[~active], truth.astype(dtype)[~active])
+    count = 1000  # mxLoop=10000 and diag_interval=10
+    last = (int(diagnostics[2]) + 9)//10 - 1
+    assert diagnostics[3 + count + last] == float(np.min(solved))
+    assert diagnostics[3 + 2*count + last] == float(np.max(solved))
     forcing = values[coefficients[-1]]
     residual = (_operator(kind, solved.astype('float64')) - forcing)[active]
     assert np.max(np.abs(residual)) < accuracy * max(1., np.max(np.abs(forcing)))

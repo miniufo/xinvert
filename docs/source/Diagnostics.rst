@@ -58,7 +58,7 @@ Diagnostics layout
 For the two-time atmospheric Poisson example used below, ``print(diagnostics)``
 produces output of this form::
 
-    <xarray.Dataset> Size: 6kB
+    <xarray.Dataset> Size: 14kB
     Dimensions:      (time: 2, iteration: 250)
     Coordinates:
       * time         (time) datetime64[ns] 16B 2008-01-01 2008-01-02
@@ -67,6 +67,8 @@ produces output of this form::
         converged    (time) bool 2B True True
         iterations   (time) int64 16B 420 440
         error        (time, iteration) float64 4kB 0.06304 ... nan nan
+        solution_min (time, iteration) float64 4kB ... nan nan
+        solution_max (time, iteration) float64 4kB ... nan nan
         final_error  (time) float64 16B 8.66e-07 9.245e-07
         stop_reason  (time) object 16B 'converged' 'converged'
     Attributes:
@@ -79,6 +81,19 @@ sampled.  ``error`` holds those samples; entries after an individual slice has
 stopped are ``NaN``.  ``iterations`` and ``final_error`` provide the last valid
 state directly, while ``converged`` and ``stop_reason`` summarize why each
 solve ended.
+
+``solution_min`` and ``solution_max`` record the signed minimum and maximum
+of the current solution at the same checkpoints as ``error``. They include
+valid fixed-boundary cells and exclude forcing-mask cells, undefined values
+and non-finite values. An empty valid domain yields ``NaN``. Like ``error``,
+entries after a slice stops remain ``NaN``; all batch dimensions are retained.
+These variables are diagnostic only and do not change the stopping criterion.
+No percentiles or outlier removal are applied.
+
+CPU and CPU-mc scan the solution only at diagnostic checkpoints. GPU reduces
+the extrema on device and transfers only two scalars, not the full field.
+This adds work when diagnostics are enabled; ``diag_interval=0`` does not
+compute or store extrema.
 
 All non-inversion dimensions are retained.  An input
 ``forcing(member, time, lat, lon)`` therefore produces

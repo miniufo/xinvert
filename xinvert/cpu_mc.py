@@ -20,6 +20,7 @@ from .cpus import (
     _check_interval,
     _find_boundary_anchor_1d,
     _find_boundary_anchor_2d,
+    _record_solution_diagnostics,
     _relative_update_metric,
 )
 
@@ -189,7 +190,8 @@ def _invert_standard_2D_mc_impl(S, A, B, C, F,
         error = _relative_update_metric(max_update, max_value)
         overflow = not np.isfinite(error) or error > 1e100
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, F, undef, mxLoop, interval)
             diagnostic_index += 1
         if overflow or error < tolerance or loop >= mxLoop:
             flags[2] = loop
@@ -349,7 +351,8 @@ def invert_general_2D_mc(S, A, B, C, D, E, F, G, info,
         error = _relative_update_metric(max_update, max_value)
         overflow = not np.isfinite(error) or error > 1e100
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, G, undef, mxLoop, interval)
             diagnostic_index += 1
         if overflow or error < tolerance or loop == mxLoop:
             break
@@ -492,7 +495,8 @@ def invert_standard_3D_mc(S, A, B, C, F, info,
         error = _relative_update_metric(max_update, max_value)
         overflow = not np.isfinite(error) or error > 1e100
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, F, undef, mxLoop, interval)
             diagnostic_index += 1
         if overflow or error < tolerance or loop == mxLoop:
             break
@@ -662,7 +666,8 @@ def invert_general_3D_mc(S, A, B, C, D, E, F, G, H, info,
         error = _relative_update_metric(max_update, max_value)
         overflow = not np.isfinite(error) or error > 1e100
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, H, undef, mxLoop, interval)
             diagnostic_index += 1
         if overflow or error < tolerance or loop == mxLoop:
             break
@@ -849,7 +854,8 @@ def invert_general_bih_2D_mc(S, A, B, C, D, E, F, G, H, I, J, info,
         error = _relative_update_metric(max_update, max_value)
         overflow = not np.isfinite(error) or error > 1e100
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, J, undef, mxLoop, interval)
             diagnostic_index += 1
         if overflow or error < tolerance or loop == mxLoop:
             break
@@ -961,7 +967,8 @@ def invert_standard_1D_mc(S, A, B, F, info,
         error = _relative_update_metric(max_update, max_value)
         overflow = not np.isfinite(error) or error > 1e100
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, F, undef, mxLoop, interval)
             diagnostic_index += 1
         if overflow or error < tolerance or loop == mxLoop:
             break
@@ -1140,7 +1147,8 @@ def _invert_standard_2D_full_mc_impl(S, A, B, C, D, E, F,
         error = _relative_update_metric(max_update, max_value)
         overflow = not np.isfinite(error) or error > 1e100
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, F, undef, mxLoop, interval)
             diagnostic_index += 1
         if overflow or error < tolerance or loop >= mxLoop:
             flags[2] = loop

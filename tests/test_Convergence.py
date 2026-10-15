@@ -72,6 +72,10 @@ def test_diag_interval_controls_first_convergence_check(architect):
     assert diagnostics.error.notnull().values.tolist() == [
         True, False, False, False, False, False, False]
     assert diagnostics.attrs['diag_interval'] == 3
+    np.testing.assert_array_equal(
+        diagnostics.solution_min.notnull(), diagnostics.error.notnull())
+    np.testing.assert_array_equal(
+        diagnostics.solution_max.notnull(), diagnostics.error.notnull())
 
 
 def test_structured_diagnostics_report_iteration_limit(architect):
@@ -108,7 +112,8 @@ def test_structured_diagnostics_preserve_batch_dimensions(architect):
 
     assert solution.dims == ('time', 'y', 'x')
     assert set(diagnostics.data_vars) == {
-        'converged', 'iterations', 'error', 'final_error', 'stop_reason'}
+        'converged', 'iterations', 'error', 'final_error', 'stop_reason',
+        'solution_min', 'solution_max'}
     assert diagnostics.sizes == {'time': 2, 'iteration': 50}
     assert diagnostics.time.identical(forcing.time)
     assert diagnostics.converged.values.tolist() == [True, True]
@@ -144,3 +149,32 @@ def test_gpu_structured_diagnostics():
     assert bool(diagnostics.converged.item())
     assert diagnostics.stop_reason.item() == 'converged'
     assert diagnostics.final_error.item() < 1e-8
+
+
+@pytest.mark.parametrize('sign', [-1., 1.])
+def test_solution_extrema_match_final_slice(architect, sign):
+    forcing, _ = _poisson_problem(9)
+    solution, diagnostics = _solve(
+        sign*forcing, architect=architect, diag_interval=3,
+        mxLoop=7, tolerance=0.)
+    assert diagnostics.solution_min.dims == diagnostics.error.dims
+    assert diagnostics.iteration.values.tolist() == [3, 6, 7]
+    assert diagnostics.solution_min.sel(iteration=7).item() == float(solution.min())
+    assert diagnostics.solution_max.sel(iteration=7).item() == float(solution.max())
+    assert bool((diagnostics.solution_min <= diagnostics.solution_max).all())
+
+
+def test_solution_extrema_exclude_masked_outlier(architect):
+    forcing, _ = _poisson_problem(9)
+    forcing[4, 4] = np.nan
+    initial = xr.zeros_like(forcing)
+    initial[4, 4] = 1e20
+    solution, diagnostics = invert_Poisson(
+        forcing, dims=['y', 'x'], coords='cartesian', icbc=initial,
+        iParams={'architect': architect, 'dtype': 'float64',
+                 'BCs': ['fixed', 'fixed'], 'diag_interval': 3,
+                 'internal_bcs': 'neumann',
+                 'mxLoop': 7, 'tolerance': 0., 'printInfo': False})
+    assert diagnostics.solution_max.sel(iteration=7).item() == float(solution.max())
+    assert diagnostics.solution_min.sel(iteration=7).item() == float(solution.min())
+    assert float(diagnostics.solution_max.max()) < 1e10

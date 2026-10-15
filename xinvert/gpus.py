@@ -25,8 +25,10 @@ The GPU wrapper functions have the **same signature** as the numba kernels in
 :mod:`xinvert.cpus`, so they can be used as drop-in replacements via the
 ``architect`` dispatch in :mod:`xinvert.core._make_kernel`.
 """
+import math
 import threading
 import warnings
+
 import numpy as np
 from numba import cuda
 
@@ -1266,7 +1268,7 @@ def _launch_config_3d(zc, yc, xc):
 def _run_sor_3d_loop(d_S, launch_color, blocks, threads,
                      bcx_periodic, bcx_extend, bcy_extend, undef,
                      d_metric, mxLoop, tolerance,
-                     history, check_interval=None):
+                     history, check_interval=None, d_rhs=None):
     """Host-side Red-Black SOR iteration loop shared by 3D wrappers.
 
     Same structure as :func:`_run_sor_2d_loop`; note the z boundary is
@@ -1348,7 +1350,9 @@ def _run_sor_3d_loop(d_S, launch_color, blocks, threads,
         overflow = not np.isfinite(error) or error > 1e100
 
         if diagnostic_index < history.size:
-            history[diagnostic_index] = error
+            _record_gpu_solution_diagnostics(
+                history, diagnostic_index, error, d_S, d_rhs, undef,
+                mxLoop, check_interval)
             diagnostic_index += 1
 
         if overflow:
@@ -1362,7 +1366,7 @@ def _run_sor_3d_loop(d_S, launch_color, blocks, threads,
 
 def _run_sor_2d_loop(d_S, launch_color, launch_boundary, blocks, threads,
                      undef, d_metric, mxLoop, tolerance,
-                     history, n_color=2, check_interval=None):
+                     history, n_color=2, check_interval=None, d_rhs=None):
     """Host-side multi-color SOR iteration loop shared by all 2-D wrappers.
 
     ``launch_color(color)`` must launch the SOR kernel for one color on the
@@ -1443,7 +1447,9 @@ def _run_sor_2d_loop(d_S, launch_color, launch_boundary, blocks, threads,
         overflow = not np.isfinite(error) or error > 1e100
 
         if diagnostic_index < history.size:
-            history[diagnostic_index] = error
+            _record_gpu_solution_diagnostics(
+                history, diagnostic_index, error, d_S, d_rhs, undef,
+                mxLoop, check_interval)
             diagnostic_index += 1
 
         if overflow:
@@ -1525,60 +1531,14 @@ def _solve_standard_2D_gpu(S, A, B, C, F, info,
         None = built-in default ``(16, 16)``.  Set per call via
         ``iParams['gpu_block2d']``.
     """
-    # A non-zero mixed derivative couples diagonal points.  Diagonals have
-    # the same red-black parity, so they require four colors to avoid a data
-    # race within a kernel launch.
-    n_color = 4 if _has_active_coefficient(B) else 2
-    _validate_periodic_x_coloring(xc, BCx, n_color)
-
-    # --- transfer to GPU ---
-    d_S = cuda.to_device(S)
-    d_A = cuda.to_device(A)
-    d_B = cuda.to_device(B)
-    d_C = cuda.to_device(C)
-    d_F = cuda.to_device(F)
-
-    bcx_periodic = (BCx == 'periodic')
-    bcx_extend = (BCx == 'extend')
-    bcy_extend = (BCy == 'extend')
-
-    blocks, threads, bcount_x, bs1d_x, bcount_y, bs1d_y = \
-        _launch_config_2d(yc, xc, block_2d)
-
-    d_metric = cuda.device_array(2, dtype=np.float64)
-
-    # boundary gauge anchor for singular extend systems (y-extend with
-    # x-extend or x-periodic): ONE boundary point keeps its initial
-    # (uploaded) value; every interior point updates normally.
-    aside, aidx = -1, -1
-    if BCy == 'extend' and BCx != 'fixed':
-        aside, aidx = _find_boundary_anchor_2d_host(F, undef, BCx == 'extend')
-
-    def launch_boundary():
-        if bcy_extend:
-            _extend_y_boundary[bcount_x, bs1d_x](
-                d_S, yc, xc, undef, bcx_periodic, aside, aidx)
-        if bcx_extend:
-            _extend_x_boundary[bcount_y, bs1d_y](
-                d_S, yc, xc, undef, bcy_extend, aside, aidx)
-
-    def launch_color(color, track_residual):
-        _sor_2d_rb[blocks, threads](
-            d_S, d_A, d_B, d_C, d_F, yc, xc, bcx_periodic,
-            delxSqr, ratioQtr, ratioSqr, optArg, undef, color, n_color,
-            d_metric, track_residual)
-
-    overflow, error, loop = _run_sor_2d_loop(
-        d_S, launch_color, launch_boundary, blocks, threads,
-        undef, d_metric, mxLoop, tolerance,
-        flags[3:], n_color=n_color, check_interval=check_interval)
-
-    # --- copy result back (in-place) ---
-    d_S.copy_to_host(S)
-
-    flags[0] = overflow
-    flags[1] = error
-    flags[2] = loop
+    session = _prepare_standard_2D_gpu(S, A, B, C, F, info, yc, xc, BCy, BCx, delxSqr, ratioQtr, ratioSqr, optArg, undef, block_2d)
+    try:
+        overflow, error, loop = session.advance(
+            mxLoop, tolerance, flags, check_interval)
+        session.copy_to_host(S)
+        flags[:3] = overflow, error, loop
+    finally:
+        session.close()
 
 
 def invert_standard_2D_full_gpu(S, A, B, C, D, E, F, info,
@@ -1615,58 +1575,14 @@ def _solve_standard_2D_full_gpu(S, A, B, C, D, E, F, info,
     """
     # B and C multiply diagonal-neighbour terms; either being active changes
     # the dependency graph from five-point red-black to four-color.
-    n_color = 4 if _has_active_coefficient(B, C) else 2
-    _validate_periodic_x_coloring(xc, BCx, n_color)
-
-    # --- transfer to GPU ---
-    d_S = cuda.to_device(S)
-    d_A = cuda.to_device(A)
-    d_B = cuda.to_device(B)
-    d_C = cuda.to_device(C)
-    d_D = cuda.to_device(D)
-    d_E = cuda.to_device(E)
-    d_F = cuda.to_device(F)
-
-    bcx_periodic = (BCx == 'periodic')
-    bcx_extend = (BCx == 'extend')
-    bcy_extend = (BCy == 'extend')
-
-    blocks, threads, bcount_x, bs1d_x, bcount_y, bs1d_y = \
-        _launch_config_2d(yc, xc, block_2d)
-
-    d_metric = cuda.device_array(2, dtype=np.float64)
-
-    # boundary gauge anchor for singular extend systems; value stays at
-    # the uploaded initial S (see the standard_2D wrapper).
-    aside, aidx = -1, -1
-    if BCy == 'extend' and BCx != 'fixed':
-        aside, aidx = _find_boundary_anchor_2d_host(F, undef, BCx == 'extend')
-
-    def launch_boundary():
-        if bcy_extend:
-            _extend_y_boundary[bcount_x, bs1d_x](
-                d_S, yc, xc, undef, bcx_periodic, aside, aidx)
-        if bcx_extend:
-            _extend_x_boundary[bcount_y, bs1d_y](
-                d_S, yc, xc, undef, bcy_extend, aside, aidx)
-
-    def launch_color(color, track_residual):
-        _sor_2d_rb_full[blocks, threads](
-            d_S, d_A, d_B, d_C, d_D, d_E, d_F, yc, xc, bcx_periodic,
-            delxSqr, ratioQtr, ratioSqr, optArg, undef, color, n_color,
-            d_metric, track_residual)
-
-    overflow, error, loop = _run_sor_2d_loop(
-        d_S, launch_color, launch_boundary, blocks, threads,
-        undef, d_metric, mxLoop, tolerance,
-        flags[3:], n_color=n_color, check_interval=check_interval)
-
-    # --- copy result back (in-place) ---
-    d_S.copy_to_host(S)
-
-    flags[0] = overflow
-    flags[1] = error
-    flags[2] = loop
+    session = _prepare_standard_2D_full_gpu(S, A, B, C, D, E, F, info, yc, xc, BCy, BCx, delxSqr, ratioQtr, ratioSqr, optArg, undef, block_2d)
+    try:
+        overflow, error, loop = session.advance(
+            mxLoop, tolerance, flags, check_interval)
+        session.copy_to_host(S)
+        flags[:3] = overflow, error, loop
+    finally:
+        session.close()
 
 
 def invert_general_bih_2D_gpu(S, A, B, C, D, E, F, G, H, I, J, info,
@@ -1701,64 +1617,14 @@ def _solve_general_bih_2D_gpu(S, A, B, C, D, E, F, G, H, I, J, info,
     Same signature as :func:`xinvert.cpus.invert_general_bih_2D` so it can
     be used as a drop-in replacement via ``iParams={'architect': 'gpu'}``.
     """
-    _validate_periodic_x_coloring(xc, BCx, 5)
-
-    # --- transfer to GPU ---
-    d_S = cuda.to_device(S)
-    d_A = cuda.to_device(A)
-    d_B = cuda.to_device(B)
-    d_C = cuda.to_device(C)
-    d_D = cuda.to_device(D)
-    d_E = cuda.to_device(E)
-    d_F = cuda.to_device(F)
-    d_G = cuda.to_device(G)
-    d_H = cuda.to_device(H)
-    d_I = cuda.to_device(I)
-    d_J = cuda.to_device(J)
-
-    bcx_periodic = (BCx == 'periodic')
-    bcx_extend = (BCx == 'extend')
-    bcy_extend = (BCy == 'extend')
-
-    blocks, threads, bcount_x, bs1d_x, bcount_y, bs1d_y = \
-        _launch_config_2d(yc, xc, block_2d)
-
-    d_metric = cuda.device_array(2, dtype=np.float64)
-
-    # NOTE: no gauge anchor for the biharmonic kernel -- the 4th-order
-    # Neumann null space is multi-dimensional and a single pinned point
-    # cannot remove it (see the corresponding note in cpus.py).
-    aside, aidx = -1, -1
-
-    def launch_boundary():
-        # biharmonic extend copies TWO rows/cols; the anchor's outer
-        # row/col copy is skipped so it keeps its initial value
-        if bcy_extend:
-            _extend_y_boundary_2d_bih[bcount_x, bs1d_x](
-                d_S, yc, xc, undef, bcx_periodic, aside, aidx)
-        if bcx_extend:
-            _extend_x_boundary_2d_bih[bcount_y, bs1d_y](
-                d_S, yc, xc, undef, bcy_extend, aside, aidx)
-
-    def launch_color(color, track_residual):
-        _sor_2d_mc_bih[blocks, threads](
-            d_S, d_A, d_B, d_C, d_D, d_E, d_F, d_G, d_H, d_I, d_J,
-            yc, xc, bcx_periodic,
-            delxSSr, delxTr, delxSqr,
-            ratio, ratioSSr, ratioQtr, ratioSqr,
-            optArg, undef, color, d_metric, track_residual)
-
-    overflow, error, loop = _run_sor_2d_loop(
-        d_S, launch_color, launch_boundary, blocks, threads,
-        undef, d_metric, mxLoop, tolerance,
-        flags[3:], n_color=5, check_interval=check_interval)
-
-    # --- copy result back (in-place) ---
-    d_S.copy_to_host(S)
-
-    flags[0] = overflow
-    flags[1] = error
-    flags[2] = loop
+    session = _prepare_general_bih_2D_gpu(S, A, B, C, D, E, F, G, H, I, J, info, yc, xc, BCy, BCx, delxSSr, delxTr, delxSqr, ratio, ratioSSr, ratioQtr, ratioSqr, optArg, undef, block_2d)
+    try:
+        overflow, error, loop = session.advance(
+            mxLoop, tolerance, flags, check_interval)
+        session.copy_to_host(S)
+        flags[:3] = overflow, error, loop
+    finally:
+        session.close()
 
 
 def invert_standard_1D_gpu(S, A, B, F, info,
@@ -1812,87 +1678,14 @@ def _solve_standard_1D_gpu(S, A, B, F, info,
     Same signature as :func:`xinvert.cpus.invert_standard_1D` so it can be
     used as a drop-in replacement via ``iParams={'architect': 'gpu'}``.
     """
-    _validate_periodic_x_coloring(xc, BCx, 2)
-
-    # --- transfer to GPU ---
-    d_S = cuda.to_device(np.ascontiguousarray(S))
-    d_A = cuda.to_device(np.ascontiguousarray(A))
-    d_B = cuda.to_device(np.ascontiguousarray(B))
-    d_F = cuda.to_device(np.ascontiguousarray(F))
-
-    bcx_periodic = (BCx == 'periodic')
-    bcx_extend = (BCx == 'extend')
-
-    # 1D launch config; block size picked adaptively by extent
-    bs = _auto_bsize_1d(xc)
-    blocks = max((xc + bs - 1) // bs, 1)
-
-    d_metric = cuda.device_array(2, dtype=np.float64)
-
-    # boundary gauge anchor for the singular extend (Neumann at both
-    # ends) system: ONE boundary point keeps its initial (uploaded)
-    # value; all interior points update normally.
-    aside = -1
-    if BCx == 'extend':
-        aside = _find_boundary_anchor_1d_host(F, undef)
-
-    check_interval = _compute_check_interval(
-        mxLoop, tolerance, check_interval)
-    can_stop = (tolerance > 0.0)
-
-    loop = 0
-    overflow = False
-    error = 0.0
-    diagnostic_index = 0
-
-    while True:
-        next_loop = loop + 1
-        track_residual = ((next_loop % check_interval == 0) or
-                          next_loop >= mxLoop)
-        if track_residual:
-            d_metric[0] = 0.0
-            d_metric[1] = 0.0
-
-        # --- process boundaries ---
-        if bcx_extend:
-            _extend_boundary_1d[1, 1](d_S, xc, undef, aside)
-
-        # --- Red + Black SOR update ---
-        _sor_1d_rb[blocks, bs](
-            d_S, d_A, d_B, d_F, xc, bcx_periodic,
-            delxSqr, optArg, undef, 0, d_metric, track_residual)
-        _sor_1d_rb[blocks, bs](
-            d_S, d_A, d_B, d_F, xc, bcx_periodic,
-            delxSqr, optArg, undef, 1, d_metric, track_residual)
-
-        loop += 1
-
-        # --- convergence / overflow check (only every check_interval iters) ---
-        is_check_iter = (loop % check_interval == 0) or (loop >= mxLoop)
-
-        if not is_check_iter:
-            continue
-
-        metric_h = d_metric.copy_to_host()
-        error = _evaluate_update_metric(metric_h[0], metric_h[1])
-        overflow = not np.isfinite(error) or error > 1e100
-
-        if diagnostic_index < flags.size - 3:
-            flags[3 + diagnostic_index] = error
-            diagnostic_index += 1
-
-        if overflow:
-            break
-
-        if (can_stop and error < tolerance) or loop >= mxLoop:
-            break
-
-    # --- copy result back (in-place) ---
-    d_S.copy_to_host(S)
-
-    flags[0] = overflow
-    flags[1] = error
-    flags[2] = loop
+    session = _prepare_standard_1D_gpu(S, A, B, F, info, xc, BCx, delxSqr, optArg, undef)
+    try:
+        overflow, error, loop = session.advance(
+            mxLoop, tolerance, flags, check_interval)
+        session.copy_to_host(S)
+        flags[:3] = overflow, error, loop
+    finally:
+        session.close()
 
 
 def invert_standard_3D_gpu(S, A, B, C, F, info,
@@ -1950,41 +1743,14 @@ def _solve_standard_3D_gpu(S, A, B, C, F, info,
     Same signature as :func:`xinvert.cpus.invert_standard_3D` so it can be
     used as a drop-in replacement via ``iParams={'architect': 'gpu'}``.
     """
-    _validate_periodic_x_coloring(xc, BCx, 2)
-
-    # --- transfer to GPU ---
-    d_S = cuda.to_device(S)
-    d_A = cuda.to_device(A)
-    d_B = cuda.to_device(B)
-    d_C = cuda.to_device(C)
-    d_F = cuda.to_device(F)
-
-    bcx_periodic = (BCx == 'periodic')
-    bcx_extend = (BCx == 'extend')
-    bcy_extend = (BCy == 'extend')
-
-    blocks, threads = _launch_config_3d(zc, yc, xc)
-
-    d_metric = cuda.device_array(2, dtype=np.float64)
-
-    def launch_color(color, track_residual):
-        _sor_3d_rb[blocks, threads](
-            d_S, d_A, d_B, d_C, d_F, zc, yc, xc, bcx_periodic,
-            delxSqr, ratio2Sqr, ratio1Sqr, optArg, undef, color,
-            d_metric, track_residual)
-
-    overflow, error, loop = _run_sor_3d_loop(
-        d_S, launch_color, blocks, threads,
-        bcx_periodic, bcx_extend, bcy_extend, undef,
-        d_metric, mxLoop, tolerance,
-        flags[3:], check_interval=check_interval)
-
-    # --- copy result back (in-place) ---
-    d_S.copy_to_host(S)
-
-    flags[0] = overflow
-    flags[1] = error
-    flags[2] = loop
+    session = _prepare_standard_3D_gpu(S, A, B, C, F, info, zc, yc, xc, BCz, BCy, BCx, delxSqr, ratio2Sqr, ratio1Sqr, optArg, undef)
+    try:
+        overflow, error, loop = session.advance(
+            mxLoop, tolerance, flags, check_interval)
+        session.copy_to_host(S)
+        flags[:3] = overflow, error, loop
+    finally:
+        session.close()
 
 
 def invert_general_3D_gpu(S, A, B, C, D, E, F, G, H, info,
@@ -2015,46 +1781,14 @@ def _solve_general_3D_gpu(S, A, B, C, D, E, F, G, H, info,
     Same signature as :func:`xinvert.cpus.invert_general_3D` so it can be
     used as a drop-in replacement via ``iParams={'architect': 'gpu'}``.
     """
-    _validate_periodic_x_coloring(xc, BCx, 2)
-
-    # --- transfer to GPU ---
-    d_S = cuda.to_device(S)
-    d_A = cuda.to_device(A)
-    d_B = cuda.to_device(B)
-    d_C = cuda.to_device(C)
-    d_D = cuda.to_device(D)
-    d_E = cuda.to_device(E)
-    d_F = cuda.to_device(F)
-    d_G = cuda.to_device(G)
-    d_H = cuda.to_device(H)
-
-    bcx_periodic = (BCx == 'periodic')
-    bcx_extend = (BCx == 'extend')
-    bcy_extend = (BCy == 'extend')
-
-    blocks, threads = _launch_config_3d(zc, yc, xc)
-
-    d_metric = cuda.device_array(2, dtype=np.float64)
-
-    def launch_color(color, track_residual):
-        _sor_3d_rb_general[blocks, threads](
-            d_S, d_A, d_B, d_C, d_D, d_E, d_F, d_G, d_H,
-            zc, yc, xc, bcx_periodic,
-            delxSqr, delx, ratio2, ratio1, ratio2Sqr, ratio1Sqr,
-            optArg, undef, color, d_metric, track_residual)
-
-    overflow, error, loop = _run_sor_3d_loop(
-        d_S, launch_color, blocks, threads,
-        bcx_periodic, bcx_extend, bcy_extend, undef,
-        d_metric, mxLoop, tolerance,
-        flags[3:], check_interval=check_interval)
-
-    # --- copy result back (in-place) ---
-    d_S.copy_to_host(S)
-
-    flags[0] = overflow
-    flags[1] = error
-    flags[2] = loop
+    session = _prepare_general_3D_gpu(S, A, B, C, D, E, F, G, H, info, zc, yc, xc, delx, BCz, BCy, BCx, delxSqr, ratio2, ratio1, ratio2Sqr, ratio1Sqr, optArg, undef)
+    try:
+        overflow, error, loop = session.advance(
+            mxLoop, tolerance, flags, check_interval)
+        session.copy_to_host(S)
+        flags[:3] = overflow, error, loop
+    finally:
+        session.close()
 
 
 def invert_general_2D_gpu(S, A, B, C, D, E, F, G, info,
@@ -2085,6 +1819,822 @@ def _solve_general_2D_gpu(S, A, B, C, D, E, F, G, info,
 
     Parameters are as in :func:`_solve_standard_2D_gpu`, for the
     non-divergence (point) form with first-derivative terms.
+    """
+    session = _prepare_general_2D_gpu(S, A, B, C, D, E, F, G, info, yc, xc, delx, BCy, BCx, delxSqr, ratio, ratioQtr, ratioSqr, optArg, undef, block_2d)
+    try:
+        overflow, error, loop = session.advance(
+            mxLoop, tolerance, flags, check_interval)
+        session.copy_to_host(S)
+        flags[:3] = overflow, error, loop
+    finally:
+        session.close()
+
+
+@cuda.jit
+def _solution_extrema_kernel(values, forcing, undef, extrema):
+    """Reduce finite, unmasked solution cells to signed min/max on device."""
+    i = cuda.grid(1)
+    if i < values.size:
+        value = values[i]
+        rhs = forcing[i]
+        if (rhs != undef and math.isfinite(rhs) and
+                value != undef and math.isfinite(value)):
+            cuda.atomic.min(extrema, 0, value)
+            cuda.atomic.max(extrema, 1, value)
+
+
+def _record_gpu_solution_diagnostics(history, index, error, d_solution,
+                                     d_forcing, undef, mxLoop, interval):
+    """Record checkpoint error and device-reduced solution extrema.
+
+    Parameters
+    ----------
+    history : numpy.ndarray
+        Error/minimum/maximum history blocks; legacy error-only buffers work.
+    index : int
+        Zero-based checkpoint index.
+    error : float
+        Unchanged stopping metric.
+    d_solution, d_forcing : DeviceNDArray
+        Current solution and forcing mask. Includes valid fixed boundaries;
+        excludes undefined or non-finite values.
+    undef : float
+        Missing-data sentinel.
+    mxLoop, interval : int
+        Iteration limit and effective sampling interval.
+
+    Returns
+    -------
+    None
+        Updates history in place; no full solution transfer is performed.
+        An empty valid domain produces NaN extrema.
+    """
+    count = (mxLoop + interval - 1) // interval
+    history[index] = error
+    if history.size < 3*count:
+        return
+    extrema = cuda.to_device(np.array([np.inf, -np.inf], dtype=np.float64))
+    size = d_solution.size
+    _solution_extrema_kernel[(size + 255)//256, 256](
+        d_solution.reshape(size), d_forcing.reshape(size), undef, extrema)
+    low, high = extrema.copy_to_host()
+    if low == np.inf:
+        low, high = np.nan, np.nan
+    history[count + index] = low
+    history[2*count + index] = high
+
+
+
+class _GpuSorSession:
+    """Reusable CUDA solution and stencil workspace.
+
+    Parameters
+    ----------
+    device_solution : DeviceNDArray
+        Persistent solution allocation, modified by each advance.
+    device_forcing : DeviceNDArray
+        Resident forcing defining the valid solution domain for diagnostics.
+    advance : callable
+        Closure retaining uploaded coefficients, metric buffers and launch
+        configuration. Accepts loop limit, tolerance, flags and check interval.
+
+    Notes
+    -----
+    The caller must hold the GPU semaphore for the session's lifetime.
+    Workspace allocations are released by dropping references on close;
+    CUDA's memory manager may defer reclamation or retain allocator caches.
+    """
+    def __init__(self, device_solution, advance, device_forcing):
+        self._solution = device_solution
+        self._forcing = device_forcing
+        self._advance = advance
+
+    def advance(self, loops, tolerance, flags, check_interval=None):
+        """Advance persistent state; return overflow, error and sweep count.
+
+        Parameters
+        ----------
+        loops : int
+            Maximum additional sweeps.
+        tolerance : float
+            Stopping threshold; zero requests fixed work.
+        flags : numpy.ndarray
+            Status/history buffer, following the ordinary solver layout.
+        check_interval : int or None
+            Checkpoint interval.
+
+        Returns
+        -------
+        tuple of (bool, float, int)
+            Overflow, final correction metric and completed sweeps.
+        """
+        if self._advance is None:
+            raise RuntimeError('GPU SOR session is closed')
+        return self._advance(loops, tolerance, flags, check_interval)
+
+    def copy_to_host(self, destination):
+        """Synchronously copy the current solution into a NumPy buffer.
+
+        Parameters
+        ----------
+        destination : numpy.ndarray
+            Existing contiguous host frame buffer.
+
+        Returns
+        -------
+        None
+            Fills destination in place without allocating another frame.
+        """
+        if self._solution is None:
+            raise RuntimeError('GPU SOR session is closed')
+        self._solution.copy_to_host(destination)
+
+    def record_diagnostics(self, history, index, error, total_loops, interval, undef):
+        """Record error and device-reduced extrema without downloading a frame.
+
+        Parameters
+        ----------
+        history : numpy.ndarray
+            Error/minimum/maximum history blocks.
+        index : int
+            Zero-based checkpoint index.
+        error : float
+            Current correction metric.
+        total_loops, interval : int
+            Total animation sweeps and diagnostic interval.
+        undef : float
+            Internal invalid-data sentinel.
+
+        Returns
+        -------
+        None
+            Transfers only two extrema scalars to the history buffer.
+        """
+        if self._solution is None:
+            raise RuntimeError('GPU SOR session is closed')
+        _record_gpu_solution_diagnostics(
+            history, index, error, self._solution, self._forcing,
+            undef, total_loops, interval)
+
+    def close(self):
+        """Drop workspace references; repeated close calls are harmless."""
+        self._advance = None
+        self._solution = None
+        self._forcing = None
+
+def _prepare_standard_2D_gpu(S, A, B, C, F, info, yc, xc, BCy, BCx, delxSqr, ratioQtr, ratioSqr, optArg, undef, block_2d=None):
+    """Prepare persistent device arrays and dependency-safe SOR launches.
+
+    Parameters
+    ----------
+    S : numpy.ndarray
+        Initial solution, uploaded once; host data are not modified during setup.
+    A : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    B : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    C : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    F : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    info : str
+        Unused slice label, retained for shared solver signature compatibility.
+    yc : int
+        Grid-point count in the indicated spatial direction.
+    xc : int
+        Grid-point count in the indicated spatial direction.
+    BCy : str
+        Boundary mode in the indicated direction.
+    BCx : str
+        Boundary mode in the indicated direction.
+    delxSqr : float
+        Grid-spacing power used by the discrete stencil.
+    ratioQtr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    ratioSqr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    optArg : float
+        SOR relaxation factor.
+    undef : float
+        Internal sentinel identifying invalid cells.
+    block_2d : tuple of int or None
+        Optional CUDA thread-block shape; None selects the normal default.
+
+    Returns
+    -------
+    _GpuSorSession
+        Resident solution, coefficients and metric workspace. The caller
+        must hold the GPU semaphore and close the session after use.
+
+    Raises
+    ------
+    ValueError
+        If the periodic x extent is incompatible with stencil coloring.
+    """
+    # A non-zero mixed derivative couples diagonal points.  Diagonals have
+    # the same red-black parity, so they require four colors to avoid a data
+    # race within a kernel launch.
+    n_color = 4 if _has_active_coefficient(B) else 2
+    _validate_periodic_x_coloring(xc, BCx, n_color)
+
+    # --- transfer to GPU ---
+    d_S = cuda.to_device(S)
+    d_A = cuda.to_device(A)
+    d_B = cuda.to_device(B)
+    d_C = cuda.to_device(C)
+    d_F = cuda.to_device(F)
+
+    bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
+    bcy_extend = (BCy == 'extend')
+
+    blocks, threads, bcount_x, bs1d_x, bcount_y, bs1d_y = \
+        _launch_config_2d(yc, xc, block_2d)
+
+    d_metric = cuda.device_array(2, dtype=np.float64)
+
+    # boundary gauge anchor for singular extend systems (y-extend with
+    # x-extend or x-periodic): ONE boundary point keeps its initial
+    # (uploaded) value; every interior point updates normally.
+    aside, aidx = -1, -1
+    if BCy == 'extend' and BCx != 'fixed':
+        aside, aidx = _find_boundary_anchor_2d_host(F, undef, BCx == 'extend')
+
+    def launch_boundary():
+        if bcy_extend:
+            _extend_y_boundary[bcount_x, bs1d_x](
+                d_S, yc, xc, undef, bcx_periodic, aside, aidx)
+        if bcx_extend:
+            _extend_x_boundary[bcount_y, bs1d_y](
+                d_S, yc, xc, undef, bcy_extend, aside, aidx)
+
+    def launch_color(color, track_residual):
+        _sor_2d_rb[blocks, threads](
+            d_S, d_A, d_B, d_C, d_F, yc, xc, bcx_periodic,
+            delxSqr, ratioQtr, ratioSqr, optArg, undef, color, n_color,
+            d_metric, track_residual)
+
+    def advance(mxLoop, tolerance, flags, check_interval):
+        return _run_sor_2d_loop(
+            d_S, launch_color, launch_boundary, blocks, threads,
+            undef, d_metric, mxLoop, tolerance,
+            flags[3:], n_color=n_color, check_interval=check_interval, d_rhs=d_F)
+
+    return _GpuSorSession(d_S, advance, d_F)
+
+
+def _prepare_standard_2D_full_gpu(S, A, B, C, D, E, F, info, yc, xc, BCy, BCx, delxSqr, ratioQtr, ratioSqr, optArg, undef, block_2d=None):
+    """Prepare persistent device arrays and dependency-safe SOR launches.
+
+    Parameters
+    ----------
+    S : numpy.ndarray
+        Initial solution, uploaded once; host data are not modified during setup.
+    A : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    B : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    C : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    D : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    E : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    F : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    info : str
+        Unused slice label, retained for shared solver signature compatibility.
+    yc : int
+        Grid-point count in the indicated spatial direction.
+    xc : int
+        Grid-point count in the indicated spatial direction.
+    BCy : str
+        Boundary mode in the indicated direction.
+    BCx : str
+        Boundary mode in the indicated direction.
+    delxSqr : float
+        Grid-spacing power used by the discrete stencil.
+    ratioQtr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    ratioSqr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    optArg : float
+        SOR relaxation factor.
+    undef : float
+        Internal sentinel identifying invalid cells.
+    block_2d : tuple of int or None
+        Optional CUDA thread-block shape; None selects the normal default.
+
+    Returns
+    -------
+    _GpuSorSession
+        Resident solution, coefficients and metric workspace. The caller
+        must hold the GPU semaphore and close the session after use.
+
+    Raises
+    ------
+    ValueError
+        If the periodic x extent is incompatible with stencil coloring.
+    """
+    n_color = 4 if _has_active_coefficient(B, C) else 2
+    _validate_periodic_x_coloring(xc, BCx, n_color)
+
+    # --- transfer to GPU ---
+    d_S = cuda.to_device(S)
+    d_A = cuda.to_device(A)
+    d_B = cuda.to_device(B)
+    d_C = cuda.to_device(C)
+    d_D = cuda.to_device(D)
+    d_E = cuda.to_device(E)
+    d_F = cuda.to_device(F)
+
+    bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
+    bcy_extend = (BCy == 'extend')
+
+    blocks, threads, bcount_x, bs1d_x, bcount_y, bs1d_y = \
+        _launch_config_2d(yc, xc, block_2d)
+
+    d_metric = cuda.device_array(2, dtype=np.float64)
+
+    # boundary gauge anchor for singular extend systems; value stays at
+    # the uploaded initial S (see the standard_2D wrapper).
+    aside, aidx = -1, -1
+    if BCy == 'extend' and BCx != 'fixed':
+        aside, aidx = _find_boundary_anchor_2d_host(F, undef, BCx == 'extend')
+
+    def launch_boundary():
+        if bcy_extend:
+            _extend_y_boundary[bcount_x, bs1d_x](
+                d_S, yc, xc, undef, bcx_periodic, aside, aidx)
+        if bcx_extend:
+            _extend_x_boundary[bcount_y, bs1d_y](
+                d_S, yc, xc, undef, bcy_extend, aside, aidx)
+
+    def launch_color(color, track_residual):
+        _sor_2d_rb_full[blocks, threads](
+            d_S, d_A, d_B, d_C, d_D, d_E, d_F, yc, xc, bcx_periodic,
+            delxSqr, ratioQtr, ratioSqr, optArg, undef, color, n_color,
+            d_metric, track_residual)
+
+    def advance(mxLoop, tolerance, flags, check_interval):
+        return _run_sor_2d_loop(
+            d_S, launch_color, launch_boundary, blocks, threads,
+            undef, d_metric, mxLoop, tolerance,
+            flags[3:], n_color=n_color, check_interval=check_interval, d_rhs=d_F)
+
+    return _GpuSorSession(d_S, advance, d_F)
+
+
+def _prepare_general_bih_2D_gpu(S, A, B, C, D, E, F, G, H, I, J, info, yc, xc, BCy, BCx, delxSSr, delxTr, delxSqr, ratio, ratioSSr, ratioQtr, ratioSqr, optArg, undef, block_2d=None):
+    """Prepare persistent device arrays and dependency-safe SOR launches.
+
+    Parameters
+    ----------
+    S : numpy.ndarray
+        Initial solution, uploaded once; host data are not modified during setup.
+    A : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    B : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    C : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    D : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    E : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    F : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    G : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    H : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    I : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    J : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    info : str
+        Unused slice label, retained for shared solver signature compatibility.
+    yc : int
+        Grid-point count in the indicated spatial direction.
+    xc : int
+        Grid-point count in the indicated spatial direction.
+    BCy : str
+        Boundary mode in the indicated direction.
+    BCx : str
+        Boundary mode in the indicated direction.
+    delxSSr : float
+        Grid-spacing power used by the discrete stencil.
+    delxTr : float
+        Grid-spacing power used by the discrete stencil.
+    delxSqr : float
+        Grid-spacing power used by the discrete stencil.
+    ratio : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    ratioSSr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    ratioQtr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    ratioSqr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    optArg : float
+        SOR relaxation factor.
+    undef : float
+        Internal sentinel identifying invalid cells.
+    block_2d : tuple of int or None
+        Optional CUDA thread-block shape; None selects the normal default.
+
+    Returns
+    -------
+    _GpuSorSession
+        Resident solution, coefficients and metric workspace. The caller
+        must hold the GPU semaphore and close the session after use.
+
+    Raises
+    ------
+    ValueError
+        If the periodic x extent is incompatible with stencil coloring.
+    """
+    _validate_periodic_x_coloring(xc, BCx, 5)
+
+    # --- transfer to GPU ---
+    d_S = cuda.to_device(S)
+    d_A = cuda.to_device(A)
+    d_B = cuda.to_device(B)
+    d_C = cuda.to_device(C)
+    d_D = cuda.to_device(D)
+    d_E = cuda.to_device(E)
+    d_F = cuda.to_device(F)
+    d_G = cuda.to_device(G)
+    d_H = cuda.to_device(H)
+    d_I = cuda.to_device(I)
+    d_J = cuda.to_device(J)
+
+    bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
+    bcy_extend = (BCy == 'extend')
+
+    blocks, threads, bcount_x, bs1d_x, bcount_y, bs1d_y = \
+        _launch_config_2d(yc, xc, block_2d)
+
+    d_metric = cuda.device_array(2, dtype=np.float64)
+
+    # NOTE: no gauge anchor for the biharmonic kernel -- the 4th-order
+    # Neumann null space is multi-dimensional and a single pinned point
+    # cannot remove it (see the corresponding note in cpus.py).
+    aside, aidx = -1, -1
+
+    def launch_boundary():
+        # biharmonic extend copies TWO rows/cols; the anchor's outer
+        # row/col copy is skipped so it keeps its initial value
+        if bcy_extend:
+            _extend_y_boundary_2d_bih[bcount_x, bs1d_x](
+                d_S, yc, xc, undef, bcx_periodic, aside, aidx)
+        if bcx_extend:
+            _extend_x_boundary_2d_bih[bcount_y, bs1d_y](
+                d_S, yc, xc, undef, bcy_extend, aside, aidx)
+
+    def launch_color(color, track_residual):
+        _sor_2d_mc_bih[blocks, threads](
+            d_S, d_A, d_B, d_C, d_D, d_E, d_F, d_G, d_H, d_I, d_J,
+            yc, xc, bcx_periodic,
+            delxSSr, delxTr, delxSqr,
+            ratio, ratioSSr, ratioQtr, ratioSqr,
+            optArg, undef, color, d_metric, track_residual)
+
+    def advance(mxLoop, tolerance, flags, check_interval):
+        return _run_sor_2d_loop(
+            d_S, launch_color, launch_boundary, blocks, threads,
+            undef, d_metric, mxLoop, tolerance,
+            flags[3:], n_color=5, check_interval=check_interval, d_rhs=d_J)
+
+    return _GpuSorSession(d_S, advance, d_J)
+
+
+def _prepare_standard_1D_gpu(S, A, B, F, info, xc, BCx, delxSqr, optArg, undef):
+    """Prepare persistent device arrays and dependency-safe SOR launches.
+
+    Parameters
+    ----------
+    S : numpy.ndarray
+        Initial solution, uploaded once; host data are not modified during setup.
+    A : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    B : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    F : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    info : str
+        Unused slice label, retained for shared solver signature compatibility.
+    xc : int
+        Grid-point count in the indicated spatial direction.
+    BCx : str
+        Boundary mode in the indicated direction.
+    delxSqr : float
+        Grid-spacing power used by the discrete stencil.
+    optArg : float
+        SOR relaxation factor.
+    undef : float
+        Internal sentinel identifying invalid cells.
+
+    Returns
+    -------
+    _GpuSorSession
+        Resident solution, coefficients and metric workspace. The caller
+        must hold the GPU semaphore and close the session after use.
+
+    Raises
+    ------
+    ValueError
+        If the periodic x extent is incompatible with stencil coloring.
+    """
+    _validate_periodic_x_coloring(xc, BCx, 2)
+
+    # --- transfer to GPU ---
+    d_S = cuda.to_device(np.ascontiguousarray(S))
+    d_A = cuda.to_device(np.ascontiguousarray(A))
+    d_B = cuda.to_device(np.ascontiguousarray(B))
+    d_F = cuda.to_device(np.ascontiguousarray(F))
+
+    bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
+
+    # 1D launch config; block size picked adaptively by extent
+    bs = _auto_bsize_1d(xc)
+    blocks = max((xc + bs - 1) // bs, 1)
+
+    d_metric = cuda.device_array(2, dtype=np.float64)
+
+    # boundary gauge anchor for the singular extend (Neumann at both
+    # ends) system: ONE boundary point keeps its initial (uploaded)
+    # value; all interior points update normally.
+    aside = -1
+    if BCx == 'extend':
+        aside = _find_boundary_anchor_1d_host(F, undef)
+
+    def launch_boundary():
+        if bcx_extend:
+            _extend_boundary_1d[1, 1](d_S, xc, undef, aside)
+
+    def launch_color(color, track_residual):
+        _sor_1d_rb[blocks, bs](
+            d_S, d_A, d_B, d_F, xc, bcx_periodic,
+            delxSqr, optArg, undef, color, d_metric, track_residual)
+
+    def advance(mxLoop, tolerance, flags, check_interval):
+        return _run_sor_2d_loop(
+            d_S, launch_color, launch_boundary, blocks, bs,
+            undef, d_metric, mxLoop, tolerance,
+            flags[3:], n_color=2, check_interval=check_interval, d_rhs=d_F)
+
+    return _GpuSorSession(d_S, advance, d_F)
+
+
+def _prepare_standard_3D_gpu(S, A, B, C, F, info, zc, yc, xc, BCz, BCy, BCx, delxSqr, ratio2Sqr, ratio1Sqr, optArg, undef):
+    """Prepare persistent device arrays and dependency-safe SOR launches.
+
+    Parameters
+    ----------
+    S : numpy.ndarray
+        Initial solution, uploaded once; host data are not modified during setup.
+    A : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    B : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    C : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    F : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    info : str
+        Unused slice label, retained for shared solver signature compatibility.
+    zc : int
+        Grid-point count in the indicated spatial direction.
+    yc : int
+        Grid-point count in the indicated spatial direction.
+    xc : int
+        Grid-point count in the indicated spatial direction.
+    BCz : str
+        Boundary mode in the indicated direction.
+    BCy : str
+        Boundary mode in the indicated direction.
+    BCx : str
+        Boundary mode in the indicated direction.
+    delxSqr : float
+        Grid-spacing power used by the discrete stencil.
+    ratio2Sqr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    ratio1Sqr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    optArg : float
+        SOR relaxation factor.
+    undef : float
+        Internal sentinel identifying invalid cells.
+
+    Returns
+    -------
+    _GpuSorSession
+        Resident solution, coefficients and metric workspace. The caller
+        must hold the GPU semaphore and close the session after use.
+
+    Raises
+    ------
+    ValueError
+        If the periodic x extent is incompatible with stencil coloring.
+    """
+    _validate_periodic_x_coloring(xc, BCx, 2)
+
+    # --- transfer to GPU ---
+    d_S = cuda.to_device(S)
+    d_A = cuda.to_device(A)
+    d_B = cuda.to_device(B)
+    d_C = cuda.to_device(C)
+    d_F = cuda.to_device(F)
+
+    bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
+    bcy_extend = (BCy == 'extend')
+
+    blocks, threads = _launch_config_3d(zc, yc, xc)
+
+    d_metric = cuda.device_array(2, dtype=np.float64)
+
+    def launch_color(color, track_residual):
+        _sor_3d_rb[blocks, threads](
+            d_S, d_A, d_B, d_C, d_F, zc, yc, xc, bcx_periodic,
+            delxSqr, ratio2Sqr, ratio1Sqr, optArg, undef, color,
+            d_metric, track_residual)
+
+    def advance(mxLoop, tolerance, flags, check_interval):
+        return _run_sor_3d_loop(
+            d_S, launch_color, blocks, threads,
+            bcx_periodic, bcx_extend, bcy_extend, undef,
+            d_metric, mxLoop, tolerance,
+            flags[3:], check_interval=check_interval, d_rhs=d_F)
+
+    return _GpuSorSession(d_S, advance, d_F)
+
+
+def _prepare_general_3D_gpu(S, A, B, C, D, E, F, G, H, info, zc, yc, xc, delx, BCz, BCy, BCx, delxSqr, ratio2, ratio1, ratio2Sqr, ratio1Sqr, optArg, undef):
+    """Prepare persistent device arrays and dependency-safe SOR launches.
+
+    Parameters
+    ----------
+    S : numpy.ndarray
+        Initial solution, uploaded once; host data are not modified during setup.
+    A : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    B : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    C : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    D : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    E : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    F : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    G : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    H : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    info : str
+        Unused slice label, retained for shared solver signature compatibility.
+    zc : int
+        Grid-point count in the indicated spatial direction.
+    yc : int
+        Grid-point count in the indicated spatial direction.
+    xc : int
+        Grid-point count in the indicated spatial direction.
+    delx : float
+        Grid-spacing power used by the discrete stencil.
+    BCz : str
+        Boundary mode in the indicated direction.
+    BCy : str
+        Boundary mode in the indicated direction.
+    BCx : str
+        Boundary mode in the indicated direction.
+    delxSqr : float
+        Grid-spacing power used by the discrete stencil.
+    ratio2 : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    ratio1 : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    ratio2Sqr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    ratio1Sqr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    optArg : float
+        SOR relaxation factor.
+    undef : float
+        Internal sentinel identifying invalid cells.
+
+    Returns
+    -------
+    _GpuSorSession
+        Resident solution, coefficients and metric workspace. The caller
+        must hold the GPU semaphore and close the session after use.
+
+    Raises
+    ------
+    ValueError
+        If the periodic x extent is incompatible with stencil coloring.
+    """
+    _validate_periodic_x_coloring(xc, BCx, 2)
+
+    # --- transfer to GPU ---
+    d_S = cuda.to_device(S)
+    d_A = cuda.to_device(A)
+    d_B = cuda.to_device(B)
+    d_C = cuda.to_device(C)
+    d_D = cuda.to_device(D)
+    d_E = cuda.to_device(E)
+    d_F = cuda.to_device(F)
+    d_G = cuda.to_device(G)
+    d_H = cuda.to_device(H)
+
+    bcx_periodic = (BCx == 'periodic')
+    bcx_extend = (BCx == 'extend')
+    bcy_extend = (BCy == 'extend')
+
+    blocks, threads = _launch_config_3d(zc, yc, xc)
+
+    d_metric = cuda.device_array(2, dtype=np.float64)
+
+    def launch_color(color, track_residual):
+        _sor_3d_rb_general[blocks, threads](
+            d_S, d_A, d_B, d_C, d_D, d_E, d_F, d_G, d_H,
+            zc, yc, xc, bcx_periodic,
+            delxSqr, delx, ratio2, ratio1, ratio2Sqr, ratio1Sqr,
+            optArg, undef, color, d_metric, track_residual)
+
+    def advance(mxLoop, tolerance, flags, check_interval):
+        return _run_sor_3d_loop(
+            d_S, launch_color, blocks, threads,
+            bcx_periodic, bcx_extend, bcy_extend, undef,
+            d_metric, mxLoop, tolerance,
+            flags[3:], check_interval=check_interval, d_rhs=d_H)
+
+    return _GpuSorSession(d_S, advance, d_H)
+
+
+def _prepare_general_2D_gpu(S, A, B, C, D, E, F, G, info, yc, xc, delx, BCy, BCx, delxSqr, ratio, ratioQtr, ratioSqr, optArg, undef, block_2d=None):
+    """Prepare persistent device arrays and dependency-safe SOR launches.
+
+    Parameters
+    ----------
+    S : numpy.ndarray
+        Initial solution, uploaded once; host data are not modified during setup.
+    A : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    B : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    C : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    D : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    E : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    F : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    G : numpy.ndarray
+        Stencil coefficient or forcing array, matching the solution shape.
+    info : str
+        Unused slice label, retained for shared solver signature compatibility.
+    yc : int
+        Grid-point count in the indicated spatial direction.
+    xc : int
+        Grid-point count in the indicated spatial direction.
+    delx : float
+        Grid-spacing power used by the discrete stencil.
+    BCy : str
+        Boundary mode in the indicated direction.
+    BCx : str
+        Boundary mode in the indicated direction.
+    delxSqr : float
+        Grid-spacing power used by the discrete stencil.
+    ratio : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    ratioQtr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    ratioSqr : float
+        Grid-spacing ratio or derived ratio used by the discrete stencil.
+    optArg : float
+        SOR relaxation factor.
+    undef : float
+        Internal sentinel identifying invalid cells.
+    block_2d : tuple of int or None
+        Optional CUDA thread-block shape; None selects the normal default.
+
+    Returns
+    -------
+    _GpuSorSession
+        Resident solution, coefficients and metric workspace. The caller
+        must hold the GPU semaphore and close the session after use.
+
+    Raises
+    ------
+    ValueError
+        If the periodic x extent is incompatible with stencil coloring.
     """
     n_color = 4 if _has_active_coefficient(B) else 2
     _validate_periodic_x_coloring(xc, BCx, n_color)
@@ -2128,14 +2678,10 @@ def _solve_general_2D_gpu(S, A, B, C, D, E, F, G, info,
             delxSqr, delx, ratio, ratioQtr, ratioSqr, optArg, undef, color,
             n_color, d_metric, track_residual)
 
-    overflow, error, loop = _run_sor_2d_loop(
-        d_S, launch_color, launch_boundary, blocks, threads,
-        undef, d_metric, mxLoop, tolerance,
-        flags[3:], n_color=n_color, check_interval=check_interval)
+    def advance(mxLoop, tolerance, flags, check_interval):
+        return _run_sor_2d_loop(
+            d_S, launch_color, launch_boundary, blocks, threads,
+            undef, d_metric, mxLoop, tolerance,
+            flags[3:], n_color=n_color, check_interval=check_interval, d_rhs=d_G)
 
-    # --- copy result back (in-place) ---
-    d_S.copy_to_host(S)
-
-    flags[0] = overflow
-    flags[1] = error
-    flags[2] = loop
+    return _GpuSorSession(d_S, advance, d_G)

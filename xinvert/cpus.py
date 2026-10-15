@@ -193,7 +193,8 @@ def invert_standard_3D(S, A, B, C, F, info,
         overflow = not np.isfinite(error) or error > 1e100
 
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, F, undef, mxLoop, interval)
             diagnostic_index += 1
 
         if overflow or error < tolerance or loop >= mxLoop:
@@ -407,7 +408,8 @@ def invert_standard_2D(S, A, B, C, F, info,
         overflow = not np.isfinite(error) or error > 1e100
 
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, F, undef, mxLoop, interval)
             diagnostic_index += 1
 
         if overflow or error < tolerance or loop >= mxLoop:
@@ -630,7 +632,8 @@ def invert_standard_2D_full(S, A, B, C, D, E, F, info,
         overflow = not np.isfinite(error) or error > 1e100
 
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, F, undef, mxLoop, interval)
             diagnostic_index += 1
 
         if overflow or error < tolerance or loop >= mxLoop:
@@ -780,7 +783,8 @@ def invert_standard_1D(S, A, B, F, info,
         overflow = not np.isfinite(error) or error > 1e100
 
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, F, undef, mxLoop, interval)
             diagnostic_index += 1
 
         if overflow or error < tolerance or loop >= mxLoop:
@@ -1018,7 +1022,8 @@ def invert_general_3D(S, A, B, C, D, E, F, G, H, info,
         overflow = not np.isfinite(error) or error > 1e100
 
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, H, undef, mxLoop, interval)
             diagnostic_index += 1
 
         if overflow or error < tolerance or loop >= mxLoop:
@@ -1245,7 +1250,8 @@ def invert_general_2D(S, A, B, C, D, E, F, G, info,
         overflow = not np.isfinite(error) or error > 1e100
         
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, G, undef, mxLoop, interval)
             diagnostic_index += 1
 
         if overflow or error < tolerance or loop >= mxLoop:
@@ -1628,7 +1634,8 @@ def invert_general_bih_2D(S, A, B, C, D, E, F, G, H, I, J, info,
         overflow = not np.isfinite(error) or error > 1e100
         
         if flags.size > 3:
-            flags[3 + diagnostic_index] = error
+            _record_solution_diagnostics(
+                flags, diagnostic_index, error, S, J, undef, mxLoop, interval)
             diagnostic_index += 1
 
         if overflow or error < tolerance or loop >= mxLoop:
@@ -2074,3 +2081,50 @@ def _relative_update_metric(max_update, max_value):
     if max_value > np.finfo(np.float64).tiny:
         return max_update / max_value
     return max_update
+
+
+
+@nb.njit
+def _record_solution_diagnostics(flags, index, error, solution, forcing,
+                                 undef, mxLoop, interval):
+    """Store a sampled error and signed extrema of the valid solution domain.
+
+    Parameters
+    ----------
+    flags : numpy.ndarray
+        Status followed by error, minimum and maximum history blocks. Legacy
+        error-only buffers remain supported.
+    index : int
+        Zero-based diagnostic checkpoint.
+    error : float
+        Existing convergence metric; its definition is unchanged.
+    solution, forcing : numpy.ndarray
+        Current complete slice and forcing used to identify valid cells.
+        Fixed boundary cells are included; undefined and non-finite cells
+        are excluded from the extrema.
+    undef : float
+        Internal missing-data sentinel.
+    mxLoop, interval : int
+        Iteration limit and effective diagnostic sampling interval.
+
+    Returns
+    -------
+    None
+        Updates flags in place. An empty valid domain yields NaN extrema.
+    """
+    count = (mxLoop + interval - 1) // interval
+    flags[3 + index] = error
+    if flags.size < 3 + 3*count:
+        return
+    low, high = np.inf, -np.inf
+    values, rhs = solution.ravel(), forcing.ravel()
+    for i in range(values.size):
+        value = values[i]
+        if (rhs[i] != undef and np.isfinite(rhs[i]) and
+                value != undef and np.isfinite(value)):
+            low = min(low, value)
+            high = max(high, value)
+    if low == np.inf:
+        low, high = np.nan, np.nan
+    flags[3 + count + index] = low
+    flags[3 + 2*count + index] = high

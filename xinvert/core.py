@@ -953,7 +953,7 @@ def _make_kernel(kernel_func, grid_args, iParams):
         o = s
         diagnostic_count = ((int(iParams['mxLoop']) + diag_interval - 1) //
                             diag_interval if diag_interval else 0)
-        flags = np.full(3 + diagnostic_count, np.nan, dtype='float64')
+        flags = np.full(3 + 3 * diagnostic_count, np.nan, dtype='float64')
         flags[:3] = 0.0
 
         func(o, *coeffs, info, *grid_args,
@@ -1022,7 +1022,7 @@ def _apply_solver(kernel, inputs, input_core_dims, solution_dims, solution,
         dask='parallelized',
         dask_gufunc_kwargs={
             'allow_rechunk': True,
-            'output_sizes': {'diagnostic': 3 + diagnostic_count},
+            'output_sizes': {'diagnostic': 3 + 3 * diagnostic_count},
         },
         vectorize=True,
         output_dtypes=[solution.dtype, np.float64],
@@ -1045,7 +1045,8 @@ def _diagnostics_from_flags(raw, iParams):
     Returns
     -------
     xarray.Dataset
-        ``converged``, ``iterations``, ``error``, ``final_error`` and
+        ``converged``, ``iterations``, ``error``, ``solution_min``,
+        ``solution_max``, ``final_error`` and
         ``stop_reason`` with all non-inversion dimensions preserved.
     """
     overflow = raw.isel(diagnostic=0, drop=True).astype(bool)
@@ -1060,20 +1061,30 @@ def _diagnostics_from_flags(raw, iParams):
     reason = xr.where(overflow, 'overflow', reason)
 
     interval = int(iParams['diag_interval'])
-    history = raw.isel(diagnostic=slice(3, None)).rename(
+    count = (int(iParams['mxLoop']) + interval - 1) // interval
+    history = raw.isel(diagnostic=slice(3, 3 + count)).rename(
         {'diagnostic': 'iteration'})
     iteration = np.minimum(
         np.arange(1, history.sizes['iteration'] + 1, dtype=np.int64) * interval,
         int(iParams['mxLoop']))
     history = history.assign_coords(iteration=iteration).rename('error')
 
+    minimum = raw.isel(diagnostic=slice(3 + count, 3 + 2*count)).rename(
+        {'diagnostic': 'iteration'}).assign_coords(iteration=iteration)
+    maximum = raw.isel(diagnostic=slice(3 + 2*count, 3 + 3*count)).rename(
+        {'diagnostic': 'iteration'}).assign_coords(iteration=iteration)
+
     diagnostics = xr.Dataset({
         'converged': converged,
         'iterations': iterations,
         'error': history,
+        'solution_min': minimum,
+        'solution_max': maximum,
         'final_error': final_error,
         'stop_reason': reason,
     })
+    diagnostics.solution_min.attrs['long_name'] = 'Minimum valid solution value'
+    diagnostics.solution_max.attrs['long_name'] = 'Maximum valid solution value'
     diagnostics.attrs.update({
         'tolerance': tolerance,
         'max_iterations': int(iParams['mxLoop']),
