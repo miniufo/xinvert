@@ -215,3 +215,50 @@ immediate completion indication during a long batched or Dask calculation.
 It is enabled by default; set ``printInfo=False`` when quiet execution or only
 structured diagnostics are desired.  The two mechanisms are independent and
 may be enabled together when both behaviours are useful.
+
+
+Helmholtz decomposition errors
+------------------------------
+
+The Helmholtz interfaces use ``return_diagnostics=True`` to return
+``(result, diagnostics)``. All three methods return the same four variables:
+
+* ``vel_error``: relative error of the reconstructed total velocity,
+
+  .. math::
+
+     E_v=\frac{\|\mathbf u_{\rm rot}+\mathbf u_{\rm div}-\mathbf u\|_2}
+                   {\|\mathbf u\|_2}.
+
+  This is dimensionless; 0.01 means 1%. Zero input gives zero for an exact
+  reconstruction, and infinity for a nonzero mismatch.
+* ``div_error``: the root mean square divergence of the rotational
+  component, in inverse seconds,
+
+  .. math::
+
+     E_D=\sqrt{\operatorname{mean}
+                    [(\nabla\cdot\mathbf u_{\rm rot})^2]}.
+
+  Its target is zero. It is evaluated on the returned velocity grid.
+  For Arakawa A, centered differences use only cells with complete wet
+  neighbours; for Arakawa C, the face-flux divergence is used.
+  If no valid stencil exists, the value is NaN.
+* ``converged``: whether the equation solver reached its stopping criterion.
+* ``iterations``: iteration count; SOR reports the larger count of its
+  two potential solves.
+
+For ``streamfunction_potential``, errors refer to the velocity reconstructed
+from the returned scalars. For ``decompose``, they refer to the returned
+velocity components. A small velocity error does not by itself imply a
+small divergence error, or vice versa.
+
+.. code-block:: python
+
+   from xinvert.helmholtz import decompose
+
+   components, errors = decompose(
+       u, v, dims=["lat", "lon"], method="li2006",
+       return_diagnostics=True,
+   )
+   print(errors.vel_error, errors.div_error)

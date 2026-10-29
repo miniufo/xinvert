@@ -67,6 +67,16 @@ Its main fields are:
 ``component_sizes``
    Dictionary mapping each one-based component label to its active-cell count.
 
+``component_stats``
+   Small ``Dataset`` indexed by ``component``. It always contains
+   ``cell_count`` and ``cell_fraction``. When cell areas are supplied it also
+   contains ``area``, ``area_km2``, and ``area_fraction``.
+
+``face_code``
+   Compact ``uint8`` topology array. Bits 0--3 denote open east, west, north,
+   and south faces, and bit 4 denotes an active cell. The boolean ``active``
+   and ``open_*`` arrays are decoded only when requested.
+
 ``open_east``, ``open_west``, ``open_north``, ``open_south``
    Cell-centred directional masks.  For example, ``open_east[y, x]`` is true
    when the current cell and its eastern neighbour are both active.
@@ -78,21 +88,80 @@ The connected-component labels are intended for later component-wise
 compatibility checks and null-space constraints.  They do not identify holes
 or homology cycles inside a connected component.
 
+Component areas and optional filtering
+--------------------------------------
+
+For a uniform latitude--longitude grid, spherical cell areas can be included
+without allocating a full two-dimensional area field:
+
+.. code-block:: python
+
+   topology = analyze_domain(
+       taux,
+       dims=("lat", "lon"),
+       periodic="lon",
+       cell_area="spherical",
+   )
+
+   print(topology.component_stats.sortby("area_km2", ascending=False))
+
+A scalar or broadcast-compatible ``DataArray`` can be supplied for other
+grids. All components are retained by default. Optional filtering is explicit
+and non-mutating:
+
+.. code-block:: python
+
+   by_cells = topology.filter_components(min_cells=1000)
+   by_area = topology.filter_components(min_area_km2=5000)
+   largest = topology.filter_components(keep="largest")
+   selected = topology.filter_components(keep_labels=[1, 3, 7])
+
+Rules can be combined. Filtering recomputes faces, dense labels, and summary
+statistics because removed water becomes inactive. The original ``topology``
+is unchanged. A categorical plot is useful before selecting labels:
+
+.. code-block:: python
+
+   labels = topology.component_labels.where(topology.active)
+   labels.plot(cmap="tab20")
+
+The same inspection is available directly on the topology object:
+
+.. code-block:: python
+
+   topology.plot()                 # active/ocean components
+   topology.plot(domain="land")   # inactive/land components
+
+   # Uses area_km2 when cell_area was supplied; otherwise uses cell_count.
+   topology.plot_histogram(domain="land")
+
+``plot`` forwards extra arguments to xarray, so an existing geographic axis
+and its ``transform`` can be supplied. ``plot_histogram`` forwards styling
+arguments to Matplotlib. The histogram uses logarithmic bins by default; use
+``log=False`` for ordinary linear bins.
+
+For access without plotting, ``topology.labels(domain="land")`` returns the
+on-demand complement labels and ``topology.statistics(domain="land")``
+returns their counts and areas. These complement arrays are deliberately not
+cached, preventing an extra global label field from remaining resident for
+LLC4320. Here ``land`` means the complement of the supplied active mask; it is
+physical land only when the mask itself represents ocean cells.
+
+Small isolated seas or lakes do not need to be removed: the solver can retain
+them when compatibility and gauge constraints are satisfied per component.
+
 Internal boundary result
 ------------------------
 
-Internal faces are stored in one ``uint8`` ``face_code`` array: bits 0--3
-represent east, west, north and south blocked internal faces, and bit 4
-marks active cells. Inactive cells have code zero. This is a face bitmask,
-not an encoding of arbitrary PDE coefficients or multiple BC kinds.
-The directional boolean properties are decoded on demand; accessing
-``faces`` allocates all four masks. Keep ``face_code`` for compact storage.
+Internal blocked faces are derived from the topology's compact open-face
+codes. Directional boolean properties are decoded on demand. The compatibility
+``internal_bcs.face_code`` property materializes the older packed blocked-face
+representation only when requested, so normal analysis keeps one topology
+byte and one compact label per grid cell.
 
-Connected components use SciPy's compiled four-neighbour labelling and a
-Numba periodic-seam merge, preserving row-major component numbering.
-Component sizes use bounded-block histograms rather than one full-grid scan
-per component. Numba's first call includes compilation; reuse topology for
-a static mask rather than rebuilding it at every timestep.
+Connected components and topology codes use compiled Numba loops. Numba's
+first call includes compilation; reuse topology for a static mask rather than
+rebuilding it at every timestep.
 
 ``identify_internal_bcs`` constructs a homogeneous Neumann condition by default:
 
@@ -319,3 +388,28 @@ The first implementation intentionally has a narrow scope:
 
 Mixed derivatives and fourth-order equations require
 additional boundary derivations and validation before integration.
+
+LLC4320 performance example
+---------------------------
+
+The compact topology was measured on one hourly SSH field from the
+interpolated LLC4320 archive. The grid contains
+``8641 x 17280 = 149,316,480`` horizontal cells. On a 112-logical-CPU server
+using 32 Numba threads, the result was:
+
+.. code-block:: text
+
+   active cells                    99,459,641
+   connected components                   251
+   label dtype                          uint8
+   topology face_code memory           0.139 GiB
+   component-label memory              0.139 GiB
+   persistent topology memory          0.278 GiB
+   complete analyze_domain time        5.676 s
+   internal-face count time            0.132 s
+   process peak RSS                    2.422 GiB
+
+All 251 components were retained. As an optional example, filtering components
+below 5000 square kilometres retained 15 components, removed 41,140 active
+cells, and rebuilt the topology in 3.532 seconds. These are measurements on
+that server and dataset, not general performance guarantees.

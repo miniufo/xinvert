@@ -70,6 +70,55 @@ are documented in :doc:`DomainTopology`.
     )
 
 
+CPU thread counts
+-----------------
+
+SOR (including internal Neumann solves) and closed-boundary Li2006 share
+``iParams['threads']`` for ``architect='cpu-mc'``. Its default is ``None``:
+omitting it inherits the executing thread's current Numba mask. Importing xinvert
+does not change the global Numba setting. An integer overrides the current
+Numba setting temporarily; the previous setting is restored after the solve,
+including on exceptions. Explicit counts must be positive integers no greater
+than ``numba.config.NUMBA_NUM_THREADS``; booleans are rejected.
+
+.. code-block:: python
+
+    # Default: inherit the executing thread's Numba setting.
+    solution = invert_Poisson(
+        forcing, dims=['lat', 'lon'], iParams={'architect': 'cpu-mc'},
+    )
+
+    # Override only this solve.
+    solution = invert_Poisson(
+        forcing, dims=['lat', 'lon'],
+        iParams={'architect': 'cpu-mc', 'threads': 8},
+    )
+
+    # External Numba control (threads=None can also be omitted).
+    import numba
+    numba.set_num_threads(8)
+    solution = invert_Poisson(
+        forcing, dims=['lat', 'lon'],
+        iParams={'architect': 'cpu-mc', 'threads': None},
+    )
+
+The same dictionaries apply to Li2006's closed-boundary CPU-mc implementation.
+``threads=None`` inherits the setting of the **executing thread**. Numba masks
+are thread-local: setting a mask in the main thread does not configure Dask
+worker threads. For lazy/Dask solves prefer an explicit integer, which is
+applied inside each executing worker. Concurrent slices each receive that
+many threads; limit Dask concurrency too when conserving total resources.
+The setting does not control BLAS, SciPy vector operations, or GPU blocks.
+Ordinary SOR ``architect='cpu'`` remains serial and ignores the thread count.
+
+To cap Numba's maximum in every worker process, set ``NUMBA_NUM_THREADS``
+before importing Numba (typically before starting Python). For example,
+``NUMBA_NUM_THREADS=2`` limits each process to at most two Numba threads.
+``threads=None`` is an inheritance policy, not a resource cap: an unconfigured
+worker may inherit Numba's full available thread count. Direct calls to
+low-level compiled kernels likewise follow Numba's current setting.
+
+
 CPU and GPU implementation
 --------------------------
 

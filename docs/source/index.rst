@@ -29,6 +29,7 @@ using its `Zenodo DOI <https://doi.org/10.5281/zenodo.7801501>`__.
    BoundaryConditions
    DomainTopology
    Projection
+   Helmholtz
    Diagnostics
    Examples
    Benchmark

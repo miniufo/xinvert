@@ -53,6 +53,10 @@ extensions = [
     #'myst_parser',            # Markdown
 ]
 
+# Class methods are documented inline by ``autodoc``.  Do not ask numpydoc
+# to create separate autosummary stub pages for every method.
+numpydoc_class_members_toctree = False
+
 # The master toctree document.
 # master_doc = 'index'
 
