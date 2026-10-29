@@ -1,94 +1,93 @@
-"""Identify internal boundary faces from :mod:`xinvert.domain` topology."""
+"""Identify internal boundary faces from compact domain topology."""
 from dataclasses import dataclass
 from numbers import Real
 
+import numba as nb
 import numpy as np
 import xarray as xr
-from numba import njit
 
-from .domain import DomainTopology
+from .domain import (
+    ACTIVE,
+    OPEN_EAST,
+    OPEN_NORTH,
+    OPEN_SOUTH,
+    OPEN_WEST,
+    DomainTopology,
+)
 
 _DIRECTIONS = ("east", "west", "north", "south")
+_OPEN_BITS = {
+    "east": OPEN_EAST, "west": OPEN_WEST,
+    "north": OPEN_NORTH, "south": OPEN_SOUTH,
+}
 
 
 @dataclass(frozen=True)
 class InternalBoundaryCondition:
-    """A fixed or homogeneous Neumann condition on directional internal faces.
+    """A homogeneous Neumann condition derived from compact face codes."""
 
-    The directional masks are true at active cells whose neighbour in that
-    direction is inactive.  Faces at non-periodic array edges are deliberately
-    excluded because they belong to xinvert's existing external-BC mechanism.
-    ``face_code`` is the packed uint8 array; ``topology`` retains the original
-    domain metadata by reference. Directional properties allocate boolean
-    views on demand. ``value`` records the prescribed boundary value as
-    metadata; the public inversion API instead uses its iParams setting.
-    """
-
+    topology: DomainTopology
     kind: str
     value: float
-    face_code: xr.DataArray
-    topology: DomainTopology
-
-    def _face(self, direction: str) -> xr.DataArray:
-        """Decode one direction into a newly allocated boolean DataArray."""
-        bit = 1 << _DIRECTIONS.index(direction)
-        face = ((self.face_code & bit) != 0).rename(direction)
-        face.attrs = {"long_name": f"internal boundary face toward {direction}",
-                      "boundary_condition": self.kind}
-        return face
+    n_directed_faces: int
 
     @property
-    def east(self) -> xr.DataArray:
-        """Boolean east-facing internal boundary mask (decoded on demand)."""
-        return self._face("east")
+    def face_code(self):
+        """Packed internal-face mask, materialized only when requested."""
+        topology = self.topology
+        codes = _encode_internal_face_codes(
+            np.asarray(topology.face_code.values),
+            topology.periodic[0], topology.periodic[1])
+        return xr.DataArray(
+            codes, dims=topology.dims, coords=topology.face_code.coords,
+            name="internal_face_code", attrs={
+                "long_name": "packed internal boundary faces",
+                "flag_masks": [1, 2, 4, 8, 16],
+                "flag_meanings": "east west north south active",
+            })
+
+    def boundary_face(self, direction):
+        """Decode one active-to-inactive internal boundary mask."""
+        if not isinstance(direction, str):
+            raise TypeError("direction must be a string")
+        direction = direction.strip().lower()
+        if direction not in _OPEN_BITS:
+            raise ValueError(f"direction must be one of {_DIRECTIONS}")
+        codes = self.topology.face_code
+        result = ((codes & ACTIVE) != 0) & (
+            (codes & _OPEN_BITS[direction]) == 0)
+        result &= _has_neighbour_mask(self.topology, direction)
+        result = result.rename(direction)
+        result.attrs = {
+            "long_name": f"internal boundary face toward {direction}",
+            "boundary_condition": self.kind,
+        }
+        return result
 
     @property
-    def west(self) -> xr.DataArray:
-        """Boolean west-facing internal boundary mask (decoded on demand)."""
-        return self._face("west")
+    def east(self):
+        return self.boundary_face("east")
 
     @property
-    def north(self) -> xr.DataArray:
-        """Boolean north-facing internal boundary mask (decoded on demand)."""
-        return self._face("north")
+    def west(self):
+        return self.boundary_face("west")
 
     @property
-    def south(self) -> xr.DataArray:
-        """Boolean south-facing internal boundary mask (decoded on demand)."""
-        return self._face("south")
+    def north(self):
+        return self.boundary_face("north")
 
     @property
-    def faces(self) -> xr.Dataset:
-        """Return directional internal-boundary masks as a Dataset."""
-        return xr.Dataset({
-            direction: getattr(self, direction) for direction in _DIRECTIONS
-        })
+    def south(self):
+        return self.boundary_face("south")
 
     @property
-    def n_directed_faces(self) -> int:
-        """Number of active-cell sides adjacent to inactive cells."""
-        return int(_count_faces(self.face_code.values))
+    def faces(self):
+        """Materialize all four directional internal-boundary masks."""
+        return xr.Dataset({name: self.boundary_face(name) for name in _DIRECTIONS})
 
 
 def identify_internal_bcs(topology, kind="neumann", value=0.0):
-    """Build internal boundary masks for a previously analysed domain.
-
-    Parameters
-    ----------
-    topology : DomainTopology
-        Static domain; retained by reference for coordinate/periodic validation.
-    kind : {'neumann', 'fixed'}, default 'neumann'
-        Homogeneous zero-flux faces, or fixed inactive-neighbour values.
-    value : float, default 0.0
-        Neumann must be zero. Fixed records a finite prescribed scalar value.
-
-    Returns
-    -------
-    InternalBoundaryCondition
-        Packed directional faces and original topology for inspection or
-        preprocessing. Public Poisson inversion infers its own topology from
-        forcing via iParams['internal_bcs'], rather than accepting this object.
-    """
+    """Describe homogeneous-Neumann faces for an analysed domain."""
     if not isinstance(topology, DomainTopology):
         raise TypeError("topology must be a DomainTopology")
     if not isinstance(kind, str):
@@ -105,76 +104,85 @@ def identify_internal_bcs(topology, kind="neumann", value=0.0):
     if kind == "neumann" and value != 0.0:
         raise NotImplementedError(
             "only homogeneous Neumann internal boundaries are supported")
-
-    active = topology.active
-    codes = _encode_internal_faces(np.asarray(active.values, dtype=bool),
-                                   topology.periodic)
-    face_code = xr.DataArray(codes, dims=active.dims, coords=active.coords,
-                            name="internal_face_code", attrs={
-                                "long_name": "packed internal boundary faces",
-                                "flag_masks": [1, 2, 4, 8, 16],
-                                "flag_meanings": "east west north south active",
-                            })
-
-    return InternalBoundaryCondition(
-        kind=kind,
-        value=value,
-        face_code=face_code,
-        topology=topology,
-    )
+    count = _count_internal_faces(
+        np.asarray(topology.face_code.values),
+        topology.periodic[0], topology.periodic[1])
+    return InternalBoundaryCondition(topology, kind, value, int(count))
 
 
-@njit(cache=True)
+def _has_neighbour_mask(topology, direction):
+    values = np.ones(topology.face_code.shape, dtype=bool)
+    axis = 1 if direction in ("east", "west") else 0
+    if not topology.periodic[axis]:
+        edge = [slice(None), slice(None)]
+        edge[axis] = -1 if direction in ("east", "south") else 0
+        if values.shape[axis]:
+            values[tuple(edge)] = False
+    return xr.DataArray(
+        values, dims=topology.dims,
+        coords={dim: topology.face_code.coords[dim] for dim in topology.dims})
+
+
+@nb.njit(cache=True)
+def _count_internal_faces(codes, periodic_y, periodic_x):
+    ny, nx = codes.shape
+    count = 0
+    for y in range(ny):
+        for x in range(nx):
+            code = codes[y, x]
+            if not code & ACTIVE:
+                continue
+            if (x + 1 < nx or periodic_x) and not code & OPEN_EAST:
+                count += 1
+            if (x > 0 or periodic_x) and not code & OPEN_WEST:
+                count += 1
+            if (y > 0 or periodic_y) and not code & OPEN_NORTH:
+                count += 1
+            if (y + 1 < ny or periodic_y) and not code & OPEN_SOUTH:
+                count += 1
+    return count
+
+
+@nb.njit(cache=True)
+def _encode_internal_face_codes(codes, periodic_y, periodic_x):
+    """Encode blocked internal faces while excluding exterior array edges."""
+    ny, nx = codes.shape
+    result = np.zeros((ny, nx), dtype=np.uint8)
+    for y in range(ny):
+        for x in range(nx):
+            code = codes[y, x]
+            if not code & ACTIVE:
+                continue
+            blocked = ACTIVE
+            if (x + 1 < nx or periodic_x) and not code & OPEN_EAST:
+                blocked |= OPEN_EAST
+            if (x > 0 or periodic_x) and not code & OPEN_WEST:
+                blocked |= OPEN_WEST
+            if (y > 0 or periodic_y) and not code & OPEN_NORTH:
+                blocked |= OPEN_NORTH
+            if (y + 1 < ny or periodic_y) and not code & OPEN_SOUTH:
+                blocked |= OPEN_SOUTH
+            result[y, x] = blocked
+    return result
+
+
+@nb.njit(cache=True)
 def _encode_internal_faces(active, periodic):
-    """Encode a boolean (y, x) mask using uint8 internal-face/active bits.
-
-    periodic is a (y, x) boolean pair. Non-periodic exterior faces are
-    excluded; inactive cells are zero. Returns one byte per grid cell.
-    """
+    """Compatibility helper used by the masked solver."""
     ny, nx = active.shape
     result = np.zeros(active.shape, dtype=np.uint8)
     for y in range(ny):
         for x in range(nx):
             if not active[y, x]:
                 continue
-            code = 16
+            code = ACTIVE
             if (x + 1 < nx or periodic[1]) and not active[y, (x + 1) % nx]:
-                code |= 1
+                code |= OPEN_EAST
             if (x > 0 or periodic[1]) and not active[y, (x - 1) % nx]:
-                code |= 2
+                code |= OPEN_WEST
             if (y > 0 or periodic[0]) and not active[(y - 1) % ny, x]:
-                code |= 4
+                code |= OPEN_NORTH
             if (y + 1 < ny or periodic[0]) and not active[(y + 1) % ny, x]:
-                code |= 8
+                code |= OPEN_SOUTH
             result[y, x] = code
     return result
-
-
-@njit(cache=True)
-def _count_faces(codes):
-    """Return the number of low-four-bit faces without allocating masks."""
-    total = 0
-    for y in range(codes.shape[0]):
-        for x in range(codes.shape[1]):
-            code = codes[y, x]
-            for bit in (1, 2, 4, 8):
-                total += (code & bit) != 0
-    return total
-
-
-def _has_neighbour_mask(topology, direction):
-    shape = topology.active.shape
-    values = np.ones(shape, dtype=bool)
-    axis = 1 if direction in ("east", "west") else 0
-    if not topology.periodic[axis]:
-        edge = [slice(None), slice(None)]
-        edge[axis] = -1 if direction in ("east", "south") else 0
-        values[tuple(edge)] = False
-    return xr.DataArray(
-        values,
-        dims=topology.dims,
-        coords={
-            dim: topology.active.coords[dim]
-            for dim in topology.dims if dim in topology.active.coords
-        },
-    )
