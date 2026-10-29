@@ -8,6 +8,7 @@ import numpy as np
 import xarray as xr
 from numba import njit, prange
 
+from ._threads import DEFAULT_THREADS, numba_threads
 from .core import (
     _apply_solver,
     _get_info,
@@ -160,7 +161,8 @@ def invert_masked_standard(F, dims, coords, icbc, mParams, iParams,
                 from .masked_poisson_gpu import sor_gpu
                 sor_gpu(*arguments, block=ip.get('gpu_block2d'))
             else:
-                _sor(*arguments, multicore=architect == 'cpu-mc')
+                with numba_threads(architect, ip.get('threads', DEFAULT_THREADS)):
+                    _sor(*arguments, multicore=architect == 'cpu-mc')
             if ip['printInfo']:
                 _print_live(f"{label_info} loops {flags[2]:4.0f}, residual is {flags[1]:e}")
             return (out, flags) if interval else out

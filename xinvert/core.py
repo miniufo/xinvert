@@ -15,6 +15,7 @@ from functools import partial
 import numpy as np
 import xarray as xr
 
+from ._threads import DEFAULT_THREADS, numba_threads, validate_threads
 from .cpu_mc import (
     invert_general_2D_mc,
     invert_general_3D_mc,
@@ -605,6 +606,7 @@ def _validate_solver_controls(iParams):
     ValueError
         If a control has an invalid type, range, or finite-value status.
     """
+    validate_threads(iParams.get('threads', DEFAULT_THREADS))
     internal = iParams.get('internal_bcs', 'fixed')
     if not isinstance(internal, str) or internal.strip().lower() not in ('fixed', 'neumann'):
         raise ValueError("iParams['internal_bcs'] must be 'fixed' or 'neumann'")
@@ -884,6 +886,8 @@ def _make_kernel(kernel_func, grid_args, iParams):
 
     # case-insensitive (and whitespace-tolerant): 'GPU', ' GPU ' etc. all work
     architect = str(iParams.get('architect', 'cpu')).strip().lower()
+    threads = iParams.get('threads', DEFAULT_THREADS)
+    validate_threads(threads)
     diag_interval = max(int(iParams.get('diag_interval', 0)), 0)
     check_interval = diag_interval or 0
 
@@ -966,9 +970,10 @@ def _make_kernel(kernel_func, grid_args, iParams):
         flags = np.full(3 + 3 * diagnostic_count, np.nan, dtype='float64')
         flags[:3] = 0.0
 
-        func(o, *coeffs, info, *grid_args,
-             iParams['optArg'], _undeftmp, flags,
-             iParams['mxLoop'], iParams['tolerance'])
+        with numba_threads(architect, threads):
+            func(o, *coeffs, info, *grid_args,
+                 iParams['optArg'], _undeftmp, flags,
+                 iParams['mxLoop'], iParams['tolerance'])
 
         if iParams['printInfo']:
             msg = (f'{info} loops {flags[2]:4.0f}, residual is '

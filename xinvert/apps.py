@@ -11,6 +11,7 @@ import difflib
 import numpy as np
 import xarray as xr
 
+from ._threads import DEFAULT_THREADS
 from .animate import animate_iteration as animate_iteration
 from .core import (
     _validate_inversion_bcs,
@@ -82,6 +83,10 @@ default_iParams = {
     # (experimental multi-core multi-color), or 'gpu' (cuda);
     # case-insensitive, e.g. 'CPU', 'GPU', ' Gpu ' all work
     'architect': 'cpu',
+
+    # CPU-mc threads per spatial solve. None inherits the executing thread's
+    # numba.set_num_threads setting. Explicit masks are restored after a call.
+    'threads': DEFAULT_THREADS,
 
     # GPU thread-block shape for 2D kernels.  None = auto, i.e. the
     # built-in default (16, 16), defined as gpus._DEFAULT_BLOCK_2D (same
@@ -2235,7 +2240,8 @@ def __update(default, users, valid=None):
         Default parameter mapping.  Passing :data:`default_iParams` enables
         strict unknown-key validation and typo suggestions.
     users : dict or None
-        User overrides.  Values equal to ``None`` leave defaults unchanged.
+        User overrides. Values equal to ``None`` leave defaults unchanged,
+        except ``iParams['threads']=None`` selects external Numba control.
     valid : collection of str or None, optional
         Allowed keys for model-specific parameters.
 
@@ -2282,7 +2288,7 @@ def __update(default, users, valid=None):
     default_cp = copy.deepcopy(default)
     
     for k, v in users.items():
-        if v is not None:
+        if v is not None or k == 'threads':
             default_cp[k] = v
     
     return default_cp
