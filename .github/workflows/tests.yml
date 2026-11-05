@@ -34,13 +34,19 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
             choco install ffmpeg --no-progress -y
+            # Chocolatey drops its shims in %ProgramData%\chocolatey\bin, which
+            # is not on the PATH a job inherits, so publish it for later steps.
+            echo 'C:\ProgramData\chocolatey\bin' >> "$GITHUB_PATH"
           else
             sudo apt-get update
             sudo apt-get install -y ffmpeg
           fi
       - name: Check public module imports
         shell: bash -l {0}
-        run: python -c "import xinvert; import xinvert.domain; import xinvert.helmholtz"
+        run: |
+          python -c "import xinvert; import xinvert.domain; import xinvert.helmholtz"
+          # Printed so an encoder test that only skips stays visible in the log.
+          python -c "import shutil; print('ffmpeg:', shutil.which('ffmpeg'))"
       - name: Test CPU path
         env:
           NUMBA_DISABLE_CUDA: '1'
