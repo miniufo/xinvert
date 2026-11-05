@@ -9,6 +9,9 @@ dependencies:
   - dask
   - scipy
   - netCDF4
+  - matplotlib
+  - imageio-ffmpeg
+  - cloudpickle
   - numba
   - ultraplot
   - cartopy

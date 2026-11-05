@@ -49,6 +49,10 @@ setup(
         "dask",
         "numba",
         "scipy",
+        "netCDF4",
+        "matplotlib",
+        "imageio-ffmpeg",
+        "cloudpickle",
     ],
 
     extras_require={
@@ -58,6 +62,6 @@ setup(
         "notebooks": ["ultraplot", "pooch", "cartopy", "notebook",
                       "ipykernel", "netCDF4"],
         # Maintained CUDA target; an NVIDIA driver and runtime are required.
-        "gpu": ["numba-cuda"],
+        "gpu": ["numba-cuda[cu12]", "cupy-cuda12x[ctk]"],
     },
 )
