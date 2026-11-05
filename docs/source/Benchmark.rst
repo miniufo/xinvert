@@ -30,14 +30,10 @@ synchronization.
 Results were measured on 9 October 2026 with an Intel Xeon w9-3495X (56
 physical cores, 112 logical threads) and an NVIDIA GeForce RTX 3090. The
 software environment used Python 3.13.7, NumPy 2.2.5, xarray 2025.4.0, Numba
-0.61.2, and NVIDIA driver 580.65.06. The machine was otherwise idle. Runs
-through :math:`1024^2` use medians of five samples; :math:`2048^2` and
-:math:`4096^2` use medians of two samples. CPU-mc was restricted to physical
-cores 0--55, without simultaneous multithreading.
-
-All acceleration panels use the same reference: xinvert's lexicographic CPU
-backend restricted to one core. They also use the same x axis (grid size) and
-y axis (speedup), so GPU and CPU-mc results can be compared directly.
+0.61.2, and NVIDIA driver 580.65.06. Runs through :math:`1024^2` use medians
+of five samples; :math:`2048^2` and :math:`4096^2` use medians of two samples.
+CPU-mc was restricted to physical cores 0--55, without simultaneous
+multithreading.
 
 Fixed-work throughput
 ---------------------

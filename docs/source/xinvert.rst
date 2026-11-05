@@ -2,6 +2,12 @@ xinvert package
 ===============
 
 
+xinvert.helmholtz module
+------------------------
+
+.. automodule:: xinvert.helmholtz
+   :members: decompose, streamfunction_potential, reconstruct
+
 xinvert.apps module
 -------------------
 
@@ -30,14 +36,6 @@ xinvert.domain module
 ---------------------
 
 .. automodule:: xinvert.domain
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-xinvert.internal_bcs module
----------------------------
-
-.. automodule:: xinvert.internal_bcs
    :members:
    :undoc-members:
    :show-inheritance:
@@ -71,6 +69,7 @@ xinvert.utils module
 
 .. automodule:: xinvert.utils
    :members:
+   :exclude-members: DEFAULT_THREADS, numba_threads, validate_threads
    :undoc-members:
    :show-inheritance:
 

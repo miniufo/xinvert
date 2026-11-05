@@ -10,7 +10,7 @@ Welcome to xinvert's documentation!
 
 This is a `Python` package to invert or solve many classical problems in
 atmospheric sciences and physical oceanography.  These geophysical fluid
-dynamics (GFD) problems are formulated as second-order partial differential
+dynamics (GFD) problems are formulated as elliptic partial differential
 equations (PDEs), and can be inverted using successive over-relaxation (SOR)
 iteration with proper boundary conditions.  This project is
 `published on GitHub <https://github.com/miniufo/xinvert>`__ and can be cited
@@ -28,19 +28,13 @@ using its `Zenodo DOI <https://doi.org/10.5281/zenodo.7801501>`__.
    Architecture
    BoundaryConditions
    DomainTopology
-   Projection
-   Helmholtz
    Diagnostics
+   Helmholtz
+   Animation
+   FiniteDiff
    Examples
    Benchmark
    Contributors
 
 
-   ../modules
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+   modules

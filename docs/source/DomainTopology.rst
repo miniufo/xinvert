@@ -1,336 +1,60 @@
-Masked domains and internal boundaries
-======================================
+Identifying internal boundaries
+===============================
 
-``xinvert.domain`` analyses the topology of a static two-dimensional xarray
-domain.  ``xinvert.internal_bcs`` then identifies active--inactive faces that
-can carry internal boundary conditions.  These modules are currently
-preprocessing utilities for independent domain analysis. Normal Poisson
-inversion and the supported diagonal second-order applications build topology when
-``iParams['internal_bcs'] = 'neumann'``; no user-created object is required.
-
-Quick start
------------
-
-The simplest input is a two-dimensional numeric ``DataArray`` whose missing
-values represent cells outside the domain:
+Use these helpers to inspect a two-dimensional mask before setting the
+internal boundary conditions described in :doc:`BoundaryConditions`.
+``analyze_domain`` identifies connected active regions;
+``identify_internal_bcs`` locates their internal active--inactive faces.
+They do not perform an inversion or set its boundary conditions.
 
 .. code-block:: python
 
    import xarray as xr
-
    from xinvert.domain import analyze_domain
-   from xinvert.internal_bcs import identify_internal_bcs
+   from xinvert.domain import identify_internal_bcs
 
-   with xr.open_dataset("Data/SODA.nc") as ds:
-       taux = ds["taux"].isel(time=0).load()
+   with xr.open_dataset('Data/SODA.nc') as ds:
+       field = ds.taux.isel(time=0).load()
 
    topology = analyze_domain(
-       taux,
-       dims=("lat", "lon"),
-       periodic="lon",
+       field, dims=('lat', 'lon'), periodic='lon',
+       cell_area='spherical',
    )
-   internal_bcs = identify_internal_bcs(topology)
+   coast = identify_internal_bcs(topology)
+   topology.plot()
+   print(topology.component_stats)
+   print(coast.n_directed_faces)
 
-For a numeric array, ``analyze_domain`` uses ``data.notnull()`` as its default
-active-cell mask.  For a boolean array, the values themselves are the mask.
+Numeric inputs use non-missing cells as the active mask; boolean inputs use
+their values. ``dims`` is ordered ``(y, x)``. Periodic longitude joins the
+first and last columns when determining connectivity and coastal faces.
 
-The order of ``dims`` is ``(y, x)``.  Periodic dimensions may be supplied by
-name, as above, or as two booleans:
+Inspecting the result
+---------------------
+
+* ``topology.active``: boolean active-cell mask.
+* ``topology.component_labels``: four-neighbour connected-region labels;
+  zero denotes inactive cells.
+* ``topology.component_stats``: counts and fractions for each region;
+  supplying cell areas also adds areas and area fractions.
+* ``coast.east``, ``west``, ``north`` and ``south``: masks for active cells
+  whose neighbour in that direction is inactive.
+* ``coast.faces``: the four masks as a Dataset. Array perimeter faces are
+  excluded because they are external boundaries.
+
+Optional filtering returns a new topology and recomputes its boundaries:
 
 .. code-block:: python
 
-   topology = analyze_domain(
-       taux,
-       dims=("lat", "lon"),
-       periodic=(False, True),
-   )
-
-``periodic="lon"`` joins the first and last longitude columns both when
-labelling components and when constructing directional face masks.
-
-Return value
-------------
-
-``analyze_domain`` returns a :class:`xinvert.domain.DomainTopology` object.
-Its main fields are:
-
-``active``
-   Boolean ``DataArray``.  ``True`` marks active or wet cells.
-
-``component_labels``
-   Integer ``DataArray`` with the same grid.  Zero marks inactive cells and
-   labels ``1 ... n_components`` identify four-neighbour connected regions.
-
-``n_components``
-   Number of connected active regions.
-
-``component_sizes``
-   Dictionary mapping each one-based component label to its active-cell count.
-
-``component_stats``
-   Small ``Dataset`` indexed by ``component``. It always contains
-   ``cell_count`` and ``cell_fraction``. When cell areas are supplied it also
-   contains ``area``, ``area_km2``, and ``area_fraction``.
-
-``face_code``
-   Compact ``uint8`` topology array. Bits 0--3 denote open east, west, north,
-   and south faces, and bit 4 denotes an active cell. The boolean ``active``
-   and ``open_*`` arrays are decoded only when requested.
-
-``open_east``, ``open_west``, ``open_north``, ``open_south``
-   Cell-centred directional masks.  For example, ``open_east[y, x]`` is true
-   when the current cell and its eastern neighbour are both active.
-
-``open_faces``
-   Convenience ``Dataset`` containing all four directional open-face masks.
-
-The connected-component labels are intended for later component-wise
-compatibility checks and null-space constraints.  They do not identify holes
-or homology cycles inside a connected component.
-
-Component areas and optional filtering
---------------------------------------
-
-For a uniform latitude--longitude grid, spherical cell areas can be included
-without allocating a full two-dimensional area field:
-
-.. code-block:: python
-
-   topology = analyze_domain(
-       taux,
-       dims=("lat", "lon"),
-       periodic="lon",
-       cell_area="spherical",
-   )
-
-   print(topology.component_stats.sortby("area_km2", ascending=False))
-
-A scalar or broadcast-compatible ``DataArray`` can be supplied for other
-grids. All components are retained by default. Optional filtering is explicit
-and non-mutating:
-
-.. code-block:: python
-
-   by_cells = topology.filter_components(min_cells=1000)
+   largest = topology.filter_components(keep='largest')
    by_area = topology.filter_components(min_area_km2=5000)
-   largest = topology.filter_components(keep="largest")
-   selected = topology.filter_components(keep_labels=[1, 3, 7])
+   coast = identify_internal_bcs(largest)
 
-Rules can be combined. Filtering recomputes faces, dense labels, and summary
-statistics because removed water becomes inactive. The original ``topology``
-is unchanged. A categorical plot is useful before selecting labels:
-
-.. code-block:: python
-
-   labels = topology.component_labels.where(topology.active)
-   labels.plot(cmap="tab20")
-
-The same inspection is available directly on the topology object:
-
-.. code-block:: python
-
-   topology.plot()                 # active/ocean components
-   topology.plot(domain="land")   # inactive/land components
-
-   # Uses area_km2 when cell_area was supplied; otherwise uses cell_count.
-   topology.plot_histogram(domain="land")
-
-``plot`` forwards extra arguments to xarray, so an existing geographic axis
-and its ``transform`` can be supplied. ``plot_histogram`` forwards styling
-arguments to Matplotlib. The histogram uses logarithmic bins by default; use
-``log=False`` for ordinary linear bins.
-
-For access without plotting, ``topology.labels(domain="land")`` returns the
-on-demand complement labels and ``topology.statistics(domain="land")``
-returns their counts and areas. These complement arrays are deliberately not
-cached, preventing an extra global label field from remaining resident for
-LLC4320. Here ``land`` means the complement of the supplied active mask; it is
-physical land only when the mask itself represents ocean cells.
-
-Small isolated seas or lakes do not need to be removed: the solver can retain
-them when compatibility and gauge constraints are satisfied per component.
-
-Internal boundary result
-------------------------
-
-Internal blocked faces are derived from the topology's compact open-face
-codes. Directional boolean properties are decoded on demand. The compatibility
-``internal_bcs.face_code`` property materializes the older packed blocked-face
-representation only when requested, so normal analysis keeps one topology
-byte and one compact label per grid cell.
-
-Connected components and topology codes use compiled Numba loops. Numba's
-first call includes compilation; reuse topology for a static mask rather than
-rebuilding it at every timestep.
-
-``identify_internal_bcs`` constructs a homogeneous Neumann condition by default:
-
-.. code-block:: python
-
-   internal_bcs = identify_internal_bcs(
-       topology,
-       kind="neumann",
-       value=0.0,
-   )
-
-It returns an :class:`xinvert.internal_bcs.InternalBoundaryCondition` with:
-
-``east``, ``west``, ``north``, ``south``
-   Directional boolean masks.  A true eastern face means that the current
-   cell is active, its eastern neighbour is inactive, and the face is inside
-   the array domain.
-
-``faces``
-   Convenience ``Dataset`` containing all four boundary masks.
-
-``n_directed_faces``
-   Total number of active-cell sides adjacent to inactive cells.  A coastal
-   cell touching land on two sides contributes two directed faces.
-
-Non-periodic array edges are deliberately excluded.  They belong to
-xinvert's existing external-boundary mechanism, whereas these masks describe
-only active--inactive interfaces inside the array.
-
-Poisson integration
--------------------
-
-Select the internal boundary condition in ``iParams``:
-
-.. code-block:: python
-
-   from xinvert import invert_Poisson
-
-   solution, diagnostics = invert_Poisson(
-       forcing,
-       dims=["lat", "lon"],
-       iParams={
-           "architect": "gpu",  # also 'cpu' or 'cpu-mc'
-           "internal_bcs": "neumann",
-           "BCs": ["fixed", "periodic"],
-           "dtype": "float64",
-           "diag_interval": 50,
-       },
-   )
-
-Each two-dimensional slice derives its active mask from finite forcing
-values, excluding the configured numeric ``undef`` if supplied. Dimension
-order and periodicity come from ``dims`` and ``BCs``. Masks may change between
-time steps; topology is analysed independently at execution time. Dask-backed
-batch inputs remain lazy, and compatibility errors may appear at
-``compute()``. Inactive values do not enter the Neumann operator.
-
-This path supports Cartesian and nonpolar uniform lat-lon grids, with fixed
-or extend y boundaries and fixed, extend or periodic x boundaries. Other
-coordinate modes raise explicit errors. CPU-mc and GPU use red-black SOR and
-require an even x size when x is periodic; CPU does not have this restriction.
-On GPU, coefficients and the iterated field remain device-resident, and
-checkpoints download only four scalar metrics. The existing
-``icbc`` supplies the initial guess and fixed external boundary values.
-
-For example, with equal Cartesian spacings and an eastern blocked face,
-the usual equation is
-
-.. math::
-
-   u_E + u_W + u_N + u_S - 4u_P = h^2 F_P.
-
-A zero-flux internal face removes the whole eastern difference
-``u_E - u_P``, giving
-
-.. math::
-
-   u_W + u_N + u_S - 3u_P = h^2 F_P.
-
-Keeping the centre coefficient at -4 would impose fixed zero rather than
-zero flux. The same principle applies to weighted spherical conductances.
-External extend rows/columns are eliminated as copied ghost values, then
-filled in the returned result. Fixed corners take precedence over extend.
-
-For each component not connected to a fixed boundary, the discrete forcing
-must be compatible: its sum is zero on a uniform Cartesian grid, or its
-``cos(latitude)``-weighted sum is zero for the current spherical stencil.
-The check applies to solved unknowns, excluding prescribed fixed cells and
-eliminated extend rows. A fixed boundary on another disconnected component
-does not remove this requirement. Summation uses float64, allowing a relative
-imbalance of ``64 * eps(compute_dtype)`` times the absolute scaled-RHS sum.
-An incompatible forcing raises an error naming the component, imbalance and
-possible remedies; the solver never silently subtracts a mean.
-
-Compatible unanchored components update every solved cell, without fixing
-a special reference point. Checkpoint metrics remove each component's
-weighted mean; the final solution is shifted to that zero-mean gauge. This
-preserves every physical equation and requires no reference-point selection.
-The constant shift is applied once at the end, not on every sweep. For
-lat-lon the gauge weights are ``cos(latitude)``; fixed components are never
-shifted. Diagnostics report extrema in this output gauge. Isolated solved
-cells require zero forcing and return zero. The reported ``error`` remains
-the normalized SOR correction, not an independently evaluated equation
-residual. Rectangular-grid automatic omega is only a heuristic for an
-irregular mask; set ``optArg`` explicitly when assessing convergence.
-
-The default ``internal_bcs='fixed'`` uses finite ``icbc`` values for inactive
-neighbours, or zero when unavailable. It does not require topology analysis:
-
-.. code-block:: python
-
-   solution = invert_Poisson(
-       forcing, ["lat", "lon"],
-       iParams={"internal_bcs": "fixed", "BCs": ["fixed", "periodic"]},
-   )
-
-Omitting this setting is equivalent. Inactive iteration values retain finite
-``icbc`` boundary values; inactive output is restored to ``undef``.
-``icbc`` continues to prescribe valid initial/fixed external values. The
-independent topology/BC objects remain useful for inspection, but are not
-arguments to the public inversion function.
-
-Supported application families
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The same setting is available on CPU, CPU-mc and GPU for Poisson, PV2D,
-Eliassen with ``B=0``, geostrophic, Bretherton--Haidvogel, Fofonoff, and RefState.
-The latter two include their existing zero-order reaction terms. The native
-coordinate modes of each application still apply; Poisson's internal path
-remains Cartesian/nonpolar lat-lon. PV2D and diagonal Eliassen also support
-their existing z-lat coordinates.
-
-For a diagonal diffusion/reaction equation, the discrete update is
-
-.. math::
-
-   L_h u_P = \sum_Q g_{PQ}(u_Q-u_P) + q_P u_P = b_P,
-   \qquad
-   \delta u_P = \omega\,
-       \frac{L_h u_P-b_P}{\sum_Q g_{PQ}-q_P}.
-
-Here ``b`` and ``q`` include the same grid-spacing scaling as the existing
-application stencil. Closed internal faces remove their complete diffusion
-contribution, not the reaction term. Nonzero coercive reaction removes the
-constant nullspace: those components do not require zero-net RHS and are
-not shifted to zero mean. In general, compatibility uses the **assembled
-equation RHS**, not necessarily the original input data (for example Fofonoff
-constructs its RHS from model parameters).
-
-Allowed face conductances must be finite, nonzero and have one sign per
-component. A uniformly negative diffusion operator is supported without
-changing its equation. After this sign normalization, the reaction must be
-nonpositive, a sufficient coercivity guarantee. Positive reaction is not
-necessarily unsolvable, but requires spectral checks not implemented here.
-Degenerate zero faces and sign-changing diffusion raise explicit errors
-rather than incorrectly merging independent unknowns.
-
-GillMatsunoFlux and StommelFlux can use this path only in the reduced case
-where both non-diagonal coefficients vanish exactly. Their ordinary
-non-diagonal tensors, nonzero Eliassen cross terms, first-derivative
-general-form equations, 1-D/3-D operators, fourth-order equations and
-``animate_iteration`` are not integrated yet; requests fail explicitly.
-RefState has a zero RHS; input PV enters the left-hand-side coefficients,
-not the forcing. The same diagonal-operator restrictions apply.
-
-Zero operator-normal flux for these scalar equations should not be confused
-with zero normal fluid velocity. For a streamfunction, impermeability usually
-corresponds to a constant boundary value; use the appropriate physical model
-boundary condition rather than choosing internal Neumann solely from a mask.
+Use ``topology.plot(domain='land')`` or
+``topology.plot_histogram(domain='land')`` to inspect the inactive regions.
+Here land means the complement of the supplied mask. Filtering this analysis
+object does not change the forcing passed to an inversion; apply the
+selected active mask to that forcing explicitly when desired.
 
 Explicit masks
 --------------
@@ -366,50 +90,6 @@ edges into external boundaries and could change its connectivity.
    :width: 100%
    :alt: Active domain and internal Neumann faces around the South China Sea
 
-The figure uses an Ultraplot Mercator projection and high-resolution
-coastlines (``coast=True, reso='hi'``).  No land fill, national borders,
-rivers, or lakes are drawn.
-
 The complete plotting script is available at
 :download:`examples/domain_internal_bcs_scs.py
 <../../examples/domain_internal_bcs_scs.py>`.
-
-Current scope
--------------
-
-The first implementation intentionally has a narrow scope:
-
-* static two-dimensional arrays;
-* four-neighbour connectivity;
-* optional periodic wrapping in either dimension;
-* homogeneous Neumann and fixed internal boundaries;
-* CPU topology preprocessing;
-* automatic supported diagonal 2-D operator integration on all three backends.
-
-Mixed derivatives and fourth-order equations require
-additional boundary derivations and validation before integration.
-
-LLC4320 performance example
----------------------------
-
-The compact topology was measured on one hourly SSH field from the
-interpolated LLC4320 archive. The grid contains
-``8641 x 17280 = 149,316,480`` horizontal cells. On a 112-logical-CPU server
-using 32 Numba threads, the result was:
-
-.. code-block:: text
-
-   active cells                    99,459,641
-   connected components                   251
-   label dtype                          uint8
-   topology face_code memory           0.139 GiB
-   component-label memory              0.139 GiB
-   persistent topology memory          0.278 GiB
-   complete analyze_domain time        5.676 s
-   internal-face count time            0.132 s
-   process peak RSS                    2.422 GiB
-
-All 251 components were retained. As an optional example, filtering components
-below 5000 square kilometres retained 15 components, removed 41,140 active
-cells, and rebuilt the topology in 3.532 seconds. These are measurements on
-that server and dataset, not general performance guarantees.

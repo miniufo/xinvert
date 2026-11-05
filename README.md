@@ -17,32 +17,27 @@ Researches on meteorology and oceanography usually encounter [inversion problems
 
 > $$\nabla^2\psi=\zeta$$
 
-Nowadays [`xarray`](http://xarray.pydata.org/en/stable/) becomes a popular data structure commonly used in [Big Data Geoscience](https://pangeo.io/).  Since the whole 4D data, as well as the coordinate information, are all combined into [`xarray`](http://xarray.pydata.org/en/stable/), solving the inversion problem become quite straightforward and the only input would be just one [`xarray.DataArray`](http://xarray.pydata.org/en/stable/) of vorticity.  Inversion on the spherical earth, like some meteorological problems, could utilize the spherical harmonics like [windspharm](https://github.com/ajdawson/windspharm), which would be more efficient using FFT than SOR used here.  However, in the case of ocean, SOR method is definitely a better choice in the presence of irregular land/sea mask.
+Nowadays [`xarray`](http://xarray.pydata.org/en/stable/) becomes a popular data structure commonly used in [Big Data Geoscience](https://pangeo.io/).  Since the whole 4D data, as well as the coordinate information, are all combined into [`xarray`](http://xarray.pydata.org/en/stable/), solving the inversion problem become quite straightforward and the only input would be just one [`xarray.DataArray`](http://xarray.pydata.org/en/stable/) of vorticity.  Inversion on the spherical earth, like some meteorological problems, could utilize the spherical harmonics like [windspharm](https://github.com/ajdawson/windspharm), which would be more efficient using FFT than SOR used here.  However, in the case of ocean, xinvert supports irregular land/sea masks directly with SOR.
 
-More importantly, this could be generalized into a numerical solver for elliptical equation using [SOR](https://mathworld.wolfram.com/SuccessiveOverrelaxationMethod.html) method, with spatially-varying coefficients.  Various popular inversion problems in geofluid dynamics will be illustrated as examples.
+More importantly, this could be generalized into a numerical solver for elliptic equations using [SOR](https://mathworld.wolfram.com/SuccessiveOverrelaxationMethod.html) method, with spatially-varying coefficients.  Various popular inversion problems in geofluid dynamics will be illustrated as examples.
 
-One problem with SOR is that the speed of iteration using **explicit loops in Python** will be **e-x-t-r-e-m-e-l-y ... s-l-o-w**!  A very suitable solution here is to use [`numba`](https://numba.pydata.org/).  In addition, through using [`xarray`](http://xarray.pydata.org/en/stable/)'s [`dask`](https://docs.dask.org/en/latest/) backend for parallel computing, the speed of the inversion could be further improved using multiple CPU cores.  Now, we could also make use of CUDA GPU for further acceleration, with a Red-Black SOR kernel achieving up to **~17× speedup** over the CPU for large grids (measured on an RTX 3090; see the [benchmark docs](https://xinvert.readthedocs.io/en/latest/Benchmark.html)).  See this [notebook](./docs/source/notebooks/Parallel_inversions.ipynb) for more details of CPU/GPU parallel computing, and this [docs](https://xinvert.readthedocs.io/en/latest/Benchmark.html) for benchmark of the inversion speed.
-
-> **Experimental GPU backend:** CUDA support is available for testing and
-> evaluation, but is not yet part of xinvert's stable API. Kernel behavior,
-> configuration options, and performance characteristics may still change.
-> Use the CPU backend for production workflows that require the stable path.
+One problem with SOR is that the speed of iteration using **explicit loops in Python** will be **e-x-t-r-e-m-e-l-y ... s-l-o-w**!  A very suitable solution here is to use [`numba`](https://numba.pydata.org/).  In addition, through using [`xarray`](http://xarray.pydata.org/en/stable/)'s [`dask`](https://docs.dask.org/en/latest/) backend for parallel computing, the speed of the inversion could be further improved using multiple CPU cores.  Now, we could also make use of CUDA GPU for further acceleration, with a Red-Black SOR kernel achieving up to **~26× speedup** over the CPU for 1,000 fixed sweeps in the archived RTX 3090 benchmark (see the [benchmark docs](https://xinvert.readthedocs.io/en/latest/Benchmark.html)).  See this [notebook](./docs/source/notebooks/Parallel_inversions.ipynb) for more details of CPU/GPU parallel computing, and this [docs](https://xinvert.readthedocs.io/en/latest/Benchmark.html) for benchmark of the inversion speed.
 
 Classical problems include Gill-Matsuno model, Stommel-Munk model, QG omega model, PV inversion model, Swayer-Eliassen balance model...  A complete list of the classical inversion problems can be found at [this notebook](./docs/source/notebooks/00_Introduction.ipynb).
 
 Why `xinvert`?
 
 - **Thinking and coding in equations:** User APIs are very close to the equations: unknowns are on the LHS of `=`, whereas the known forcings are on its RHS;
-- **Genearlize all the steady-state problems:** All the known steady-state problems in geophysical fluid dynamics can be easily adapted to fit the solvers;
+- **Generalize steady-state problems:** Many steady-state problems in geophysical fluid dynamics can be formulated using the supported elliptic equations;
 - **Very short parameter list:** Passing a single `xarray` forcing is enough for the inversion.  Coordinates information is already encapsulated.
 - **Flexible model parameters:** Model parameters can be either a constant, or varying with a specific dimension (like Coriolis $f$), or fully varying with space and time, due to the use of `xarray`'s broadcasting capability;
-- **Parallel inverting:** The use of `xarray`, and thus `dask` allow multi-core CPU parallel inverting, as well as GPU inverting.  One only needs to change the parameter `architect='CPU'/'GPU'/'CPU-mc'`, and the internal implementation is almost transparent to the user;
+- **Parallel inverting:** The use of `xarray`, and thus `dask` allow multi-core CPU parallel inverting, as well as GPU inverting.  One only needs to change the setting `iParams['architect']='cpu'/'gpu'/'cpu-mc'`, and the internal implementation is almost transparent to the user;
 - **Pure Python code for C-code speed:** The use of `numba` allow pure python code in this package but native speed;
 
 ---
 ## 2. How to install
 **Requirements**
-`xinvert` supports Python 3.9 and newer and requires `xarray`, `dask`, `numpy`, and `numba`. GPU acceleration additionally requires an NVIDIA GPU with a compatible driver/runtime and the maintained `numba-cuda` package.
+`xinvert` supports Python 3.9 and newer and requires `xarray`, `dask`, `numpy`, `numba`, SciPy, netCDF4, Matplotlib, imageio-ffmpeg, and cloudpickle. The GPU extra installs Numba CUDA, CuPy and CUDA 12 runtime dependencies for both SOR and Li2006; an NVIDIA GPU with a compatible driver is required.
 
 
 **Install via pip**
@@ -52,8 +47,7 @@ pip install xinvert
 
 **Install GPU support**
 ```bash
-pip install "xinvert[gpu]"                 # existing CUDA runtime
-pip install xinvert "numba-cuda[cu12]"    # install CUDA 12 runtime libraries
+pip install "xinvert[gpu]"
 ```
 
 **Install via conda**
@@ -76,14 +70,26 @@ The classic Poisson equation for streamfunction can be inverted by:
 from xinvert import invert_Poisson
 
 iParams = {
-    'BCs'      : ['fixed', 'periodic'], # fixed north/south and periodic east/west BCs
+    'BCs'      : ['fixed', 'periodic'], # fixed north/south,  periodic east/west BCs
     'mxLoop'   : 1000,                  # maximum loop count
-    'tolerance': 1e-6,                  # for dtype float32
-    'architect': 'GPU',                 # use GPU
+    'tolerance': 1e-6,                  # define convergence if error is smaller than this
+    'architect': 'GPU',                 # use GPU backend
 }
 
-sf = invert_Poisson(vorticiy, dims=['lat','lon'], iParams=iParams)
+psi = invert_Poisson(vor, dims=['lat','lon'], iParams=iParams)
 ```
+
+For vector fields, `xinvert.helmholtz` provides SOR and Li2006
+methods through one interface:
+
+```python
+from xinvert.helmholtz import decompose
+
+components = decompose(u, v, dims=['lat', 'lon'], method='li2006')
+```
+
+See [Helmholtz decomposition](https://xinvert.readthedocs.io/en/latest/Helmholtz.html)
+for the method comparison and parameters.
 
 This is a list of the problems that can be solved by `xinvert`:
 
@@ -98,20 +104,29 @@ This is a list of the problems that can be solved by `xinvert`:
 
 
 
-## 4 Animate the convergence of iteration
-One can see the whole convergence process of SOR iteration as:
-```python
-from xinvert import animate_iteration
+## 4 Record iterations and create animations
+The animation at the top was made using `record_iteration`. Pass one spatial
+slice; singleton dimensions are removed and spatial dimensions are inferred.
+Either an inversion function or its name (such as `'Poisson'`) is accepted:
 
-# output has 1 more dimension (iter) than input, which could be animated over.
-# Here 40 frames and loop 1 per frame (final state is after 40 iterations) is used.
-psi = animate_iteration(invert_Poisson, vor, iParams=iParams,
-                        loop_per_frame=1, max_frames=40)
+```python
+from xinvert import record_iteration, invert_Poisson
+
+frames = record_iteration(
+    invert_Poisson, vor,  # vor is one 2-D spatial slice
+    iParams={'BCs': ['fixed', 'periodic'], 'architect': 'cpu'},
+    iter_per_frame=1, max_frames=40,
+)
+# frames is a DataArray with an additional iter dimension.
 ```
 
-See the animation at the top.
+For file output, add `output='iteration.nc'` to write frames without keeping
+all of them in memory. Use `create_animation` to render the NetCDF frames as GIF or MP4. See [Record iteration and create animation](https://xinvert.readthedocs.io/en/latest/Animation.html)
+for plotting examples and optional convergence diagnostics.
 
-Xinvert uses a normalized, diagonally preconditioned residual for stopping.
+
+## 5 Diagnose the error
+`xinvert` uses a normalized, diagonally preconditioned residual for stopping.
 Its history can optionally be returned for analysis:
 
 ```python
@@ -119,10 +134,9 @@ iParams = {
     'tolerance': 1e-8,
     'diag_interval': 20,  # diagnose every 20 SOR iterations
 }
-psi, diagnostics = invert_Poisson(
-    vor, dims=['lat', 'lon'], iParams=iParams)
+psi, diags = invert_Poisson(vor, dims=['lat', 'lon'], iParams=iParams)
 
-diagnostics.error.plot(x='iteration', yscale='log')
+diags.error.plot(x='iteration', yscale='log')
 ```
 
 Through plotting the error, one can observe the convergence rate at regular
@@ -132,7 +146,7 @@ for more details.
 
 
 
-## 5 Cite
+## 6 Cite
 
 If you use the package in research, teaching, or other activities, we would be grateful
 if you mention `xinvert` and cite our paper in JOSS:

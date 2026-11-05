@@ -1,3 +1,16 @@
 .wy-nav-content {
     max-width: 1000px !important;
 }
+
+/* Shared accents: readable within the Read the Docs layout. */
+.rst-content h1 { color: #173e57; }
+.rst-content h2 { color: #215f7e; border-bottom: 2px solid #e2edf3;
+                  padding-bottom: .35em; margin-top: 1.6em; }
+.rst-content h3 { color: #246b70; }
+.rst-content ul > li::marker { color: #25838c; }
+.rst-content .highlight { border-radius: 7px; border-left: 3px solid #6b9cb8; }
+.rst-content .highlight pre { background: #f7fafc; }
+.rst-content table.docutils thead th { background: #edf5f9; color: #173e57; }
+.rst-content table.docutils tbody tr:nth-child(even) td { background: #f8fafc; }
+.rst-content .admonition { border-radius: 7px; overflow: hidden; }
+.rst-content img { height: auto; }

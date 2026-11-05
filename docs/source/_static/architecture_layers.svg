@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 490" role="img" aria-labelledby="title desc">
+<title id="title">Three layers of an xinvert inversion</title>
+<desc id="desc">Applications build equation coefficients. The xarray bridge validates inputs and schedules independent slices. Numerical kernels solve each slice on CPU, CPU-mc or GPU.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8" fill="#94a3b8"/></marker></defs>
+<g font-family="DejaVu Sans, Arial, sans-serif">
+<rect x="1" y="1" width="838" height="488" rx="20" fill="#f8fafc" stroke="#e2e8f0"/>
+<rect x="28" y="25" width="784" height="104" rx="14" fill="#eff6ff" stroke="#bfdbfe"/>
+<circle cx="64" cy="61" r="18" fill="#2563eb"/><text x="64" y="67" text-anchor="middle" fill="white" font-size="17" font-weight="700">1</text>
+<text x="98" y="60" fill="#1e3a8a" font-size="23" font-weight="700">Applications</text>
+<text x="98" y="87" fill="#1e40af" font-size="17">apps.py</text>
+<text x="98" y="111" fill="#475569" font-size="16">Physical equations · coefficients · masks · grid parameters</text>
+<path d="M420 135 V155" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="28" y="171" width="784" height="104" rx="14" fill="#f0fdfa" stroke="#99f6e4"/>
+<circle cx="64" cy="207" r="18" fill="#0f766e"/><text x="64" y="213" text-anchor="middle" fill="white" font-size="17" font-weight="700">2</text>
+<text x="98" y="206" fill="#134e4a" font-size="23" font-weight="700">xarray bridge</text>
+<text x="98" y="233" fill="#0f766e" font-size="17">core.py</text>
+<text x="98" y="257" fill="#475569" font-size="16">Validation · batch scheduling · convergence diagnostics</text>
+<path d="M420 281 V301" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="28" y="317" width="784" height="147" rx="14" fill="#f5f3ff" stroke="#ddd6fe"/>
+<circle cx="64" cy="353" r="18" fill="#7c3aed"/><text x="64" y="359" text-anchor="middle" fill="white" font-size="17" font-weight="700">3</text>
+<text x="98" y="353" fill="#4c1d95" font-size="23" font-weight="700">Numerical kernels</text>
+<g text-anchor="middle">
+<rect x="98" y="374" width="212" height="66" rx="10" fill="white" stroke="#ddd6fe"/><text x="204" y="399" font-size="17" fill="#4c1d95" font-weight="700">CPU</text><text x="204" y="422" font-size="15" fill="#475569">cpus.py · serial SOR</text>
+<rect x="326" y="374" width="212" height="66" rx="10" fill="white" stroke="#ddd6fe"/><text x="432" y="399" font-size="17" fill="#4c1d95" font-weight="700">CPU-mc</text><text x="432" y="422" font-size="15" fill="#475569">cpu_mc.py · multi-color</text>
+<rect x="554" y="374" width="230" height="66" rx="10" fill="white" stroke="#ddd6fe"/><text x="669" y="399" font-size="17" fill="#4c1d95" font-weight="700">GPU</text><text x="669" y="422" font-size="15" fill="#475569">gpus.py · CUDA</text>
+</g></g></svg>

@@ -1,197 +1,145 @@
 Boundary conditions
 ===================
 
-xinvert has two related, but deliberately different, boundary-condition
-interfaces:
-
-* inversion routines use one scalar string per inversion dimension;
-* :class:`xinvert.finitediffs.FiniteDiff` may specify the two endpoints of a
-  dimension separately.
-
-Inversion interface
--------------------
-
-Pass ``iParams={'BCs': [...]}`` in the same order as ``dims``.  For example::
-
-    psi = invert_Poisson(
-        forcing,
-        dims=['lat', 'lon'],
-        iParams={'BCs': ['extend', 'periodic']},
-    )
-
-Each entry must be one of ``'fixed'``, ``'extend'``, or ``'periodic'``.
-Capitalization and surrounding whitespace are normalized.  A two-dimensional
-inversion therefore requires exactly two strings, and a three-dimensional
-inversion requires exactly three strings.
-
-``fixed``
-    Keep the prescribed boundary value from ``icbc`` (or the initialized
-    value when ``icbc`` is omitted).
-
-``extend``
-    Copy the adjacent interior value onto both boundaries of that dimension.
-    The x and y dimensions are updated independently.  A corner is extended
-    diagonally only when both adjoining dimensions use ``extend``; if either
-    dimension is ``fixed``, that fixed corner is preserved.
-
-``periodic``
-    Wrap the stencil across the two ends of the dimension.  Periodic inversion
-    is currently implemented only for x, the last inversion dimension.
-
-Current support
----------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 15 20 35 30
-
-   * - Dimension
-     - Implemented
-     - Accepted but not implemented
-     - Behaviour when not implemented
-   * - x (last)
-     - ``fixed``, ``extend``, ``periodic``
-     - none
-     - --
-   * - y
-     - ``fixed``, ``extend``
-     - ``periodic``
-     - emits ``RuntimeWarning``; the requested periodic update is not applied
-   * - z (3-D)
-     - ``fixed``
-     - ``extend``, ``periodic``
-     - emits ``RuntimeWarning``; the requested z update is not applied
-
-The not-yet-implemented values remain accepted so that the public interface
-does not need to change when their numerical kernels are added.  Do not rely on
-their numerical result until the warning is removed in a future release.
+The steady-state problems targeted by **xinvert** are all boundary-value problems.
+So the types of the boundary condition (BC) affect the solution in a significant way.
+One needs to choose a proper BC for the solution.
 
 External versus internal boundaries
 ----------------------------------------
 
-``iParams['BCs']`` describes the array perimeter, in the same axis order as
-``dims``. ``iParams['internal_bcs']`` describes active--inactive interfaces
+External boundary conditions are controlled by ``iParams['BCs']``, which describes
+the array perimeter, in the same axis order as ``dims``.  Internal BCs are controlled
+by ``iParams['internal_bcs']``, which describes active--inactive interfaces
 inside that perimeter. A regional ocean can have fixed values at its open
 outer edges and zero normal gradient along its coast.
 
 .. image:: _static/bcs_vs_internal_bcs.png
    :width: 90%
-   :alt: LLC wet-dry mask with purple array perimeter and red coastal faces
+   :alt: wet-dry mask with purple array perimeter and red coastal faces
 
-The left panel shows the validity mask from one interpolated LLC4320 SSH
-slice. The right panel marks the array perimeter in dashed purple and the
-wet--dry interfaces in red. The purple frame identifies outer boundary
-locations; it does not turn inactive edge cells into solved cells. A cropped
-regional mask is used for illustration, not a native LLC mesh.
+The left panel shows the validity mask from a regional domain. The right
+panel marks the array perimeter (external BCs) in dashed purple and the
+wet--dry interfaces (internal BCs) in red.
 
-.. code-block:: python
 
-   solution = invert_Poisson(
-       forcing, dims=['lat', 'lon'],
-       iParams={
-           'architect': 'gpu',  # also 'cpu' and 'cpu-mc'
-           'BCs': ['fixed', 'fixed'],
-           'internal_bcs': 'neumann',
-       },
-   )
-
-``'fixed'`` is the default and uses finite ``icbc`` values at inactive
-neighbours, or zero when no boundary value is supplied.
-``'neumann'`` removes the blocked face flux and its centre-coefficient
-contribution. Topology is inferred automatically per spatial slice, including
-changing time masks. A component without fixed-boundary connections requires
-compatible zero-net forcing; see :doc:`DomainTopology` for the discrete
-equation, gauge, and validation details. Internal Neumann supports Poisson,
-PV2D, RefState, diagonal Eliassen, geostrophic, Bretherton--Haidvogel and Fofonoff on all
-three backends. Components whose reaction term removes the constant
-nullspace do not require zero-net forcing or a gauge shift. Nonzero mixed
-coefficients, general first-derivative operators, 1-D/3-D,
-fourth-order operators and animation remain unsupported and fail explicitly.
-The generic low-level templates do not interpret this setting.
-
-Initial guesses and missing values
-----------------------------------
-
-For a complete closed-domain face-vector decomposition built on this solver,
-see :doc:`Projection`. It supports Cartesian and nonpolar regular lat-lon
-grids, including periodic x, with consistent face-gradient/divergence operators.
-
-When supplied, ``icbc`` is used as the initial guess on every valid grid point,
-not only on fixed boundaries.  It may omit non-inversion dimensions: for
-example, a ``(lat, lon)`` initial guess is broadcast over the ``time`` dimension
-of a ``(time, lat, lon)`` forcing array.  All shared coordinates must match the
-forcing exactly.
-
-Grid points where the forcing is undefined are not updated. With default
-internal fixed mode, neighbouring equations read their finite ``icbc`` values.
-Absent, non-finite or undefined boundary values fall back to zero. The final
-output at inactive cells is restored to the user-selected ``undef`` value.
-With internal Neumann, those neighbour terms are
-removed instead, so inactive values cannot affect the active solution.
-
-Asymmetric endpoints belong to FiniteDiff
------------------------------------------
-
-The SOR inversion interface does **not** accept an endpoint dictionary or a
-two-element endpoint pair inside ``iParams['BCs']``.  Such inputs raise a
-``ValueError`` instead of being interpreted ambiguously.
-
-For differentiation, :class:`xinvert.finitediffs.FiniteDiff` supports separate
-lower-index and upper-index endpoints::
-
-    fd = FiniteDiff(
-        {'Y': 'lat', 'X': 'lon'},
-        BCs={'Y': 'fixed', 'X': ('extend', 'fixed')},
-        coords='lat-lon',
-    )
-
-For ``X``, the pair is ordered lower-index then upper-index, conventionally
-west then east.  Thus the example extends the west boundary and fixes the east
-boundary.  The same lower/upper ordering applies to other dimensions.
-
-``cal_flow`` follows the simple interface
------------------------------------------
-
-:func:`xinvert.apps.cal_flow` also accepts exactly one boundary-condition
-string per dimension and applies it to both endpoints.  It supports the four
-conditions implemented by ``FiniteDiff``: ``'fixed'``, ``'extend'``,
-``'reflect'``, and ``'periodic'``.  Unlike the SOR inversion routines, a
-periodic y boundary is fully implemented here and does not emit the pending
-kernel warning.
-
-To use different endpoint conditions when calculating a derivative, construct
-``FiniteDiff`` directly as in the example above.  Passing an endpoint pair or
-dictionary to ``cal_flow`` raises ``ValueError`` rather than silently changing
-its meaning.
-
-Relationship to xarray
+External BCs interface
 ----------------------
 
-``cal_flow`` delegates its spatial derivatives to ``FiniteDiff``.  For a
-centered first derivative, ``FiniteDiff`` first creates one ghost point at
-each endpoint with `xarray.DataArray.pad
-<https://docs.xarray.dev/en/stable/generated/xarray.DataArray.pad.html>`_, then
-evaluates the padded field with `xarray.DataArray.differentiate
-<https://docs.xarray.dev/en/stable/generated/xarray.DataArray.differentiate.html>`_.
-The xinvert boundary names map to xarray padding modes as follows:
+Pass ``iParams={'BCs': [...]}`` in the same order as ``dims``.  For example::
+
+    streamfunction = invert_Poisson(vorticity, dims=['lat', 'lon'],
+        iParams={'BCs': ['extend', 'periodic']},
+    )
+
+Each entry must be one of ``'fixed'``, ``'extend'``, or ``'periodic'``.
+A two-dimensional inversion therefore requires exactly two strings, and a
+three-dimensional case requires three.  The above case indicates that the BC for
+``lat`` dimension is 'extend', while the one for ``lon`` is 'periodic'.
+
+``fixed``
+    Keep the prescribed boundary value from an initial-condition and boundary-condition
+    field specified through ``icbc`` (or the initialized value of zero when
+    ``icbc`` is omitted).
+
+``extend``
+    Copying the adjacent interior value to the boundary, which is equivalent to imposing
+    a homogeneous Neumann BC (zero normal derivative of the solved scalar). The x and y
+    dimensions are updated independently. A corner is extended diagonally only when both
+    adjoining dimensions use ``extend``.
+
+``periodic``
+    Wrap the stencil across the two ends of the dimension.
+
+.. note::
+    When ``fixed`` BC is used, ``icbc`` specifies the initial guess of the
+    solution as well as the boundary values on every valid grid point, not only on
+    fixed boundaries. For fixed internal BCs, its valid/invalid mask must
+    match forcing; land may be represented by NaN or the sentinel configured through ``iParams['undef']``.
+    It may omit non-inversion dimensions: for example, a
+    ``(lat, lon)`` initial guess is broadcast over the ``time`` dimension of a
+    ``(time, lat, lon)`` forcing array.  Each slice still uses its own forcing mask.
 
 .. list-table::
    :header-rows: 1
+   :widths: 20 45 35
 
-   * - xinvert BC
-     - xarray ``pad`` mode
-   * - ``fixed``
-     - ``constant`` with the corresponding ``fill`` value
-   * - ``extend``
-     - ``edge``
-   * - ``reflect``
-     - ``reflect``
-   * - ``periodic``
-     - ``wrap``
+   * - Dimension
+     - Supported BCs
+     - Other accepted values
+   * - x
+     - ``fixed``, ``extend``, ``periodic``
+     - None.
+   * - y
+     - ``fixed``, ``extend``
+     - ``periodic`` warns and is not applied.
+   * - z
+     - ``fixed``
+     - ``extend`` and ``periodic`` warn and are not applied.
 
-These are xinvert boundary-condition names, not options accepted directly by
-``DataArray.differentiate``.  The xarray method exposes ``edge_order`` rather
-than physical boundary conditions and is limited to a one-dimensional
-coordinate in Cartesian geometry.  Refer to the linked xarray API pages for
-the underlying padding and differentiation behavior, while using the xinvert
-names in ``FiniteDiff`` and ``cal_flow``.
+Use only the supported values for each dimension.
+
+
+Internal BCs interface
+----------------------
+
+Choose ``iParams['internal_bcs']`` for interfaces between active (wet) cells
+and masked (dry) cells:
+
+* ``'fixed'`` (default): **keep the wet points next to land at their
+  ``icbc`` values** (zero when omitted), just as fixed outer-boundary points
+  retain their values. Other wet points are iterated.
+* ``'extend'`` (also accepted as ``'neumann'``): set the normal derivative of the
+  solved scalar to zero at each internal face (:math:`\partial q / \partial n = 0`).
+  It is usually the BC for velocity potential inverted from divergence.  **Specifying
+  a nonzero derivative is currently unsupported**. Coastal wet points participate in
+  iteration; masked (land) points do not contribute to their equations.
+
+Non-finite forcing values or values equal to ``iParams['undef']`` identify land
+**automatically**. For fixed internal BCs, ``forcing`` and ``icbc`` must share
+that mask, including after broadcasting over time. Coefficient masks can
+be different because derivatives may need extra neighbouring points; they
+are not used to redefine the land mask. To inspect the internal interfaces,
+see :doc:`DomainTopology` for personal interest.
+
+**Support:** internal extend/Neumann is available for supported diagonal 2D
+2nd-order equations on CPU, CPU-mc and GPU. Mixed derivatives and
+4th-order equations are excluded. Periodic x needs an even cell count
+on CPU-mc and GPU.
+
+A 7-by-7 example
+~~~~~~~~~~~~~~~~
+
+Both panels use ``BCs=['fixed', 'fixed']``. All variables are at cell centers
+(Arakawa A grid). The land mask and ``icbc`` mask are identical in both panels.
+
+.. figure:: _static/internal_bc_wet_fixed_7x7.svg
+   :width: 100%
+   :alt: Fixed internal BCs hold coastal wet cells at their initial values; Neumann BCs iterate these cells. Both retain fixed outer wet cells and masked land.
+
+   **F**: fixed outer wet point (1) or external BC points.
+   **B**: fixed coastal wet point (7) or internal BC points.
+   **q**: wet points that will be iterated.
+   **x**: masked land points.
+   Red segments mark the land/ocean interfaces.
+
+The left panel has **21 outer BC points, 8 internal fixed BC points,
+13 iterated wet points and 7 dry points**. In the right panel, all 21 interior
+wet points are iterated. The wet point east of the island is **B** under
+fixed BCs, but **q** under Neumann BCs. It starts at 7 in both cases.
+
+Here no coastal mask needs to be supplied: ``icbc`` initializes every wet
+interior point to 7, and xinvert identifies which points to hold fixed.
+The fixed band follows the equation stencil: nearest wet neighbours for
+Poisson, also diagonal neighbours for mixed derivatives, and a wider band
+for 4th-order equations. Outer-boundary rules take precedence at the
+array perimeter.
+
+.. note::
+
+   With ``internal_bcs='extend'``, a Poisson basin with no fixed boundary
+   requires forcing that sums to zero
+   (cosine-latitude weighted on a lat-lon grid). Otherwise the solver raises
+   an error. Its solution is defined up to a constant; xinvert chooses zero
+   mean separately in each such basin. This component-wise check and gauge
+   do not apply to the ordinary ``extend`` boundary path.

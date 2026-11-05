@@ -10,8 +10,9 @@ Requirements
 ^^^^^^^^^^^^
 
 xinvert supports Python 3.9 and newer.  Its core dependencies are xarray_,
-dask_, numpy_, and numba_.  GPU acceleration is optional and additionally
-requires an NVIDIA GPU, a compatible driver/runtime, and ``numba-cuda``.
+dask_, numpy_, numba_, SciPy, netCDF4, Matplotlib, imageio-ffmpeg and cloudpickle.
+GPU acceleration is optional; ``xinvert[gpu]`` installs its Python and CUDA
+runtime dependencies.
 
 Installation from conda forge
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -33,29 +34,12 @@ This will install the latest release from
 GPU support
 ^^^^^^^^^^^
 
-.. warning::
-
-   The GPU backend is experimental and is currently intended for testing and
-   evaluation.  Its numerical kernels, configuration options, and performance
-   characteristics may change before the backend is declared stable.  Use the
-   CPU backend for production workflows that require the stable path.
-
-For a machine with an existing CUDA runtime, install the GPU extra::
+Install the complete GPU dependencies for both SOR and Li2006 with one command::
 
     pip install "xinvert[gpu]"
 
-If the CUDA runtime should be installed into the Python environment, NVIDIA's
-``numba-cuda`` package provides versioned extras, for example::
-
-    pip install xinvert "numba-cuda[cu12]"
-
-or with conda::
-
-    conda install -c conda-forge xinvert numba-cuda "cuda-version=12"
-
-CUDA 13 users can replace ``cu12`` / ``cuda-version=12`` with the
-corresponding CUDA 13 option.  An up-to-date NVIDIA driver is required in all
-cases.  CPU-only installations do not need ``numba-cuda``.
+This includes Numba CUDA, CuPy and CUDA 12 runtime dependencies. An NVIDIA
+GPU with a compatible driver is required. The GPU backend is experimental.
 
 Installation from github
 ^^^^^^^^^^^^^^^^^^^^^^^^
@@ -77,7 +61,7 @@ How to run the notebooks
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 If you want to run the example notebooks in this documentation, you will need a
-few extra dependencies that you can install via:::
+few extra dependencies that you can install via::
 
     conda env create -f environment.yml
     conda activate xinvert
