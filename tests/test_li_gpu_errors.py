@@ -16,10 +16,10 @@ def test_optional_dependency_is_explicit(monkeypatch):
         require_cupy()
 
 
-def test_gpu_rejects_unsupported_solver_and_open_boundaries():
+def test_gpu_rejects_unsupported_solver_and_legacy_boundary_names():
     u, v, _ = fields()
-    with pytest.raises(NotImplementedError, match="explicit closed"):
-        streamfunction_potential(u, v, iParams={"architect": "gpu"})
+    with pytest.raises(ValueError, match="expected one of"):
+        streamfunction_potential(u, v, iParams={"architect": "gpu", "BCs": ["open", "open"]})
     with pytest.raises(NotImplementedError, match="solver='lsmr'"):
         streamfunction_potential(
             u,
@@ -27,6 +27,6 @@ def test_gpu_rejects_unsupported_solver_and_open_boundaries():
             iParams={
                 "architect": "gpu",
                 "solver": "lsqr",
-                "BCs": ["closed", "periodic"],
+                "BCs": ["fixed", "periodic"],
             },
         )

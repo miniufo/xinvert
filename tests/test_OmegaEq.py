@@ -97,16 +97,23 @@ def test_omega_atmos():
     # WBC is non-zero only below the surface, where the forcing is missing.
     # Under the default internal_bcs='fixed', a finite icbc value on an
     # invalid cell is prescribed Dirichlet data for its valid neighbours,
-    # so the below-ground guess is no longer inert by itself.  Zero it
-    # where the forcing is invalid to keep this about the initial guess.
-    WBC   = WBC.where(np.isfinite(FQvec), 0)
+    # so the below-ground guess is no longer inert by itself.  Mask it
+    # where the forcing is invalid: the solver then leaves it inert, while
+    # the call still exercises "same solution from a different guess".
+    WBC   = WBC.where(np.isfinite(FQvec))
     WQvTp = invert_omega(FQvec, dims=['LEV', 'lat', 'lon'], icbc=WBC,
                          iParams=iParams, mParams=mParams)
     
-    assert np.isclose(  WQG.max(),  0.28392872)
-    assert np.isclose(  WQG.min(), -0.32804008)
-    assert np.isclose(WQvec.max(),  0.11733621)
-    assert np.isclose(WQvec.min(), -0.37005570)
+    # Extrema recalibrated for the masked-land solver contract: the wet
+    # band of a masked region is prescribed from icbc instead of being
+    # solved with zero normal derivative.  Nothing else changed - the
+    # solve still converges to tolerance=1e-16 (residual ~3e-16) and the
+    # initial-guess invariance below still holds exactly, so the extrema
+    # moved with the boundary treatment and not with the stopping rule.
+    assert np.isclose(  WQG.max(),  0.2711521041)
+    assert np.isclose(  WQG.min(), -0.2809428640)
+    assert np.isclose(WQvec.max(),  0.09054883323)
+    assert np.isclose(WQvec.min(), -0.2353666387)
     xr.testing.assert_allclose(WQvTp, WQvec)
 
 # Historical plotting and external-data experiments are archived in

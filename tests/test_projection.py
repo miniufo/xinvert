@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xinvert.projection import project_vector
+from xinvert.helmholtz._sor import _project_vector as project_vector
 
 
 def test_example_main_program(capsys):
@@ -11,7 +11,7 @@ def test_example_main_program(capsys):
     from pathlib import Path
     runpy.run_path(str(Path(__file__).parents[1] / 'examples' / 'projection_closed_basin.py'),
                    run_name='__main__')
-    assert 'Max remaining divergence:' in capsys.readouterr().out
+    assert 'Remaining divergence RMS:' in capsys.readouterr().out
 
 
 def fields():
@@ -92,7 +92,7 @@ def test_float32_storage_with_float64_projection():
     fx = fx.where(fx == 0, xr.DataArray(rng.normal(size=wet.shape), dims=wet.dims)).astype('float32')
     fy = fy.where(fy == 0, xr.DataArray(rng.normal(size=wet.shape), dims=wet.dims)).astype('float32')
     result = project_vector(fx, fy, wet, ['y', 'x'],
-                            iParams={'mxLoop': 20000, 'optArg': 1.6,
+                            iParams={'dtype': 'float64', 'mxLoop': 20000, 'optArg': 1.6,
                                      'tolerance': 1e-12, 'printInfo': False})
     assert float(abs(result.remaining_divergence).max()) < 2e-10
 

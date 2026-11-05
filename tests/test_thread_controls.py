@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xinvert import core, cpus, invert_Poisson, masked_poisson
-from xinvert._threads import DEFAULT_THREADS, numba_threads, validate_threads
+from xinvert import _neumann, core, cpus, invert_Poisson
 from xinvert.helmholtz import _li2006 as li
 from xinvert.helmholtz import streamfunction_potential
+from xinvert.utils import DEFAULT_THREADS, numba_threads, validate_threads
 
 
 @pytest.fixture(autouse=True)
@@ -70,12 +70,12 @@ def test_public_solver_uses_requested_mask_and_restores(monkeypatch, method, mod
     f = forcing()
     if method == 'li':
         monkeypatch.setattr(li, '_closed_forward', spy(li._closed_forward))
-        options.update(BCs=['closed', 'closed'], on_nonconvergence='ignore')
+        options.update(BCs=['fixed', 'fixed'], on_nonconvergence='ignore')
         streamfunction_potential(f, f * .3, coords='cartesian', dims=['y', 'x'],
                                  iParams=options)
     else:
         if method == 'neumann':
-            monkeypatch.setattr(masked_poisson, '_sor', spy(masked_poisson._sor))
+            monkeypatch.setattr(_neumann, '_sor', spy(_neumann._sor))
             options['internal_bcs'] = 'neumann'
             f = f.where(~((f.y == 3) & (f.x == 4)))
         else:

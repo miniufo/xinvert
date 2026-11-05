@@ -7,7 +7,7 @@ Copyright 2018. All rights reserved. Use is subject to license terms.
 """
 #%%
 import xarray as xr
-from xinvert import animate_iteration
+from xinvert import record_iteration
 
 
 def test_animate(tmp_path):
@@ -24,8 +24,8 @@ def test_animate(tmp_path):
     }
     
     output = tmp_path / 'atmos_animation.nc'
-    animate_iteration('Poisson', vor, dims=['lat','lon'], iParams=iParams,
-                      loop_per_frame=1, max_frames=40, output=output)
+    record_iteration('Poisson', vor, dims=['lat','lon'], iParams=iParams,
+                      iter_per_frame=1, max_frames=40, output=output)
     with xr.open_dataset(output) as result:
         sf = result.inverted
         assert sf.dims == ('iter', 'lat', 'lon')

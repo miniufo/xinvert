@@ -130,17 +130,17 @@ def test_spatial_icbc_broadcasts_over_noncore_dimensions():
 
 
 @pytest.mark.parametrize('with_icbc', [False, True])
-def test_fixed_invalid_forcing_cells_retain_finite_icbc_values(with_icbc):
+def test_fixed_initial_land_is_not_a_boundary_value(with_icbc):
     forcing = xr.DataArray(
         [[0.0, np.nan, 0.0], [0.0, 0.0, 0.0]],
         dims=['lat', 'lon'])
-    icbc = xr.full_like(forcing, 7.0) if with_icbc else None
+    icbc = xr.full_like(forcing, 7.0).where(forcing.notnull()) if with_icbc else None
 
     maskf, initialized, _ = apps.__mask_FS(
         forcing, ['lat', 'lon'], _mask_params(), icbc)
 
     assert maskf[0, 1] == apps._undeftmp
-    assert initialized[0, 1] == (7.0 if with_icbc else 0.0)
+    assert initialized[0, 1] == 0.0
     if with_icbc:
         assert initialized[1, 1] == 7.0
     else:
@@ -148,7 +148,7 @@ def test_fixed_invalid_forcing_cells_retain_finite_icbc_values(with_icbc):
 
 
 @pytest.mark.parametrize('value', [np.nan, np.inf, -np.inf, apps._undeftmp])
-def test_missing_internal_fixed_values_fall_back_to_zero(value):
+def test_masked_land_values_are_not_used(value):
     forcing = xr.DataArray([[np.nan, 0.], [0., 0.]], dims=['lat', 'lon'])
     initial = xr.full_like(forcing, 7.)
     initial[0, 0] = value
@@ -161,7 +161,7 @@ def test_invalid_forcing_cells_are_restored_after_solve_with_icbc():
         np.zeros((5, 5)), dims=['y', 'x'],
         coords={'y': np.arange(5.0), 'x': np.arange(5.0)})
     forcing[2, 2] = np.nan
-    icbc = xr.full_like(forcing, 7.0)
+    icbc = xr.full_like(forcing, 7.0).where(forcing.notnull())
 
     result = apps.invert_Poisson(
         forcing, ['y', 'x'], coords='cartesian', icbc=icbc,

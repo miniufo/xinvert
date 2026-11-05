@@ -3,8 +3,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xinvert.domain import analyze_domain
-from xinvert.internal_bcs import identify_internal_bcs
+from xinvert.domain import analyze_domain, identify_internal_bcs
 
 
 def _topology(values, periodic=None):

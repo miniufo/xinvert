@@ -21,7 +21,7 @@ def test_public_mapping_defaults_are_none():
     public = [
         value for name, value in vars(apps).items()
         if callable(value) and (name.startswith('invert_') or
-                                name in {'animate_iteration', 'cal_flow'})
+                                name in {'record_iteration', 'cal_flow'})
     ]
     for func in public:
         for parameter in inspect.signature(func).parameters.values():

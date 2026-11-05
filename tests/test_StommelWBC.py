@@ -118,17 +118,21 @@ def test_stommel_real():
     u1, v1 = cal_flow(h1, dims=['lat','lon'], BCs=['extend', 'periodic'])
     u2, v2 = cal_flow(h2, dims=['lat','lon'], BCs=['extend', 'periodic'])
     
-    # snapshot values recalibrated after the extend gauge-anchor change
-    # (see cpus._find_boundary_anchor_2d): mixed extend/periodic systems
-    # are now determinate, shifting the last digits of these snapshots
-    assert np.isclose(h1.min(), -437846.31250, rtol=1e-5, atol=1e-8)
-    assert np.isclose(h1.max(),  536147.75000, rtol=1e-5, atol=1e-8)
-    assert np.isclose(h2.min(), -414699.93750, rtol=1e-5, atol=1e-8)
-    assert np.isclose(h2.max(),  826668.75000, rtol=1e-5, atol=1e-8)
+    # Snapshot recalibrated for the masked-land solver contract: cells
+    # without forcing are no longer boundary-value carriers, and the
+    # default internal_bcs='fixed' prescribes the wet band from icbc, so
+    # the discrete solution moves by a few percent.  Unchanged here:
+    # float32, the same fixed work (tolerance=0) and rtol=1e-5.  A float64
+    # solve of the same setup reproduces these extrema to <2e-5 relative,
+    # so the shift is not a float32 rounding artifact.
+    assert np.isclose(h1.min(), -425877.21875, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h1.max(),  516323.12500, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h2.min(), -412506.12500, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h2.max(),  796139.00000, rtol=1e-5, atol=1e-8)
 
-    assert np.isclose(h11.min(), -431809.90625, rtol=1e-5, atol=1e-8)
-    assert np.isclose(h11.max(),  432034.56250, rtol=1e-5, atol=1e-8)
-    assert np.isclose(h22.min(), -435085.71875, rtol=1e-5, atol=1e-8)
-    assert np.isclose(h22.max(),  725163.56250, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h11.min(), -395974.96875, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h11.max(),  408644.03125, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h22.min(), -420249.90625, rtol=1e-5, atol=1e-8)
+    assert np.isclose(h22.max(),  677454.93750, rtol=1e-5, atol=1e-8)
 
 

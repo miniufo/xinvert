@@ -157,11 +157,11 @@ def test_float32_sampling_uses_float64_face_average():
             assert packed[k] == 0.5 * (float(v[j, i]) + float(v[j + 1, i]))
 
 
-def test_public_float32_retention_does_not_reduce_computation_precision():
+def test_explicit_float64_overrides_float32_input():
     u, v, mask = fields()
     u = u.astype("float32")
     v = v.astype("float32")
-    opts = {"BCs": ["closed", "periodic"], "mxLoop": 500, "tolerance": 1e-9}
+    opts = {"BCs": ["fixed", "periodic"], "mxLoop": 500, "tolerance": 1e-9, "dtype": "float64"}
     a, ad = streamfunction_potential(
         u, v, mask=mask, iParams=opts, return_diagnostics=True
     )
@@ -197,7 +197,7 @@ def test_public_closed_parallel_batch_initial(solver):
     u, v, mask = fields()
     saved = u.copy(deep=True)
     opts = {
-        "BCs": ["closed", "periodic"],
+        "BCs": ["fixed", "periodic"],
         "solver": solver,
         "tolerance": 1e-10,
         "mxLoop": 1500,
@@ -216,7 +216,8 @@ def test_public_closed_parallel_batch_initial(solver):
     for name in ["streamfunction", "velocity_potential"]:
         xr.testing.assert_equal(result[name], parallel[name])
     assert bool(diag.converged) and bool(pdiag.converged)
-    assert set(diag) == {"vel_error", "div_error", "converged", "iterations"}
+    assert set(diag) == {"vel_error", "div_error", "converged", "iterations",
+                         "error", "final_error", "stop_reason"}
     warm = streamfunction_potential(u, v, mask=mask, iParams=opts, initial=result)
     np.testing.assert_allclose(
         warm.streamfunction, result.streamfunction, rtol=3e-4, atol=0.05, equal_nan=True
@@ -254,7 +255,7 @@ def test_thread_state_restored_on_error_and_invalid_modes():
                 v,
                 mask=mask,
                 iParams={
-                    "BCs": ["closed", "periodic"],
+                    "BCs": ["fixed", "periodic"],
                     "architect": "cpu-mc",
                     "threads": 2,
                     "mxLoop": 1,
@@ -264,13 +265,13 @@ def test_thread_state_restored_on_error_and_invalid_modes():
         assert numba.get_num_threads() == 1
     finally:
         numba.set_num_threads(previous)
-    with pytest.raises(NotImplementedError):
-        streamfunction_potential(u, v, iParams={"architect": "cpu-mc"})
-    with pytest.raises(ValueError, match="closed Li"):
-        streamfunction_potential(u, v, iParams={"BCs": ["open", "closed"]})
+    default = streamfunction_potential(u, v, mask=mask, iParams={"architect": "cpu-mc"})
+    assert default.attrs['boundary_y'] == default.attrs['boundary_x'] == 'fixed'
+    with pytest.raises(ValueError, match="expected one of"):
+        streamfunction_potential(u, v, iParams={"BCs": ["open", "fixed"]})
     with pytest.raises(ValueError, match="threads"):
         streamfunction_potential(
-            u, v, iParams={"BCs": ["closed", "periodic"], "threads": 0}
+            u, v, iParams={"BCs": ["fixed", "periodic"], "threads": 0}
         )
 
 
@@ -280,7 +281,7 @@ def test_all_dry_and_isolated_cells():
         u,
         v,
         mask=xr.zeros_like(mask),
-        iParams={"BCs": ["closed", "closed"]},
+        iParams={"BCs": ["fixed", "fixed"]},
         return_diagnostics=True,
     )
     assert bool(diag.converged) and bool(dry.streamfunction.isnull().all())
@@ -290,7 +291,7 @@ def test_all_dry_and_isolated_cells():
         u,
         v,
         mask=isolated,
-        iParams={"BCs": ["closed", "closed"]},
+        iParams={"BCs": ["fixed", "fixed"]},
         return_diagnostics=True,
     )
     assert bool(diag.converged) and np.isnan(diag.div_error)

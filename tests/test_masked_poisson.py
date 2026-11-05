@@ -273,11 +273,11 @@ def test_numeric_undef_and_nonfinite_cells_are_inactive(architect):
 
 
 def test_animation_rejects_neumann_before_writing(tmp_path):
-    from xinvert import animate_iteration
+    from xinvert import record_iteration
     _, forcing, _ = manufactured(np.ones((7, 8), dtype=bool))
     output = tmp_path/'unsupported.nc'
-    with pytest.raises(NotImplementedError, match='animate_iteration'):
-        animate_iteration('poisson', forcing, ['y', 'x'], coords='cartesian',
+    with pytest.raises(NotImplementedError, match='record_iteration'):
+        record_iteration('poisson', forcing, ['y', 'x'], coords='cartesian',
                           output=output, iParams={'internal_bcs': 'neumann'})
     assert not output.exists()
 

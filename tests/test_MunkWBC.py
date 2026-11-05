@@ -90,7 +90,14 @@ def test_Munk_real():
     
     assert h1.shape == curl.shape
     assert h1.dims  == curl.dims
-    assert np.isclose(np.abs(h1).max(), 1103780.25, rtol=1e-5, atol=1e-8)
+    # Snapshot recalibrated for the masked-land solver contract: cells
+    # without forcing are no longer boundary-value carriers, and the
+    # default internal_bcs='fixed' prescribes the wet band from icbc, so
+    # the discrete solution moves by a few percent.  Unchanged here:
+    # float32, the same fixed work (tolerance=0) and rtol=1e-5.  A float64
+    # solve of the same setup reproduces these extrema to <2e-5 relative,
+    # so the shift is not a float32 rounding artifact.
+    assert np.isclose(np.abs(h1).max(), 1048542.1875, rtol=1e-5, atol=1e-8)
     
 
 

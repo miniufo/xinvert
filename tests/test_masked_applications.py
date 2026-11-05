@@ -159,7 +159,7 @@ def test_reference_state_zero_rhs_preserves_constant_solution(architect, interna
                          dims=['y', 'x'],
                          coords={'y': np.arange(9.), 'x': np.arange(1., 11.)})
     field[4, 5] = np.nan
-    initial = xr.full_like(field, 7.)
+    initial = xr.full_like(field, 7.).where(field.notnull())
     result = invert_RefState(
         field, ['y', 'x'], coords='cartesian', icbc=initial,
         mParams={'Gamma': 1.},

@@ -4,7 +4,7 @@ import pytest
 import xarray as xr
 
 from xinvert.helmholtz import decompose, reconstruct
-from xinvert.projection import project_vector
+from xinvert.helmholtz._sor import _project_vector as project_vector
 
 
 def inputs(periodic):
@@ -46,15 +46,20 @@ def test_center_adapter_matches_native_projection(periodic):
     u, v, wet = inputs(periodic)
     saved = u.copy(deep=True)
     uf, vf, east, north = faces(u, v, wet, periodic)
-    opts = {'BCs': ["fixed", "periodic" if periodic else "fixed"], 'mxLoop': 6000, 'tolerance': 1e-11, 'printInfo': False, 'diag_interval': 20}
+    opts = {'internal_bcs': 'extend', 'BCs': ["fixed", "periodic" if periodic else "fixed"], 'mxLoop': 6000, 'tolerance': 1e-11, 'printInfo': False, 'diag_interval': 20}
     direct, _ = project_vector(uf, vf, wet, ["y", "x"], coords="cartesian",
                                periodic_x=periodic, iParams=opts)
-    result, diag = decompose(u, v, ["y", "x"], coords="cartesian", method="forget",
+    result, diag = decompose(u, v, ["y", "x"], coords="cartesian", method="sor",
                              mask=wet, iParams=opts, return_potentials=True, return_diagnostics=True)
     mapping = {'udiv': "x_gradient", 'vdiv': "y_gradient", 'urot': "x_solenoidal", 'vrot': "y_solenoidal"}
     for name, ref in mapping.items():
         valid, axis = (east, 1) if name.startswith("u") else (north, 0)
-        expected = average(direct[ref].values, valid.values, axis, periodic)
+        if name in ("urot", "vrot"):
+            source = u if name == "urot" else v
+            gradient = direct.x_gradient if name == "urot" else direct.y_gradient
+            expected = source.values - average(gradient.values, valid.values, axis, periodic)
+        else:
+            expected = average(direct[ref].values, valid.values, axis, periodic)
         np.testing.assert_allclose(result[name], np.where(wet, expected, np.nan), rtol=1e-10, atol=1e-11)
         assert result[name].dims == u.dims
         xr.testing.assert_equal(result[name].coords.to_dataset(), u.coords.to_dataset())
@@ -77,10 +82,10 @@ def test_center_adapter_matches_native_projection(periodic):
 def test_face_output_uses_physical_coordinates(periodic):
     u, v, wet = inputs(periodic)
     uf, vf, _, _ = faces(u, v, wet, periodic)
-    opts = {'BCs': ["fixed", "periodic" if periodic else "fixed"], 'mxLoop': 6000, 'tolerance': 1e-11, 'printInfo': False}
+    opts = {'internal_bcs': 'extend', 'BCs': ["fixed", "periodic" if periodic else "fixed"], 'mxLoop': 6000, 'tolerance': 1e-11, 'printInfo': False}
     direct = project_vector(uf, vf, wet, ["y", "x"], coords="cartesian",
                              periodic_x=periodic, iParams=opts)
-    result = decompose(uf, vf, ["y", "x"], coords="cartesian", method="forget",
+    result = decompose(uf, vf, ["y", "x"], coords="cartesian", method="sor",
                         grid="arakawa-c", mask=wet, iParams=opts, return_potentials=True)
     assert result.udiv.dims == ("y", "x_face")
     assert result.vdiv.dims == ("y_face", "x")
@@ -95,23 +100,25 @@ def test_face_output_uses_physical_coordinates(periodic):
     assert result.udiv.attrs["location"] == "east_face"
 
 
-def test_sor_dispatch_is_unchanged():
+def test_sor_dispatch_uses_one_c_grid_potential():
     u, v, wet = inputs(False)
     result = decompose(u, v, ["y", "x"], coords="cartesian", method="sor", mask=wet,
                        iParams={'mxLoop': 3000, 'tolerance': 1e-9, 'printInfo': False})
     assert result.udiv.dims == u.dims
-    assert "input_interpolation" not in result.attrs
+    assert "input_interpolation" in result.attrs
+    np.testing.assert_allclose((result.urot + result.udiv).where(wet), u.where(wet), atol=1e-14)
+    np.testing.assert_allclose((result.vrot + result.vdiv).where(wet), v.where(wet), atol=1e-14)
 
 
 @pytest.mark.parametrize("grid", ["arakawa-a", "arakawa-c"])
-def test_forget_preserves_input_axis_order(grid):
+def test_sor_preserves_input_axis_order(grid):
     u, v, wet = inputs(True)
     if grid == "arakawa-c":
         u, v, _, _ = faces(u, v, wet, True)
-    opts = {"BCs": ["fixed", "periodic"], "mxLoop": 6000,
+    opts = {'internal_bcs': 'extend', "BCs": ["fixed", "periodic"], "mxLoop": 6000,
             "tolerance": 1e-11, "printInfo": False}
     result = decompose(u.transpose("x", "y"), v.transpose("x", "y"),
-                       ["y", "x"], coords="cartesian", method="forget",
+                       ["y", "x"], coords="cartesian", method="sor",
                        grid=grid, mask=wet, iParams=opts, return_potentials=True)
     assert result.velocity_potential.dims == ("x", "y")
     assert result.udiv.dims == (("x_face", "y") if grid == "arakawa-c" else ("x", "y"))
@@ -119,18 +126,18 @@ def test_forget_preserves_input_axis_order(grid):
 
 
 @pytest.mark.parametrize("grid", ["arakawa-a", "arakawa-c"])
-def test_forget_gpu_adapter_matches_cpu(grid):
+def test_sor_gpu_adapter_matches_cpu(grid):
     cp = pytest.importorskip("cupy")
     if cp.cuda.runtime.getDeviceCount() == 0:
         pytest.skip("CUDA required")
     u, v, wet = inputs(True)
     if grid == "arakawa-c":
         u, v, _, _ = faces(u, v, wet, True)
-    opts = {"BCs": ["fixed", "periodic"], "mxLoop": 6000,
+    opts = {'internal_bcs': 'extend', "BCs": ["fixed", "periodic"], "mxLoop": 6000,
             "tolerance": 1e-11, "printInfo": False}
-    cpu = decompose(u, v, ["y", "x"], coords="cartesian", method="forget",
+    cpu = decompose(u, v, ["y", "x"], coords="cartesian", method="sor",
                     grid=grid, mask=wet, iParams=opts)
-    gpu = decompose(u, v, ["y", "x"], coords="cartesian", method="forget",
+    gpu = decompose(u, v, ["y", "x"], coords="cartesian", method="sor",
                     grid=grid, mask=wet, iParams={**opts, "architect": "gpu"})
     for name in cpu:
         assert cpu[name].dims == gpu[name].dims

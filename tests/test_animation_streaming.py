@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xinvert import animate_iteration, apps, invert_Poisson
+from xinvert import record_iteration, apps, invert_Poisson
 
 
 def _forcing():
@@ -17,9 +17,9 @@ def test_streaming_frames_match_full_solve(architect, tmp_path):
     params = {'architect': architect, 'dtype': 'float64', 'optArg': 1.2,
               'BCs': ['fixed', 'fixed'], 'diag_interval': 1, 'tolerance': 2.}
     output = tmp_path / 'animation.nc'
-    result = animate_iteration(
+    result = record_iteration(
         'Poisson', forcing, ['y', 'x'], coords='cartesian',
-        iParams=params, loop_per_frame=2, max_frames=3, output=output)
+        iParams=params, iter_per_frame=2, max_frames=3, output=output)
     assert isinstance(result, xr.Dataset)
     assert result.iterations.item() == 6
     assert result.iteration.values.tolist() == list(range(1, 7))
@@ -29,6 +29,7 @@ def test_streaming_frames_match_full_solve(architect, tmp_path):
         assert saved.inverted.dims == ('iter', 'y', 'x')
         assert saved.iter.values.tolist() == [2, 4, 6]
         assert saved.attrs['completed_frames'] == 3
+        assert saved.attrs['iter_per_frame'] == 2
         assert saved.attrs['status'] == 'complete'
         assert saved.inverted.dtype == np.float64
         assert not np.array_equal(saved.inverted[0], saved.inverted[-1])
@@ -45,22 +46,68 @@ def test_output_is_not_overwritten(tmp_path):
     output = tmp_path / 'existing.nc'
     output.touch()
     with pytest.raises(FileExistsError):
-        animate_iteration('Poisson', _forcing(), ['y', 'x'], output=output)
+        record_iteration('Poisson', _forcing(), ['y', 'x'], output=output)
     assert output.stat().st_size == 0
 
 
-def test_output_is_required():
-    with pytest.raises(TypeError, match='output'):
-        animate_iteration('Poisson', _forcing(), ['y', 'x'])
+def test_memory_frames_match_streamed_frames(architect, tmp_path):
+    forcing = _forcing()
+    params = {'architect': architect, 'optArg': 1.2, 'printInfo': False}
+    frames = record_iteration(
+        invert_Poisson, forcing, coords='cartesian', iParams=params,
+        iter_per_frame=2, max_frames=3)
+    assert isinstance(frames, xr.DataArray)
+    assert frames.dims == ('iter', 'y', 'x')
+    assert frames.iter.values.tolist() == [2, 4, 6]
+    assert frames.attrs['completed_frames'] == 3
+    assert frames.attrs['status'] == 'complete'
+    assert not np.array_equal(frames[0], frames[-1])
+    output = tmp_path/'frames.nc'
+    record_iteration('Poisson', forcing, ['y', 'x'], coords='cartesian',
+                      iParams=params, iter_per_frame=2, max_frames=3, output=output)
+    with xr.open_dataset(output) as saved:
+        xr.testing.assert_allclose(frames, saved.inverted)
+
+
+def test_memory_inference_squeezes_and_preserves_transposed_coordinates(architect):
+    forcing = _forcing().transpose('x', 'y').expand_dims(time=[0]).copy(deep=True)
+    forcing.loc[{'y': forcing.y[4], 'x': forcing.x[4]}] = np.nan
+    initial = xr.zeros_like(forcing).where(forcing.notnull())
+    frames, diagnostics = record_iteration(
+        'Poisson', forcing, coords='cartesian', icbc=initial,
+        iParams={'architect': architect, 'diag_interval': 1, 'printInfo': False},
+        iter_per_frame=2, max_frames=2)
+    assert frames.dims == ('iter', 'x', 'y')
+    assert frames.iter.values.tolist() == [2, 4]
+    assert int(diagnostics.iterations) == 4
+    assert 'time' not in frames.dims
+    for frame in frames:
+        np.testing.assert_array_equal(np.isnan(frame), np.isnan(forcing.squeeze()))
+    expected = invert_Poisson(
+        forcing.squeeze(drop=True), ['y', 'x'], coords='cartesian',
+        icbc=initial.squeeze(drop=True),
+        iParams={'architect': architect, 'mxLoop': 4, 'tolerance': 0., 'printInfo': False})
+    xr.testing.assert_allclose(frames.isel(iter=-1, drop=True),
+                               expected.transpose('x', 'y'))
+
+
+def test_inference_rejects_a_time_series():
+    with pytest.raises(ValueError, match='select one time/member'):
+        record_iteration('Poisson', _forcing().expand_dims(time=[0, 1]))
+
+
+def test_unregistered_callable_is_rejected():
+    with pytest.raises(TypeError, match='supported xinvert'):
+        record_iteration(lambda field: field, _forcing())
 
 
 @pytest.mark.parametrize('name,value,exception', [
-    ('loop_per_frame', 0, ValueError), ('max_frames', -1, ValueError),
-    ('loop_per_frame', 1.5, TypeError), ('max_frames', True, TypeError),
+    ('iter_per_frame', 0, ValueError), ('max_frames', -1, ValueError),
+    ('iter_per_frame', 1.5, TypeError), ('max_frames', True, TypeError),
 ])
 def test_invalid_frame_controls(name, value, exception, tmp_path):
     with pytest.raises(exception, match='positive integer'):
-        animate_iteration('Poisson', _forcing(), ['y', 'x'],
+        record_iteration('Poisson', _forcing(), ['y', 'x'],
                           output=tmp_path/'frames.nc', **{name: value})
 
 
@@ -69,10 +116,10 @@ def test_input_can_be_lazy_and_transposed(architect, tmp_path):
     forcing = forcing.transpose('x', 'y').chunk({'y': 5, 'x': 5})
     forcing = forcing.expand_dims(time=[np.datetime64('2000-01-01')])
     output = tmp_path/'frames.nc'
-    animate_iteration(
+    record_iteration(
         'Poisson', forcing, ['y', 'x'], coords='cartesian',
         iParams={'architect': architect, 'dtype': 'float32'},
-        loop_per_frame=2, max_frames=2, output=output)
+        iter_per_frame=2, max_frames=2, output=output)
     with xr.open_dataset(output) as saved:
         assert saved.inverted.dims == ('iter', 'time', 'x', 'y')
         assert saved.inverted.dtype == np.float32
@@ -102,7 +149,7 @@ def test_failed_write_preserves_completed_frames(architect, tmp_path, monkeypatc
     monkeypatch.setattr(_AnimationWriter, 'write', fail_on_second)
     output = tmp_path/'frames.nc'
     with pytest.raises(OSError, match='injected'):
-        animate_iteration(
+        record_iteration(
             'Poisson', _forcing(), ['y', 'x'], coords='cartesian',
             iParams={'architect': architect}, max_frames=3, output=output)
     with xr.open_dataset(output) as saved:
@@ -134,10 +181,10 @@ def test_gpu_uploads_spatial_arrays_only_once(tmp_path, monkeypatch):
         return download(self, destination)
 
     monkeypatch.setattr(gpus._GpuSorSession, 'copy_to_host', observed_download)
-    diagnostics = animate_iteration(
+    diagnostics = record_iteration(
         'Poisson', _forcing(), ['y', 'x'], coords='cartesian',
         iParams={'architect': 'gpu', 'diag_interval': 1},
-        loop_per_frame=2, max_frames=5,
+        iter_per_frame=2, max_frames=5,
         output=tmp_path/'gpu.nc')
     assert uploads == [(10, 10)]*5  # S, A, B, C, forcing; not per frame
     assert downloads == [(10, 10)]*5  # not at every diagnostic checkpoint
@@ -160,9 +207,9 @@ def test_streaming_dispatch(architect, name, model, tmp_path):
     params = {'architect': architect, 'dtype': 'float64', 'optArg': 1.,
               'BCs': ['fixed']*len(dims), 'printInfo': False}
     output = tmp_path/'frames.nc'
-    animate_iteration(
+    record_iteration(
         name, forcing, dims, coords='cartesian', mParams=model,
-        iParams=params, loop_per_frame=2, max_frames=2, output=output)
+        iParams=params, iter_per_frame=2, max_frames=2, output=output)
     expected = getattr(apps, 'invert_' + name)(
         forcing, dims, coords='cartesian', mParams=model,
         iParams={**params, 'mxLoop': 4, 'tolerance': 0.})
@@ -184,9 +231,9 @@ def test_cpu_reuses_one_output_buffer(tmp_path, monkeypatch):
     monkeypatch.setattr(_AnimationWriter, 'write', observed)
     forcing = _forcing()
     forcing[4, 4] = np.nan
-    animate_iteration(
+    record_iteration(
         'Poisson', forcing, ['y', 'x'], coords='cartesian',
-        loop_per_frame=1, max_frames=20, output=tmp_path/'frames.nc')
+        iter_per_frame=1, max_frames=20, output=tmp_path/'frames.nc')
     assert len(buffers) == 1
     with xr.open_dataset(tmp_path/'frames.nc') as saved:
         assert saved.inverted[:, 4, 4].isnull().all()
@@ -197,9 +244,9 @@ def test_streaming_mask_does_not_change_internal_state(architect, tmp_path):
     forcing[4, 4] = np.nan
     output = tmp_path/'masked.nc'
     params = {'architect': architect, 'dtype': 'float64', 'optArg': 1.}
-    animate_iteration(
+    record_iteration(
         'Poisson', forcing, ['y', 'x'], coords='cartesian',
-        iParams=params, loop_per_frame=2, max_frames=3, output=output)
+        iParams=params, iter_per_frame=2, max_frames=3, output=output)
     expected = invert_Poisson(
         forcing, ['y', 'x'], coords='cartesian',
         iParams={**params, 'mxLoop': 6, 'tolerance': 0., 'printInfo': False})
@@ -213,9 +260,9 @@ def test_auxiliary_coordinates_are_preserved(tmp_path):
     forcing = _forcing().assign_coords(experiment='control')
     forcing = forcing.assign_coords(latitude=forcing.y + 20.)
     output = tmp_path/'coordinates.nc'
-    animate_iteration(
+    record_iteration(
         'Poisson', forcing, ['y', 'x'], coords='cartesian',
-        loop_per_frame=1, max_frames=1, output=output)
+        iter_per_frame=1, max_frames=1, output=output)
     with xr.open_dataset(output) as saved:
         assert saved.inverted.experiment.item() == 'control'
         xr.testing.assert_equal(saved.latitude, forcing.latitude)
@@ -227,11 +274,11 @@ def test_auxiliary_coordinates_are_preserved(tmp_path):
 def test_diagnostics_are_independent_of_frame_interval(
         architect, interval, expected, tmp_path):
     output = tmp_path/'diagnosed.nc'
-    diagnostics = animate_iteration(
+    diagnostics = record_iteration(
         'Poisson', _forcing(), ['y', 'x'], coords='cartesian',
         iParams={'architect': architect, 'dtype': 'float64',
                  'diag_interval': interval},
-        loop_per_frame=7, max_frames=2, output=output)
+        iter_per_frame=7, max_frames=2, output=output)
     assert diagnostics.iteration.values.tolist() == expected
     assert diagnostics.iterations.item() == 14
     assert diagnostics.attrs['diag_interval'] == interval
@@ -248,17 +295,17 @@ def test_diagnostics_are_independent_of_frame_interval(
 
 
 def test_default_has_no_diagnostic_return(tmp_path):
-    assert animate_iteration(
+    assert record_iteration(
         'Poisson', _forcing(), ['y', 'x'], coords='cartesian',
-        loop_per_frame=1, max_frames=1, output=tmp_path/'frames.nc') is None
+        iter_per_frame=1, max_frames=1, output=tmp_path/'frames.nc') is None
 
 
 def test_diagnostics_retain_single_time_coordinate(architect, tmp_path):
     forcing = _forcing().expand_dims(time=[np.datetime64('2000-01-01', 'ns')])
-    diagnostics = animate_iteration(
+    diagnostics = record_iteration(
         'Poisson', forcing, ['y', 'x'], coords='cartesian',
         iParams={'architect': architect, 'diag_interval': 3},
-        loop_per_frame=2, max_frames=2, output=tmp_path/'time.nc')
+        iter_per_frame=2, max_frames=2, output=tmp_path/'time.nc')
     assert diagnostics.error.dims == ('time', 'iteration')
     xr.testing.assert_equal(diagnostics.time, forcing.time)
     assert diagnostics.iteration.values.tolist() == [3, 4]
@@ -269,10 +316,10 @@ def test_zlib_compression_is_lossless(architect, level, tmp_path):
     import netCDF4
 
     output = tmp_path/'compressed.nc'
-    animate_iteration(
+    record_iteration(
         'Poisson', _forcing(), ['y', 'x'], coords='cartesian',
         iParams={'architect': architect, 'dtype': 'float64'},
-        loop_per_frame=2, max_frames=2, output=output, complevels=level)
+        iter_per_frame=2, max_frames=2, output=output, complevels=level)
     with netCDF4.Dataset(output) as dataset:
         filters = dataset.variables['inverted'].filters()
         assert filters['zlib'] == (level > 0)
@@ -293,6 +340,6 @@ def test_zlib_compression_is_lossless(architect, level, tmp_path):
 def test_invalid_compression_level_creates_no_file(level, exception, tmp_path):
     output = tmp_path/'invalid.nc'
     with pytest.raises(exception, match='complevels'):
-        animate_iteration('Poisson', _forcing(), ['y', 'x'],
+        record_iteration('Poisson', _forcing(), ['y', 'x'],
                           output=output, complevels=level)
     assert not output.exists()

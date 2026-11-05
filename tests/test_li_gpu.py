@@ -75,7 +75,7 @@ def test_64_bit_maps_and_memory_guard():
 def test_public_solution_diagnostics_and_warm_start():
     u, v, mask = fields()
     opts = {
-        "BCs": ["closed", "periodic"],
+        "BCs": ["fixed", "periodic"],
         "tolerance": 1e-11,
         "mxLoop": 3000,
         "on_nonconvergence": "raise",
@@ -106,7 +106,7 @@ def test_zero_and_isolated():
         u * 0,
         v * 0,
         mask=mask,
-        iParams={"BCs": ["closed", "closed"], "architect": "gpu"},
+        iParams={"BCs": ["fixed", "fixed"], "architect": "gpu"},
         return_diagnostics=True,
     )
     assert bool(diag.converged)
