@@ -17,7 +17,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
-from xinvert.projection import project_vector
+# Low-level operator verification; applications use helmholtz.decompose.
+from xinvert.helmholtz._sor import _project_vector as project_vector
 
 
 def main():

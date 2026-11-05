@@ -9,13 +9,13 @@ coefficients and dask-enabled parallel computation.
 Notes on numerical precision
 ----------------------------
 The whole inversion (coefficients, iteration, output) is carried out in
-the dtype selected by ``iParams['dtype']`` (``float32`` by default).
+the dtype selected by ``iParams['dtype']`` (``None`` follows float32/float64 forcing; float16 and integers use float64).
 ``float32`` roughly halves memory traffic and storage compared with
 ``float64``, at the cost of reduced residual accuracy.  The forcing and an
 optional ``icbc`` are converted to the selected compute dtype before the
 coefficient arrays are built.
 """
-from .animate import animate_iteration
+from .animate import record_iteration
 from .apps import (
     invert_3DOcean,
     invert_BrethertonHaidvogel,
@@ -45,5 +45,6 @@ from .core import (
 )
 from .finitediffs import FiniteDiff, deriv, deriv2, padBCs
 from .utils import cal_flow, loop_noncore
+from .utils import create_animation as create_animation
 
-__version__ = "0.3.3"
+__version__ = "0.4.0"

@@ -3,7 +3,7 @@ Finite-differences module of xinvert: xarray-aware derivative operators.
 
 Provides the ``FiniteDiff`` class and free functions ``deriv`` / ``deriv2`` /
 ``padBCs`` for first- and second-order spatial derivatives with flexible
-boundary conditions, used by the inversion solvers.
+boundary conditions, used to prepare equation inputs and diagnostic fields.
 """
 #%%
 import numpy as np
@@ -14,7 +14,7 @@ class FiniteDiff:
     """
     This class wrap some basic finite-difference operators supported for
     Cartesian coordinates (coords='cartesian') or latitude/longitude
-    coordinates (coords='lat/lon'), using centered different scheme.
+    coordinates (coords='lat-lon'), using centered different scheme.
     
     This is designed particularly for Arakawa A grid (all the variables are
     defined on the same grid points).  For grids of other types (variables
@@ -52,7 +52,7 @@ class FiniteDiff:
         3D vorticity.
     curl(vector)
         vertical vorticity of vector.
-    laplacian(scalar)
+    Laplacian(scalar)
         Laplacian.
     tension_strain(vector)
         Tension strain.
@@ -85,7 +85,7 @@ class FiniteDiff:
               derivative equals the first inner point. 2nd derivative is exactly zero.
         coords: str
             Types of coords.  Should be one of ['lat-lon', 'cartesian'].
-        fills: float or dict
+        fill: float or dict
             Fill value if BCs are fixed.  A typical example can be:
                 {'Z':(1,2), 'Y':(0,0), 'X':(1,0)}
         R: float
@@ -220,9 +220,10 @@ class FiniteDiff:
         vector: xarray.DataArray or a list (tuple) of xarray.DataArray
             Component(s) of a vector.
         dims: list of str
-            Dimensions for gradient.  Order of dims is the same as
-            that of the outputs: `vx, vy, vz = grad(v, ['X', 'Y', 'Z'])`.
-            Here use ['X', 'Y'] in dim_mapping instead of true dimension names.
+            Axes paired with the vector components in the same order, e.g.
+            (u, v) with ['X', 'Y']. Use axis keys from dim_mapping, not
+            xarray dimension names. The component derivatives are summed;
+            lat-lon coordinates include the spherical divergence metrics.
         BCs: dict
             Boundary condition.  If provided, overwrite the default one per call.
         fill: tuple of floats
@@ -559,7 +560,7 @@ def padBCs(v, dim, BCs, fill=(0,0)):
 
         * 'fixed': pad with fixed value.
         * 'extend': pad with original edge value.
-        * 'reflect: pad with first inner value. 1st-order derivative is exactly zero.
+        * 'reflect': pad with first inner value. 1st-order derivative is exactly zero.
         * 'extrapolate': pad with extrapolated value. (NOT implemented). 1st-order
           derivative equals the first inner point. 2nd-order derivative is exactly zero.
         * 'periodic': pad with cyclic values.
@@ -568,7 +569,7 @@ def padBCs(v, dim, BCs, fill=(0,0)):
     ----------
     v: xarray.DataArray
         A scalar variable.
-    dim: list of str
+    dim: str
         Dimension along which it is padded.
     BCs: tuple or list of str
         Boundary conditions for the two end points e.g., ('fixed','fixed').
@@ -616,8 +617,11 @@ def deriv(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1,
           scheme='center'):
     """First-order derivative along a given dimension.
     
-    The first-order derivative is calculated with proper boundary conditions
-    (BCs) and finite difference scheme.
+    Centered differences pad both endpoints with :func:`padBCs`, call
+    ``DataArray.differentiate``, and trim the ghost points. Boundary names
+    select padding modes, not arguments to xarray's differentiate method.
+    Forward/backward schemes use explicit shifted coordinate differences.
+    The result is divided by ``scale`` to apply the coordinate metric.
     
     Parameters
     ----------
@@ -630,7 +634,7 @@ def deriv(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1,
 
         * 'fixed': pad with fixed value.
         * 'extend': pad with original edge value.
-        * 'reflect: pad with first inner value. 1st-order derivative is exactly zero.
+        * 'reflect': pad with first inner value. 1st-order derivative is exactly zero.
         * 'extrapolate': pad with extrapolated value. (NOT implemented). 1st-order
           derivative equals the first inner point. 2nd-order derivative is exactly zero.
         * 'periodic': pad with cyclic values.
@@ -675,8 +679,9 @@ def deriv(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1,
 def deriv2(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1):
     """Second-order derivative along a given dimension
     
-    The second-order derivative is calculated with proper boundary conditions
-    (BCs) and centered finite-difference scheme.
+    Pad each endpoint with :func:`padBCs`, then use ``DataArray.diff(n=2)``
+    for the centered three-point stencil on a uniformly spaced coordinate.
+    This is not two successive calls to ``DataArray.differentiate``.
     
     Parameters
     ----------
@@ -689,7 +694,7 @@ def deriv2(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1):
 
         * 'fixed': pad with fixed value.
         * 'extend': pad with original edge value.
-        * 'reflect: pad with first inner value. 1st-order derivative is exactly zero.
+        * 'reflect': pad with first inner value. 1st-order derivative is exactly zero.
         * 'extrapolate': pad with extrapolated value. (NOT implemented). 1st-order
           derivative equals the first inner point. 2nd-order derivative is exactly zero.
         * 'periodic': pad with cyclic values.
@@ -698,8 +703,6 @@ def deriv2(v, dim, BCs=('extend','extend'), fill=(0,0), scale=1):
         Fill values as BCs if BC is fixed at two end points.
     scale: float or xarray.DataArray
         Scale of the result, usually the metric of the dimension.
-    scheme: {'center', 'forward', 'backward'}
-        Finite difference scheme in ['center', 'forward', 'backward'].
     
     Returns
     -------

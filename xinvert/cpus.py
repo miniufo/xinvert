@@ -291,7 +291,7 @@ def invert_standard_2D(S, A, B, C, F, info,
         # whenever y is extend and x is NOT fixed (extend or periodic
         # both leave the constant null space unresolved).
         if aside == -2:
-            if BCy == 'extend' and BCx != 'fixed':
+            if BCy == 'extend' and BCx != 'fixed' and not _has_fixed_values(S, F, undef):
                 aside, aidx = _find_boundary_anchor_2d(
                     F, undef, BCx == 'extend')
             else:
@@ -512,7 +512,7 @@ def invert_standard_2D_full(S, A, B, C, D, E, F, info,
         # whenever y is extend and x is NOT fixed (extend or periodic
         # both leave the constant null space unresolved).
         if aside == -2:
-            if BCy == 'extend' and BCx != 'fixed':
+            if BCy == 'extend' and BCx != 'fixed' and not _has_fixed_values(S, F, undef):
                 aside, aidx = _find_boundary_anchor_2d(
                     F, undef, BCx == 'extend')
             else:
@@ -723,7 +723,7 @@ def invert_standard_1D(S, A, B, F, info,
         # BOUNDARY grid point (extend-copy skipped); all interior points
         # keep updating normally.
         if aside == -2:
-            if BCx == 'extend':
+            if BCx == 'extend' and not _has_fixed_values(S, F, undef):
                 aside = _find_boundary_anchor_1d(F, undef)
             else:
                 aside = -1
@@ -1128,7 +1128,7 @@ def invert_general_2D(S, A, B, C, D, E, F, G, info,
         # whenever y is extend and x is NOT fixed (extend or periodic
         # both leave the constant null space unresolved).
         if aside == -2:
-            if BCy == 'extend' and BCx != 'fixed':
+            if BCy == 'extend' and BCx != 'fixed' and not _has_fixed_values(S, G, undef):
                 aside, aidx = _find_boundary_anchor_2d(
                     G, undef, BCx == 'extend')
             else:
@@ -2128,3 +2128,12 @@ def _record_solution_diagnostics(flags, index, error, solution, forcing,
         low, high = np.nan, np.nan
     flags[3 + count + index] = low
     flags[3 + 2*count + index] = high
+
+
+@nb.njit(cache=False, nogil=True)
+def _has_fixed_values(S, F, undef):
+    """Detect prescribed finite values excluded from the iteration RHS."""
+    for i in range(F.size):
+        if F.flat[i] == undef and S.flat[i] != undef and np.isfinite(S.flat[i]):
+            return True
+    return False

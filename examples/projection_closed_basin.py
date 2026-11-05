@@ -1,8 +1,8 @@
-"""Main-program example: manufacture a face field, then call projection."""
+"""Main-program example: decompose a face field through the public Helmholtz API."""
 import numpy as np
 import xarray as xr
 
-from xinvert.projection import project_vector
+from xinvert.helmholtz import decompose
 
 
 def main():
@@ -19,14 +19,15 @@ def main():
     north = wet & wet.shift(y=-1, fill_value=False)
     fx = (phi.shift(x=-1) - phi).where(east, 0)
     fy = (phi.shift(y=-1) - phi).where(north, 0)
-    result, diagnostics = project_vector(
-        fx, fy, wet, ['y', 'x'],
+    result, diagnostics = decompose(
+        fx, fy, dims=['y', 'x'], mask=wet, method='sor',
+        grid='arakawa-c', coords='cartesian', return_diagnostics=True,
         iParams={'architect': 'cpu', 'dtype': 'float64', 'diag_interval': 100,
                  'tolerance': 1e-12, 'mxLoop': 30000, 'optArg': 1.6,
                  'printInfo': False})
     print(result)
-    print('Max remaining divergence:', float(abs(result.remaining_divergence).max()))
-    print('Last solver error:', float(diagnostics.error.dropna('iteration').isel(iteration=-1)))
+    print('Remaining divergence RMS:', float(diagnostics.div_error))
+    print('Relative velocity error:', float(diagnostics.vel_error))
 
 
 if __name__ == '__main__':

@@ -20,6 +20,7 @@ from .cpus import (
     _check_interval,
     _find_boundary_anchor_1d,
     _find_boundary_anchor_2d,
+    _has_fixed_values,
     _record_solution_diagnostics,
     _relative_update_metric,
 )
@@ -97,7 +98,7 @@ def _invert_standard_2D_mc_impl(S, A, B, C, F,
     overflow = False
     error = 0.0
 
-    if BCy == 'extend' and BCx != 'fixed':
+    if BCy == 'extend' and BCx != 'fixed' and not _has_fixed_values(S, F, undef):
         aside, aidx = _find_boundary_anchor_2d(
             F, undef, BCx == 'extend')
     else:
@@ -288,7 +289,7 @@ def invert_general_2D_mc(S, A, B, C, D, E, F, G, info,
     diagnostic_index = 0
     overflow = False
     error = 0.0
-    if BCy == 'extend' and BCx != 'fixed':
+    if BCy == 'extend' and BCx != 'fixed' and not _has_fixed_values(S, G, undef):
         aside, aidx = _find_boundary_anchor_2d(G, undef, BCx == 'extend')
     else:
         aside, aidx = -1, -1
@@ -927,7 +928,7 @@ def invert_standard_1D_mc(S, A, B, F, info,
     diagnostic_index = 0
     overflow = False
     error = 0.0
-    aside = _find_boundary_anchor_1d(F, undef) if BCx == 'extend' else -1
+    aside = _find_boundary_anchor_1d(F, undef) if BCx == 'extend' and not _has_fixed_values(S, F, undef) else -1
     for loop in range(1, mxLoop + 1):
         track_residual = loop % interval == 0 or loop == mxLoop
         max_update = 0.0
@@ -1053,7 +1054,7 @@ def _invert_standard_2D_full_mc_impl(S, A, B, C, D, E, F,
     overflow = False
     error = 0.0
 
-    if BCy == 'extend' and BCx != 'fixed':
+    if BCy == 'extend' and BCx != 'fixed' and not _has_fixed_values(S, F, undef):
         aside, aidx = _find_boundary_anchor_2d(
             F, undef, BCx == 'extend')
     else:

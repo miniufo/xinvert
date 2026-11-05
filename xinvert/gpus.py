@@ -32,6 +32,8 @@ import warnings
 import numpy as np
 from numba import cuda
 
+from .cpus import _has_fixed_values
+
 # Numba emits a ``NumbaPerformanceWarning`` at every kernel launch whose
 # grid is too small to fill the GPU ("Grid size N will likely result in
 # GPU under-utilization due to low occupancy").  In xinvert this can only
@@ -2057,7 +2059,7 @@ def _prepare_standard_2D_gpu(S, A, B, C, F, info, yc, xc, BCy, BCx, delxSqr, rat
     # x-extend or x-periodic): ONE boundary point keeps its initial
     # (uploaded) value; every interior point updates normally.
     aside, aidx = -1, -1
-    if BCy == 'extend' and BCx != 'fixed':
+    if BCy == 'extend' and BCx != 'fixed' and not _has_fixed_values(S, F, undef):
         aside, aidx = _find_boundary_anchor_2d_host(F, undef, BCx == 'extend')
 
     def launch_boundary():
@@ -2160,7 +2162,7 @@ def _prepare_standard_2D_full_gpu(S, A, B, C, D, E, F, info, yc, xc, BCy, BCx, d
     # boundary gauge anchor for singular extend systems; value stays at
     # the uploaded initial S (see the standard_2D wrapper).
     aside, aidx = -1, -1
-    if BCy == 'extend' and BCx != 'fixed':
+    if BCy == 'extend' and BCx != 'fixed' and not _has_fixed_values(S, F, undef):
         aside, aidx = _find_boundary_anchor_2d_host(F, undef, BCx == 'extend')
 
     def launch_boundary():
@@ -2369,7 +2371,7 @@ def _prepare_standard_1D_gpu(S, A, B, F, info, xc, BCx, delxSqr, optArg, undef):
     # ends) system: ONE boundary point keeps its initial (uploaded)
     # value; all interior points update normally.
     aside = -1
-    if BCx == 'extend':
+    if BCx == 'extend' and not _has_fixed_values(S, F, undef):
         aside = _find_boundary_anchor_1d_host(F, undef)
 
     def launch_boundary():
@@ -2661,7 +2663,7 @@ def _prepare_general_2D_gpu(S, A, B, C, D, E, F, G, info, yc, xc, delx, BCy, BCx
     # boundary gauge anchor for singular extend systems; value stays at
     # the uploaded initial S (see the standard_2D wrapper).
     aside, aidx = -1, -1
-    if BCy == 'extend' and BCx != 'fixed':
+    if BCy == 'extend' and BCx != 'fixed' and not _has_fixed_values(S, G, undef):
         aside, aidx = _find_boundary_anchor_2d_host(G, undef, BCx == 'extend')
 
     def launch_boundary():

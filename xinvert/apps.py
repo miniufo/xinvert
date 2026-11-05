@@ -11,8 +11,7 @@ import difflib
 import numpy as np
 import xarray as xr
 
-from ._threads import DEFAULT_THREADS
-from .animate import animate_iteration as animate_iteration
+from .animate import record_iteration as record_iteration
 from .core import (
     _validate_inversion_bcs,
     _validate_inversion_dims,
@@ -25,6 +24,7 @@ from .core import (
     inv_standard2D_full,
     inv_standard3D,
 )
+from .utils import DEFAULT_THREADS
 from .utils import _invert_omega_MG as _invert_omega_MG
 from .utils import cal_flow as cal_flow
 from .utils import invert_MultiGrid as invert_MultiGrid
@@ -40,17 +40,16 @@ default_iParams = {
     # can be 'fixed', 'extend', or 'periodic'
     'BCs': ['fixed', 'fixed'],
 
-    # Internal wet/dry faces: historical fixed-zero, or zero-flux Neumann.
+    # Internal boundaries: prescribed wet coastal values, or zero-flux Neumann.
     'internal_bcs': 'fixed',
 
     # undefined value in the array
     'undef': np.nan,
 
-    # compute precision of the solver (both coefficients and solution
-    # arrays are allocated natively in this dtype).  float32 halves the
-    # memory footprint and roughly doubles GPU throughput; use
-    # 'float64' when accuracy matters more than speed.
-    'dtype': np.float32,
+    # None follows float32/float64 forcing; explicit dtype overrides it.
+    # float16 and integer inputs promote to float64. Coefficients, work
+    # vectors and the solution use the resolved precision.
+    'dtype': None,
 
     # max loop count, exceed which the iteration is stopped
     'mxLoop': 5000,
@@ -144,12 +143,15 @@ def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
     coords: {'lat-lon', 'z-lat', 'z-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribed initial condition/guess (IC) and boundary conditions (BC).
+        Prescribed initial guess and fixed-boundary values. Use the same mask
+        as forcing. Fixed internal boundaries retain adjacent wet-point values;
+        other wet values initialize the iteration. Defaults to zero.
     mParams: dict, optional
         Model parameters.  None for the Poisson model.
     iParams: dict, optional
         Iteration parameters. ``internal_bcs='fixed'`` (default) keeps
-        historical fixed-zero inactive neighbours. ``'neumann'`` automatically
+        wet coastal points at their initial ``icbc`` values (zero if omitted).
+        ``'neumann'`` automatically
         identifies wet/dry faces per slice and imposes zero normal flux on
         CPU, CPU-mc or GPU; Cartesian and nonpolar lat-lon grids are supported.
     
@@ -158,11 +160,11 @@ def invert_Poisson(F, dims, coords='lat-lon', icbc=None,
     xarray.DataArray
         Results of the SOR inversion.
     """
-    choice = (iParams or {}).get('internal_bcs', 'fixed')
-    if not isinstance(choice, str) or choice.strip().lower() not in ('fixed', 'neumann'):
-        raise ValueError("iParams['internal_bcs'] must be 'fixed' or 'neumann'")
-    if choice.strip().lower() == 'neumann':
-        from .masked_poisson import invert_masked_poisson
+    from .core import _normalize_internal_bcs
+
+    choice = _normalize_internal_bcs((iParams or {}).get('internal_bcs', 'fixed'))
+    if choice == 'neumann':
+        from ._neumann import invert_masked_poisson
         return invert_masked_poisson(
             F, dims, coords, icbc, mParams, iParams)
     return __template(__coeffs_Poisson, inv_standard2D, 2, F, dims, coords,
@@ -810,7 +812,9 @@ def invert_Fofonoff(F, dims, coords='cartesian', icbc=None,
     coords: {'lat-lon', 'cartesian'}, optional
         Coordinate combinations in which inversion is performed.
     icbc: xarray.DataArray, optional
-        Prescribed initial condition/guess (IC) and boundary conditions (BC).
+        Prescribed initial guess and fixed-boundary values. Use the same mask
+        as forcing. Fixed internal boundaries retain adjacent wet-point values;
+        other wet values initialize the iteration. Defaults to zero.
     mParams: dict, optional
         Parameters required for this model are:
 
@@ -1005,7 +1009,7 @@ def __template(coef_func, inv_func, dimLen,
     if (iParams['internal_bcs'].strip().lower() == 'neumann' and
             not getattr(coef_func, '_supports_internal_bcs', False)):
         if dimLen == 2 and inv_func in (inv_standard2D, inv_standard2D_full):
-            from .masked_poisson import invert_masked_standard
+            from ._neumann import invert_masked_standard
             return invert_masked_standard(
                 F, dims, coords, icbc, mParams,
                 {key: value for key, value in iParams.items() if key in default_iParams},
@@ -1826,7 +1830,8 @@ def __mask_FS(F, dims, iParams, icbc):
     zero: xarray.DataArray
         Allocated array for later use (all zeros, compute dtype).
     """
-    dt = _solve_dtype(iParams)
+    dims = [dims] if isinstance(dims, str) else list(dims)
+    dt = _solve_dtype(iParams, F.dtype)
 
     ######  1. properly masking forcing with _undeftmp  ######
     # cast first: every derived array (maskF, zero and the coefficient
@@ -1835,16 +1840,14 @@ def __mask_FS(F, dims, iParams, icbc):
     if F.dtype != dt:
         F = F.astype(dt)
 
-    if np.isnan(iParams['undef']):
-        maskF = F.fillna(_undeftmp)
-    else:
-        maskF = F.where(F!=iParams['undef'], other=_undeftmp)
+    valid = np.isfinite(F) & (F != _undeftmp)
+    if not np.isnan(iParams['undef']):
+        valid = valid & (F != iParams['undef'])
+    maskF = F.where(valid, _undeftmp)
 
     zero = maskF - maskF
 
     ######  2. properly masking output with _undeftmp and BCs  ######
-    invalid = maskF == _undeftmp
-
     if icbc is None:
         initS = zero.copy()
     else:
@@ -1877,61 +1880,69 @@ def __mask_FS(F, dims, iParams, icbc):
         # initialized solution has the same dimensions and order as forcing.
         icbc = icbc.broadcast_like(maskF)
 
-        # ``icbc`` is both the initial guess and the prescribed fixed-boundary
-        # field.  Use it on every valid grid point; extend boundaries are
-        # overwritten by the boundary kernel and periodic endpoints remain
-        # ordinary unknowns. Fixed internal cells retain finite prescribed
-        # values, but missing values and sentinels must never enter stencils.
-        # Neumann eliminates these faces and therefore ignores their values.
-        boundary = icbc.where(np.isfinite(icbc) & (icbc != _undeftmp), 0)
-        if not np.isnan(iParams['undef']):
-            boundary = boundary.where(icbc != iParams['undef'], 0)
-        if iParams.get('internal_bcs', 'fixed').strip().lower() == 'neumann':
-            boundary = 0
-        initS = xr.where(invalid, boundary, icbc)
-
-        if initS.dtype != dt:
-            initS = initS.astype(dt)
+        # Validate each spatial slice without computing lazy batches eagerly.
+        # Fixed BC values live on valid wet points, never on masked land.
+        strict = iParams.get('internal_bcs', 'fixed').strip().lower() == 'fixed'
+        core_dims = [dims] if isinstance(dims, str) else list(dims)
+        initS = xr.apply_ufunc(
+            _checked_initial, maskF, icbc,
+            input_core_dims=[core_dims, core_dims],
+            output_core_dims=[core_dims], vectorize=True,
+            dask='parallelized', dask_gufunc_kwargs={'allow_rechunk': True},
+            kwargs={'undef': iParams['undef'], 'strict': strict, 'dtype': dt},
+            output_dtypes=[dt],
+        ).transpose(*maskF.dims)
 
     # # loaded initS because dask cannot be modified
     # return maskF, initS.load(), zero
     return maskF, initS, zero
 
 
-def _solve_dtype(iParams):
-    """Resolve the compute dtype from ``iParams['dtype']``.
+def _checked_initial(forcing, initial, *, undef, strict, dtype):
+    """Check the physical forcing/initial mask before any solver-only masking."""
+    if np.asarray(initial).dtype.kind not in 'fiub':
+        raise TypeError('icbc must contain real numeric values')
+    wet = np.isfinite(forcing) & (forcing != _undeftmp)
+    finite = np.isfinite(initial) & (initial != _undeftmp)
+    if not np.isnan(undef):
+        finite &= initial != undef
+    if np.any(wet & ~finite) or (strict and np.any(~wet & finite)):
+        raise ValueError(
+            "icbc and forcing must have the same valid/invalid mask for "
+            "internal_bcs='fixed'; icbc must be finite at every wet point "
+            "and masked at land points. A broadcast icbc must match each slice."
+            if strict else "icbc must be finite at every wet forcing point")
+    return np.where(wet, initial, 0).astype(dtype, copy=False)
 
-    Accepts numpy dtypes, python floats, or the strings 'float32'/'f32'/
-    'float64'/'f64'.  Only 32- and 64-bit floats are supported; anything
-    else raises so typos fail loudly instead of silently changing
-    precision.
 
-    Parameters
-    ----------
-    iParams : dict
-        Effective inversion parameters containing the optional ``dtype`` key.
+def _solve_dtype(iParams, *input_dtypes):
+    """Resolve solver precision without inspecting or loading array values.
 
-    Returns
-    -------
-    numpy.dtype
-        Either ``np.dtype(np.float32)`` or ``np.dtype(np.float64)``.
+    ``dtype=None`` preserves float32/float64 inputs. Mixed float32/float64
+    selects float64; float16, integer and boolean inputs promote to float64.
+    An explicit float32/float64 overrides input precision. Complex and
+    nonnumeric inputs are rejected even with an explicit override.
+    Coordinates, initial values and diagnostic reductions do not determine
+    the solve precision. Diagnostic scalars may use float64 accumulation.
     """
-    dt = iParams.get('dtype', np.float32)
-
+    inputs = tuple(np.dtype(d) for d in input_dtypes)
+    if any(d.kind not in 'fiub' for d in inputs):
+        raise TypeError('inversion requires real numeric input')
+    dt = iParams.get('dtype')
+    if dt is None:
+        if inputs and all(d == np.dtype('float32') for d in inputs):
+            return np.dtype('float32')
+        return np.dtype('float64')
     if isinstance(dt, str):
         alias = {'float32': np.float32, 'f32': np.float32,
                  'float64': np.float64, 'f64': np.float64}
         key = dt.strip().lower()
         if key not in alias:
-            raise ValueError(f"iParams['dtype']='{dt}' not understood, "
-                             "use np.float32 / np.float64 or "
-                             "'float32' / 'float64'")
+            raise ValueError("dtype must be None, float32 or float64")
         dt = alias[key]
-
     dt = np.dtype(dt)
-    if dt not in (np.dtype(np.float32), np.dtype(np.float64)):
-        raise ValueError(f"iParams['dtype']={iParams['dtype']} unsupported, "
-                         "only float32 / float64 are allowed")
+    if dt not in (np.dtype('float32'), np.dtype('float64')):
+        raise ValueError("dtype must be None, float32 or float64")
     return dt
 
 

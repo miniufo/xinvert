@@ -1,14 +1,24 @@
 """Masked diagonal 2-D divergence operators with optional reaction terms.
 
 Conductances at closed Neumann faces are removed from both flux and
-diagonal. The default fixed mode continues through the old solver. Its
-unmasked application path is deliberately unchanged.
+diagonal. The default fixed mode uses the ordinary core/CPU/GPU solver path;
+this module is shared by supported scalar applications and Helmholtz SOR.
+
+Implementation notes:
+* Removing an east face removes g_E * (u_E - u_P), including its diagonal
+  contribution; retaining that diagonal would impose fixed zero, not flux zero.
+* Compatibility uses the assembled RHS per component (cosine-latitude weights
+  for spherical Poisson). Fixed connections or coercive reaction anchor a
+  component. Otherwise preserve every equation and apply a weighted zero-mean
+  gauge once after solving, without pinning a reference cell.
+* Extend endpoints are eliminated copied values; fixed corners take priority.
+* Compact face codes avoid keeping four global directional masks resident.
+
 """
 import numpy as np
 import xarray as xr
 from numba import njit, prange
 
-from ._threads import DEFAULT_THREADS, numba_threads
 from .core import (
     _apply_solver,
     _get_info,
@@ -17,8 +27,8 @@ from .core import (
     _validate_inversion_dims,
 )
 from .cpus import _check_interval
-from .domain import _label_components
-from .internal_bcs import _encode_internal_faces
+from .domain import _encode_internal_faces, _label_components
+from .utils import DEFAULT_THREADS, numba_threads
 
 
 def invert_masked_poisson(F, dims, coords, icbc, mParams, iParams):
@@ -90,8 +100,8 @@ def invert_masked_standard(F, dims, coords, icbc, mParams, iParams,
         if architect in ('cpu-mc', 'gpu') and ip['BCs'][1] == 'periodic' and rhs.sizes[dims[1]] % 2:
             raise ValueError("red-black masked Poisson requires an even periodic x grid size")
         if architect == 'gpu':
-            from . import masked_poisson_gpu
-            masked_poisson_gpu.ensure_context()
+            from . import _neumann_gpu
+            _neumann_gpu.ensure_context()
         weight = (np.cos(np.deg2rad(rhs[dims[0]].values))
                   if coords.lower() == 'lat-lon' else np.ones(rhs.sizes[dims[0]]))
         info, _ = _get_info(rhs, dims)
@@ -158,7 +168,7 @@ def invert_masked_standard(F, dims, coords, icbc, mParams, iParams,
                          interval, flags, ip['BCs'][0] == 'extend', ip['BCs'][1] == 'extend',
                          ip['BCs'][1] == 'periodic')
             if architect == 'gpu':
-                from .masked_poisson_gpu import sor_gpu
+                from ._neumann_gpu import sor_gpu
                 sor_gpu(*arguments, block=ip.get('gpu_block2d'))
             else:
                 with numba_threads(architect, ip.get('threads', DEFAULT_THREADS)):

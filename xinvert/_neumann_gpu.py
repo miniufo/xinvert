@@ -142,7 +142,7 @@ def sor_gpu(s, a, c, rhs, q, active, labels, links, anchored, weights,
             periodic_x, *, block=None):
     """Mutate a host slice using resident CUDA state and fill diagnostic flags.
 
-    Array/scalar arguments match masked_poisson._sor. block follows the existing
+    Array/scalar arguments match _neumann._sor. block follows the existing
     gpu_block2d setting. Allocations/uploads occur once; checkpoints transfer
     only update/min/max/overflow scalars. A process-local shared semaphore
     limits concurrent Dask GPU solves. Periodic x must be even.

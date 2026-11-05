@@ -7,8 +7,7 @@ import ultraplot as uplt
 import xarray as xr
 from matplotlib.colors import ListedColormap
 
-from xinvert.domain import analyze_domain
-from xinvert.internal_bcs import identify_internal_bcs
+from xinvert.domain import analyze_domain, identify_internal_bcs
 
 DATA_PATH = Path("Data/SODA.nc")
 OUTPUT_PATH = Path("docs/source/_static/domain_internal_bcs_south_china_sea.png")

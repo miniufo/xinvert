@@ -15,7 +15,6 @@ from functools import partial
 import numpy as np
 import xarray as xr
 
-from ._threads import DEFAULT_THREADS, numba_threads, validate_threads
 from .cpu_mc import (
     invert_general_2D_mc,
     invert_general_3D_mc,
@@ -34,7 +33,7 @@ from .cpus import (
     invert_standard_2D_full,
     invert_standard_3D,
 )
-from .utils import loop_noncore
+from .utils import DEFAULT_THREADS, loop_noncore, numba_threads, validate_threads
 
 # ---------------------------------------------------------------------------
 # GPU kernel registry: maps CPU numba kernel → GPU equivalent
@@ -587,6 +586,14 @@ def _validate_inversion_dims(F, dims, expected):
     return dims
 
 
+def _normalize_internal_bcs(value):
+    """Extend is the user-facing zero-normal-derivative spelling."""
+    if not isinstance(value, str) or value.strip().lower() not in ('fixed', 'extend', 'neumann'):
+        raise ValueError("iParams['internal_bcs'] must be 'fixed', 'extend' or 'neumann'")
+    name = value.strip().lower()
+    return 'neumann' if name == 'extend' else name
+
+
 def _validate_solver_controls(iParams):
     """Validate inexpensive scalar controls before dispatching a solver.
 
@@ -607,9 +614,7 @@ def _validate_solver_controls(iParams):
         If a control has an invalid type, range, or finite-value status.
     """
     validate_threads(iParams.get('threads', DEFAULT_THREADS))
-    internal = iParams.get('internal_bcs', 'fixed')
-    if not isinstance(internal, str) or internal.strip().lower() not in ('fixed', 'neumann'):
-        raise ValueError("iParams['internal_bcs'] must be 'fixed' or 'neumann'")
+    iParams['internal_bcs'] = _normalize_internal_bcs(iParams.get('internal_bcs', 'fixed'))
 
     mx_loop = iParams.get('mxLoop')
     if (isinstance(mx_loop, (bool, np.bool_)) or
@@ -849,6 +854,77 @@ def _get_info(F, dims):
     return info, ncdims
 
 
+def _fixed_internal_rhs(coefficients, bcs, kernel_name):
+    """Return an iteration-only RHS mask and the prescribed wet boundary band.
+
+    The physical RHS/output mask is unchanged. Neighbor forcing defines land;
+    missing equation coefficients retain their separate kernel skip rules.
+    A Poisson boundary uses axial nearest neighbors. Mixed derivatives add
+    diagonal neighbors; fourth-order templates also need distance-two neighbors,
+    just as their external fixed boundaries require two layers.
+    """
+    rhs = np.asarray(coefficients[-1])
+    wet = np.isfinite(rhs) & (rhs != _undeftmp)
+    if wet.all():
+        return rhs, None
+    periodic = tuple(b == 'periodic' and k == rhs.ndim - 1
+                     for k, b in enumerate(bcs))
+    offsets = []
+    radius = 2 if 'bih' in kernel_name else 1
+    for axis in range(rhs.ndim):
+        for step in (-1, 1):
+            for distance in range(1, radius + 1):
+                offset = [0] * rhs.ndim
+                offset[axis] = step * distance
+                offsets.append(tuple(offset))
+    mixed = []
+    if rhs.ndim == 2:
+        if 'bih' in kernel_name:
+            mixed = [True]
+        elif 'standard_2D_full' in kernel_name:
+            mixed = coefficients[1:3]
+        elif 'standard_2D' in kernel_name or 'general_2D' in kernel_name:
+            mixed = coefficients[1:2]
+        has_mixed = any(np.any(np.isfinite(a) & (a != _undeftmp) & (a != 0))
+                        for a in mixed)
+        if has_mixed:
+            offsets.extend((dy, dx) for dy in (-1, 1) for dx in (-1, 1))
+            if 'bih' in kernel_name:
+                offsets.extend((dy, dx) for dy in (-2, 2) for dx in (-2, 2))
+    fixed = np.zeros(rhs.shape, dtype=bool)
+    for offset in offsets:
+        neighbor = np.roll(wet, shift=offset, axis=tuple(range(rhs.ndim)))
+        # Outside a nonperiodic array is external boundary, not masked land.
+        for axis, shift in enumerate(offset):
+            if shift and not periodic[axis]:
+                index = [slice(None)] * rhs.ndim
+                index[axis] = slice(0, shift) if shift > 0 else slice(shift, None)
+                neighbor[tuple(index)] = True
+        fixed |= wet & ~neighbor
+    # External boundary rules take priority on the nonperiodic perimeter.
+    for axis, wrap in enumerate(periodic):
+        if not wrap:
+            for end in (slice(0, radius), slice(-radius, None)):
+                index = [slice(None)] * rhs.ndim
+                index[axis] = end
+                fixed[tuple(index)] = False
+    if not fixed.any():
+        return rhs, None
+    result = np.array(rhs, copy=True)
+    result[fixed] = _undeftmp
+    return result, fixed
+
+
+def _include_fixed_extrema(flags, fixed_values, count):
+    """Include prescribed wet points in diagnostic extrema, not in residuals."""
+    if fixed_values is None or not count:
+        return
+    recorded = np.isfinite(flags[3:3 + count])
+    lo, hi = flags[3 + count:3 + 2*count], flags[3 + 2*count:3 + 3*count]
+    lo[recorded] = np.fmin(lo[recorded], np.min(fixed_values))
+    hi[recorded] = np.fmax(hi[recorded], np.max(fixed_values))
+
+
 def _make_kernel(kernel_func, grid_args, iParams):
     """Create a kernel function for xr.apply_ufunc that wraps an SOR function.
 
@@ -946,6 +1022,10 @@ def _make_kernel(kernel_func, grid_args, iParams):
             f"'cpu-mc', or 'gpu' "
             f"(case-insensitive)")
 
+    # Low-level callers may supply BCs only through positional grid_args.
+    bcs = iParams.get('BCs', [v for v in grid_args
+                             if isinstance(v, str) and v in ('fixed', 'extend', 'periodic')])
+
     def _kernel_(s, *args):
         """Solve one vectorized slice and optionally return raw diagnostics.
 
@@ -964,6 +1044,14 @@ def _make_kernel(kernel_func, grid_args, iParams):
         """
         *coeffs, info = args
         s.setflags(write=1)
+        iteration_rhs, fixed = _fixed_internal_rhs(
+            coeffs, bcs, kernel_func.__name__)
+        # Land is not a boundary-value carrier. Only the wet fixed band keeps
+        # finite icbc values while its iteration RHS is marked as prescribed.
+        physical = np.asarray(coeffs[-1])
+        s[(physical == _undeftmp) | ~np.isfinite(physical)] = _undeftmp
+        fixed_values = s[fixed].copy() if fixed is not None and diag_interval else None
+        coeffs[-1] = iteration_rhs
         o = s
         diagnostic_count = ((int(iParams['mxLoop']) + diag_interval - 1) //
                             diag_interval if diag_interval else 0)
@@ -975,6 +1063,7 @@ def _make_kernel(kernel_func, grid_args, iParams):
                  iParams['optArg'], _undeftmp, flags,
                  iParams['mxLoop'], iParams['tolerance'])
 
+        _include_fixed_extrema(flags, fixed_values, diagnostic_count)
         if iParams['printInfo']:
             msg = (f'{info} loops {flags[2]:4.0f}, residual is '
                    f'{flags[1]:e}')
@@ -1098,6 +1187,11 @@ def _diagnostics_from_flags(raw, iParams):
         'final_error': final_error,
         'stop_reason': reason,
     })
+    for key in ('error', 'final_error'):
+        diagnostics[key].attrs.update(
+            units='1', long_name='Normalized maximum SOR correction',
+            definition='max(abs(correction))/max(abs(old solution),abs(new solution)); '
+                       'absolute correction for zero solution scale')
     diagnostics.solution_min.attrs['long_name'] = 'Minimum valid solution value'
     diagnostics.solution_max.attrs['long_name'] = 'Maximum valid solution value'
     diagnostics.attrs.update({

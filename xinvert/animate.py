@@ -1,4 +1,4 @@
-"""Streaming iteration frames for CPU, CPU-mc and resident GPU backends."""
+"""In-memory or streamed iteration frames on CPU, CPU-mc and GPU."""
 import numpy as np
 import xarray as xr
 
@@ -10,20 +10,23 @@ from .core import (
 from .utils import loop_noncore
 
 
-def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
+def record_iteration(app_name, F, dims=None, coords='lat-lon', icbc=None,
                       mParams=None, iParams=None,
-                      loop_per_frame=5, max_frames=30, *, output, complevels=0):
-    r"""Synchronously write iteration frames to a NetCDF file.
+                      iter_per_frame=5, max_frames=30, *, output=None, complevels=0):
+    r"""Return iteration frames or synchronously stream them to NetCDF.
 
     Parameters
     ----------
-    app_name : str
-        Physical application name, such as Poisson, Stommel or omega.
+    app_name : str or callable
+        Physical application name, such as Poisson, or a supported xinvert
+        inversion function such as invert_Poisson.
     F : xarray.DataArray
         One spatial problem. A non-spatial dimension may have length one.
         Lazy inputs are materialized once during setup.
-    dims : list of str
-        Spatial dimensions, ordered as expected by the inversion.
+    dims : list of str, optional
+        Spatial dimensions in solver order. When omitted, singleton dimensions
+        are squeezed out and the remaining dimensions are used; recognized
+        latitude/longitude or y/x names are ordered as Y, X.
     coords : str, optional
         Coordinate system used by the selected physical application.
     icbc : xarray.DataArray or None
@@ -31,12 +34,13 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
     mParams, iParams : dict or None
         Model and solver controls. Architecture and dtype are retained;
         mxLoop, tolerance and printInfo are overridden:
-        each frame always advances loop_per_frame additional sweeps.
+        each frame always advances iter_per_frame additional sweeps.
         A positive diag_interval explicitly enables scalar diagnostic history.
-    loop_per_frame, max_frames : int
+    iter_per_frame, max_frames : int
         Positive sweep count per frame and number of frames to write.
-    output : str or os.PathLike
-        Required keyword-only destination. Existing files are never replaced.
+    output : str or os.PathLike, optional
+        Stream frames to this new NetCDF file. When omitted, retain all frames
+        in memory and return a DataArray. Existing files are never replaced.
     complevels : int, optional
         Zlib compression level for the solution variable: 0 disables
         compression; 1--9 enable lossless zlib compression. Passed as
@@ -44,25 +48,31 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
 
     Returns
     -------
-    xarray.Dataset or None
-        Returns diagnostics only when iParams['diag_interval'] is positive.
-        Otherwise returns None. Writes an ``inverted`` variable with dimensions
-        ``(iter, *input_dimensions)``.
-        Reopen with xarray.open_dataset for lazy analysis.
+    xarray.DataArray, tuple, xarray.Dataset or None
+        Without output: frames with dimensions ``(iter, *input_dimensions)``;
+        with a positive diag_interval, returns (frames, diagnostics).
+        With output: writes ``inverted(iter, ...)`` and returns diagnostics
+        only when diag_interval is positive, otherwise None. Reopen the file
+        with xarray.open_dataset for lazy analysis.
 
     Notes
     -----
-    No Dask frame graph or temporary files are created. CPU and CPU-mc reuse
+    No Dask frame graph or temporary files are created. File output keeps
+    bounded frame buffers; memory output retains every frame. CPU and CPU-mc reuse
     the current solution and prepared coefficients. GPU keeps the solution,
     coefficients and workspace on device for the entire call; only one frame
     is downloaded at a time. Writing and flushing finish before advancing.
-    Live frame buffers and the HDF5 variable cache have bounded size,
-    independent of max_frames. Optional scalar diagnostic history grows with
+    With file output, live frame buffers and the HDF5 variable cache have
+    bounded size, independent of max_frames. Optional scalar diagnostic history grows with
     the number of checkpoints; it never contains spatial frames. The full
     spatial working set must still fit in host/device memory; other processes
     can still exhaust system memory.
-    On failure the file is closed and completed_frames identifies valid
-    frames; a partially written trailing frame must be ignored.
+    status and completed_frames record progress in DataArray attributes (memory
+    mode) or file attributes (file mode). On failure the file is closed; only
+    completed records are valid and a partial trailing frame must be ignored.
+    The file is not a restart format. Fixed iteration work uses the diagnostic
+    stop_reason='max_iterations'; tolerance does not stop recording early.
+    Internal extend/neumann boundaries are currently unsupported.
     """
     import numbers
     from pathlib import Path
@@ -73,11 +83,35 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         raise TypeError('complevels must be an integer between 0 and 9')
     if not 0 <= complevels <= 9:
         raise ValueError('complevels must be an integer between 0 and 9')
-    destination = Path(output)
-    if destination.exists():
+    if not isinstance(F, xr.DataArray):
+        raise TypeError('F must be an xarray.DataArray')
+    destination = None if output is None else Path(output)
+    if destination is not None and destination.exists():
         raise FileExistsError(f'Animation output already exists: {destination}')
-
-    for name, value in [('loop_per_frame', loop_per_frame),
+    if destination is None and complevels:
+        raise ValueError('complevels requires a file output')
+    if dims is None:
+        F = F.squeeze(drop=True)
+        if any(d.lower() in ('time', 'member', 'ensemble', 'realization') for d in F.dims):
+            raise ValueError('select one time/member spatial slice before calling record_iteration')
+        dims = list(F.dims)
+        for pair in [('lat', 'lon'), ('latitude', 'longitude'), ('y', 'x'), ('Y', 'X')]:
+            if set(pair).issubset(dims):
+                dims = [d for d in dims if d not in pair] + list(pair)
+                break
+        if isinstance(icbc, xr.DataArray):
+            icbc = icbc.squeeze(drop=True)
+        if mParams is not None:
+            mParams = {key: value.squeeze(drop=True) if isinstance(value, xr.DataArray) else value
+                       for key, value in mParams.items()}
+    if callable(app_name):
+        name = getattr(app_name, '__name__', '')
+        if not name.startswith('invert_') or getattr(_apps, name, None) is not app_name:
+            raise TypeError('app_name must be a supported xinvert inversion function or name')
+        app_name = name[len('invert_'):]
+    elif not isinstance(app_name, str):
+        raise TypeError('app_name must be a supported xinvert inversion function or name')
+    for name, value in [('iter_per_frame', iter_per_frame),
                         ('max_frames', max_frames)]:
         if isinstance(value, bool) or not isinstance(value, numbers.Integral):
             raise TypeError(f'{name} must be a positive integer')
@@ -94,7 +128,7 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         raise ValueError('For 2D case, only 2D slice  F is allowed;\n'+
                         'For 3D case, only 3D volume F is allowed.')
 
-    app_name = app_name.lower()
+    app_name = app_name.strip().lower()
     if isinstance(dims, str):
         dimLen = 1
     elif isinstance(dims, (list, tuple)):
@@ -102,6 +136,10 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
     else:
         raise TypeError(
             f'dims must be a string, list, or tuple, got {type(dims).__name__}')
+    required_dims = 3 if app_name in ('omega', '3docean') else 2
+    if dimLen != required_dims:
+        raise ValueError(f'{app_name} animation requires one {required_dims}-D spatial slice; '
+                         'select a time/member before calling')
     dims = _validate_inversion_dims(F, dims, dimLen)
 
     iParams = _apps.__update(_apps.default_iParams, iParams)
@@ -109,12 +147,13 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
     _validate_solver_controls(iParams)
     if iParams['internal_bcs'].strip().lower() == 'neumann':
         raise NotImplementedError(
-            "animate_iteration does not yet support internal_bcs='neumann'")
-    try:
-        import netCDF4
-    except ImportError as exc:
-        raise ImportError(
-            "Animation output requires netCDF4; install xinvert[io]") from exc
+            "record_iteration does not yet support internal_bcs='neumann'")
+    netCDF4 = None
+    if destination is not None:
+        try:
+            import netCDF4
+        except ImportError as exc:
+            raise ImportError('File output requires netCDF4; reinstall xinvert') from exc
 
     if   app_name == 'poisson':
         coef_func = _apps.__coeffs_Poisson
@@ -220,7 +259,7 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         'inv_general3D': core.invert_general_3D,
     }
     kernel = kernels[invt_func.__name__]
-    frame_params = dict(iParams, mxLoop=int(loop_per_frame), tolerance=0.,
+    frame_params = dict(iParams, mxLoop=int(iter_per_frame), tolerance=0.,
                         diag_interval=0, printInfo=False)
     grid_args, settings = _animation_kernel_settings(kernel, frame_params)
     # Validate backend availability before creating the destination.
@@ -230,11 +269,16 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
     arrays = tuple(_spatial_array(coef, initS, dims)
                    for coef in (*coeffs, maskF))
     invalid = _spatial_array(maskF, initS, dims) == core._undeftmp
+    iteration_rhs, fixed = core._fixed_internal_rhs(
+        arrays, iParams['BCs'], kernel.__name__)
+    state[invalid] = core._undeftmp
+    arrays = (*arrays[:-1], iteration_rhs)
+    fixed_values = state[fixed].copy() if fixed is not None else None
     has_invalid = bool(invalid.any())
-    masked = (np.empty_like(state) if icbc is None and has_invalid
+    masked = (np.empty_like(state) if has_invalid
               and architect != 'gpu' else None)
 
-    total_loops = int(loop_per_frame)*int(max_frames)
+    total_loops = int(iter_per_frame)*int(max_frames)
     diagnostic_interval = max(int(iParams.get('diag_interval', 0)), 0)
     diagnostic_count = ((total_loops + diagnostic_interval - 1)//diagnostic_interval
                         if diagnostic_interval else 0)
@@ -266,12 +310,16 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
         else:
             function = kernel if architect == 'cpu' else core._cpu_mc_kernel_map[kernel]
 
-        writer = resources.enter_context(_AnimationWriter(
-            destination, initS, dims, state.dtype, netCDF4,
-            architect, loop_per_frame, max_frames, int(complevels)))
+        if destination is None:
+            writer = resources.enter_context(_MemoryAnimationWriter(
+                initS, dims, state.dtype, architect, iter_per_frame, max_frames))
+        else:
+            writer = resources.enter_context(_AnimationWriter(
+                destination, initS, dims, state.dtype, netCDF4,
+                architect, iter_per_frame, max_frames, int(complevels)))
         del coeffs, maskF, initS
         for frame in range(max_frames):
-            frame_end = (frame + 1)*loop_per_frame
+            frame_end = (frame + 1)*iter_per_frame
             while completed_loops < frame_end:
                 target = min(frame_end, next_diagnostic)
                 steps = target - completed_loops
@@ -298,12 +346,13 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
                         _record_solution_diagnostics(
                             history, diagnostic_index, error, state, arrays[-1],
                             core._undeftmp, total_loops, diagnostic_interval)
+                    core._include_fixed_extrema(history, fixed_values, diagnostic_count)
                     diagnostic_index += 1
                     next_diagnostic = min(
                         next_diagnostic + diagnostic_interval, total_loops)
             if architect == 'gpu':
                 session.copy_to_host(state)
-            if icbc is None and has_invalid:
+            if has_invalid:
                 if masked is None:
                     state[invalid] = iParams['undef']  # host copy only on GPU
                     data = state
@@ -323,10 +372,12 @@ def animate_iteration(app_name, F, dims, coords='lat-lon', icbc=None,
                          dims=[*batch_dims, 'diagnostic'], coords=batch_coords),
             dict(frame_params, mxLoop=total_loops, diag_interval=diagnostic_interval))
         diagnostics.attrs.update(
-            output=str(destination), completed_frames=int(max_frames),
-            status='complete', mode='fixed_work')
+            completed_frames=int(max_frames), status='complete', mode='fixed_work')
+        if destination is None:
+            return writer.frames, diagnostics
+        diagnostics.attrs['output'] = str(destination)
         return diagnostics
-    return None
+    return writer.frames if destination is None else None
 
 
 def _spatial_array(field, template, dims):
@@ -378,6 +429,54 @@ def _animation_kernel_settings(kernel, params):
     return [settings[name] for name in grid_names], settings
 
 
+def _encode_animation_coordinate(coordinate, name):
+    """Normalize safe NumPy time units for older xarray CF encoders.
+
+    xarray 2023 (supported on Python 3.9) expects nanosecond NumPy time
+    coordinates. Convert only when a round trip preserves every value;
+    never silently wrap dates outside the nanosecond range.
+    """
+    variable = coordinate.variable
+    if variable.dtype.kind in 'Mm':
+        unit = 'datetime64[ns]' if variable.dtype.kind == 'M' else 'timedelta64[ns]'
+        values = variable.values
+        converted = values.astype(unit)
+        if np.array_equal(converted.astype(variable.dtype), values, equal_nan=True):
+            variable = variable.copy(data=converted)
+    return xr.conventions.encode_cf_variable(variable, name=name)
+
+
+class _MemoryAnimationWriter:
+    """Copy each completed frame into a DataArray in the input dimension order."""
+
+    def __init__(self, template, dims, dtype, architect, interval, count):
+        order = [*dims, *[d for d in template.dims if d not in dims]]
+        self._shape = tuple(template.sizes[d] for d in order)
+        self._axes = tuple(order.index(d) for d in template.dims)
+        self.frames = xr.DataArray(
+            np.empty((count, *template.shape), dtype=dtype),
+            dims=('iter', *template.dims),
+            coords={**template.coords, 'iter': np.arange(1, count + 1) * interval},
+            name='inverted', attrs={**template.attrs, 'architect': architect,
+                'iter_per_frame': interval, 'requested_frames': count,
+                'completed_frames': 0, 'status': 'running'})
+
+    def __enter__(self):
+        return self
+
+    def write(self, index, iteration, values):
+        self.frames.values[index] = values.reshape(self._shape).transpose(self._axes)
+        self.frames.attrs['completed_frames'] = index + 1
+
+    def complete(self):
+        self.frames.attrs['status'] = 'complete'
+
+    def __exit__(self, exception_type, exception, traceback):
+        if exception_type is not None:
+            self.frames.attrs['status'] = 'failed'
+        return False
+
+
 class _AnimationWriter:
     """Append frames synchronously to one exclusively created NetCDF4 file.
 
@@ -410,14 +509,14 @@ class _AnimationWriter:
         try:
             dataset = self._file
             dataset.setncatts({
-                'architect': architect, 'loop_per_frame': interval,
+                'architect': architect, 'iter_per_frame': interval,
                 'requested_frames': count, 'completed_frames': 0,
                 'status': 'running'})
             dataset.createDimension('iter', None)
             for dim in template.dims:
                 dataset.createDimension(dim, template.sizes[dim])
             for name, coordinate in template.coords.items():
-                variable = xr.conventions.encode_cf_variable(coordinate.variable, name=name)
+                variable = _encode_animation_coordinate(coordinate, name)
                 values = np.asarray(variable.values)
                 datatype = str if values.dtype.kind in 'OU' else values.dtype
                 attributes = dict(variable.attrs)

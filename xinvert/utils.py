@@ -1,15 +1,507 @@
 """
-Utility module of xinvert: data preprocessing helpers.
+Shared utilities: preprocessing, flow diagnostics, animation and thread controls.
 
 Provides ``loop_noncore`` for iterating over non-core dimensions,
 ``smooth9`` for 9-point smoothing, and ``coarsen`` for block-averaging
 xarray DataArrays with flexible boundary handling.
 """
+import numbers
 import warnings
+from contextlib import contextmanager
 
 import numba as nb
 import numpy as np
 import xarray as xr
+from numba import config, get_num_threads, set_num_threads
+
+# Inherit the executing thread's mask; do not override worker configuration.
+DEFAULT_THREADS = None
+
+
+def validate_threads(threads):
+    """Accept a thread count or None (inherit the executing thread's mask)."""
+    if threads is not None and (
+        isinstance(threads, bool)
+        or not isinstance(threads, numbers.Integral)
+        or not 1 <= threads <= config.NUMBA_NUM_THREADS
+    ):
+        raise ValueError(
+            "threads must be None or a positive integer within Numba's "
+            f"thread limit ({config.NUMBA_NUM_THREADS})"
+        )
+
+
+@contextmanager
+def numba_threads(architect, threads=DEFAULT_THREADS):
+    """Temporarily select CPU-mc threads inside the executing worker thread."""
+    if architect != 'cpu-mc':
+        yield
+        return
+    validate_threads(threads)
+    previous = get_num_threads()
+    try:
+        if threads is not None:
+            set_num_threads(int(threads))
+        yield
+    finally:
+        set_num_threads(previous)
+
+
+
+
+class _AnimationRenderer:
+    """Process-local file handle and plotting state; no open file crosses IPC."""
+
+    def __init__(self, settings, fig=None, axes=None):
+        self.settings = settings
+        self.dataset = xr.open_dataset(settings['source'])
+        self.fig, self.axes = fig, axes
+        self.original_size = fig.get_size_inches().copy() if fig is not None else None
+        self.original_dpi = fig.dpi if fig is not None else None
+
+    def render(self, index):
+        import matplotlib as mpl
+        from matplotlib.axes import Axes
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
+
+        settings = self.settings
+        frame = self.dataset.isel({settings['framedim']: index})
+        figure, axes = self.fig, self.axes
+        owned = figure is None
+        try:
+            if owned:
+                if settings['figfunc'] is not None:
+                    figure, axes = settings['figfunc'](**settings['fig_kwargs'])
+                    if not isinstance(figure, Figure):
+                        raise TypeError('figfunc must return (Figure, axes)')
+                else:
+                    figure = Figure(figsize=settings['figsize'], dpi=settings['dpi'])
+                    FigureCanvasAgg(figure)
+                    axes = figure.add_subplot(111, **settings['subplot_kw'])
+            flat = [axes] if isinstance(axes, Axes) else np.asarray(axes, dtype=object).ravel()
+            if not len(flat) or any(not isinstance(ax, Axes) or ax.figure is not figure for ax in flat):
+                raise ValueError('figfunc axes must belong to its Figure')
+            if settings['plotfunc'] is None:
+                field = frame[settings['plot_variable']].squeeze(drop=True)
+                if field.ndim != 2:
+                    raise ValueError('default plot needs a 2-D frame; provide plotfunc')
+                artist = field.plot.pcolormesh(ax=axes, **settings['plot_kwargs'])
+                if settings['plot_kwargs'].get('norm') is None:
+                    low, high = artist.get_clim()
+                    settings['plot_kwargs'].setdefault('vmin', low)
+                    settings['plot_kwargs'].setdefault('vmax', high)
+            else:
+                settings['plotfunc'](frame, axes, **settings['plot_kwargs'])
+            name = settings['folder'] / f'frame_{index:08d}.png'
+            # PNG is lossless. Low compression trades temporary disk space for
+            # rendering throughput; fixed canvas size is required for encoding.
+            with mpl.rc_context({'savefig.bbox': None}):
+                figure.savefig(name, format='png', dpi=settings['dpi'],
+                               bbox_inches=None, pil_kwargs={'compress_level': 1})
+            return index
+        finally:
+            if owned and figure is not None:
+                from matplotlib import pyplot as plt
+                plt.close(figure)
+                figure.clear()
+
+    def close(self):
+        self.dataset.close()
+        if self.fig is not None:
+            self.fig.set_size_inches(self.original_size, forward=False)
+            self.fig.set_dpi(self.original_dpi)
+
+
+_ANIMATION_RENDERER = None
+
+
+def _init_animation_worker(payload):
+    import atexit
+
+    import cloudpickle
+    import matplotlib
+
+    matplotlib.use('Agg', force=True)
+    global _ANIMATION_RENDERER
+    settings = cloudpickle.loads(payload)
+    if settings['ultraplot_loaded']:
+        __import__('ultraplot')  # register its colors/fonts in this process too
+    matplotlib.rcParams.update(settings['rc_params'])
+    _ANIMATION_RENDERER = _AnimationRenderer(settings)
+    atexit.register(_ANIMATION_RENDERER.close)
+
+
+def _render_animation_worker(index):
+    return _ANIMATION_RENDERER.render(index)
+
+
+def _render_animation_parallel(settings, count, workers):
+    """Bound outstanding work; return no pixel arrays through process queues."""
+    import multiprocessing
+    from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+
+    import cloudpickle
+
+    payload = cloudpickle.dumps(settings)
+    indices = iter(range(1, count))
+    with ProcessPoolExecutor(max_workers=min(workers, count-1),
+                             mp_context=multiprocessing.get_context('spawn'),
+                             initializer=_init_animation_worker,
+                             initargs=(payload,)) as pool:
+        pending = set()
+        try:
+            for _ in range(min(2*workers, count-1)):
+                pending.add(pool.submit(_render_animation_worker, next(indices)))
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    future.result()
+                    index = next(indices, None)
+                    if index is not None:
+                        pending.add(pool.submit(_render_animation_worker, index))
+        except BaseException:
+            for future in pending:
+                future.cancel()
+            raise
+
+
+def _encode_animation_frames(folder, target, count, fps, writer, executable):
+    """Encode ordered PNGs only after all render workers have exited."""
+    from PIL import Image
+
+    size = None
+    for index in range(count):
+        with Image.open(folder / f'frame_{index:08d}.png') as image:
+            if size is None:
+                size = image.size
+            elif image.size != size:
+                raise ValueError('frame sizes differ; use a fixed figure size and layout')
+    if writer == 'ffmpeg':
+        import subprocess
+
+        args = [executable, '-v', 'error', '-y', '-threads', '1',
+                '-filter_threads', '1', '-framerate', str(fps), '-start_number', '0',
+                '-i', str(folder / 'frame_%08d.png'), '-frames:v', str(count)]
+        if target.suffix == '.gif':
+            args += ['-filter_complex_threads', '1', '-filter_complex',
+                     'split[a][b];[a]palettegen=stats_mode=single[p];' +
+                     '[b][p]paletteuse=new=1', '-loop', '0']
+        else:
+            args += ['-c:v', 'libx264', '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
+                     '-pix_fmt', 'yuv420p']
+        args += ['-threads', '1', str(target)]
+        result = subprocess.run(args, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE, text=True, check=False)
+        if result.returncode:
+            raise RuntimeError('FFmpeg encoding failed: ' + result.stderr.strip())
+    else:
+        frames = []
+        try:
+            for index in range(count):
+                with Image.open(folder / f'frame_{index:08d}.png') as image:
+                    frames.append(image.convert('RGB'))
+            frames[0].save(target, format='GIF', save_all=True,
+                           append_images=frames[1:], duration=int(1000/fps), loop=0)
+        finally:
+            for image in frames:
+                image.close()
+
+
+def create_animation(input_file, output_file, plotfunc=None, *, framedim=None, fps=6, figsize=(8, 5), dpi=100,
+                    plot_kwargs=None, subplot_kw=None, ffmpeg=None,
+                    overwrite=False, writer="auto", fig=None, axes=None,
+                    workers=1, figfunc=None, fig_kwargs=None,
+                    remove_frames=True, temp_dir=None):
+    """Create a GIF or MP4 from NetCDF frames.
+
+    Parameters
+    ----------
+    input_file, output_file : str or pathlib.Path
+        Input NetCDF file and output path ending in .gif or .mp4.
+        Existing output is preserved unless overwrite=True. Returns only
+        after encoding succeeds; failures leave no partial output file.
+    plotfunc : callable or None
+        Called once per frame as ``plotfunc(frame, ax, **plot_kwargs)``.
+        ``frame`` is a Dataset selected at one index along framedim, with all
+        variables available and read only when accessed. Static variables
+        without framedim are retained. Select variables inside plotfunc. ``ax``
+        is a fresh Matplotlib Axes by default. With fig/axes, the same supplied
+        axes object is passed on every call. For full-frame drawing use
+        figfunc, which creates fresh axes for each frame.
+        Draw on this figure; the callback return value is ignored. Functions,
+        callable objects, closures and functools.partial are accepted.
+        None draws a two-dimensional pcolormesh, selecting 'inverted' or the
+        only data variable. Default color limits are fixed from the first
+        frame; use plot_kwargs to choose explicit vmin/vmax.
+    framedim : str or None
+        Frame dimension. None selects 'iter', then 'time'; otherwise specify
+        it explicitly. Iteration files use only completed_frames records.
+    fps : positive number
+        Frames per second (default 6). GIF timing has 0.01-second resolution.
+    figsize : pair of float
+        Figure width and height in inches (default (8, 5)).
+    dpi : positive number
+        Figure resolution (default 100). MP4 pixel dimensions are made even.
+    plot_kwargs : mapping or None
+        Keyword arguments forwarded to plotfunc, or to DataArray.plot.pcolormesh
+        with the default plot. The caller's mapping is not modified.
+    subplot_kw : mapping or None
+        Arguments for Figure.add_subplot, e.g. {'projection': cartopy_crs}.
+    ffmpeg : str or pathlib.Path or None
+        Optional executable path. None uses system FFmpeg, falling back to
+        the executable provided by imageio-ffmpeg.
+    overwrite : bool
+        Whether to replace an existing output after successful encoding.
+    writer : {'auto', 'ffmpeg', 'pillow'}
+        Case-insensitive. Auto prefers FFmpeg (system or imageio-ffmpeg),
+        falling back to Pillow for GIF if no usable FFmpeg is found.
+        Pillow does not support MP4 and caches rendered frames in memory.
+        An explicitly supplied ffmpeg path must be usable; it does not
+        silently fall back. Encoding errors are propagated without retrying.
+    fig : matplotlib.figure.Figure or None
+        Optional preconfigured Figure, including an UltraPlot Figure.
+        Requires plotfunc. Its axes, formatting and colorbars are preserved;
+        the figure is not cleared or closed. figsize is ignored in this mode.
+    axes : Axes, axes collection or None
+        Axes object passed unchanged to plotfunc when fig is supplied.
+        None uses the figure's sole axes or a tuple of all existing axes.
+        All axes must belong to fig. With supplied axes, subplot_kw is unused.
+
+    workers : positive int
+        Rendering processes (default 1). Each process opens its own NetCDF
+        handle and writes distinct numbered PNGs. Encoding remains serial.
+        Existing fig/axes require workers=1. Outstanding jobs are bounded.
+    figfunc : callable or None
+        Optional factory called as ``figfunc(**fig_kwargs)`` for each frame,
+        returning (figure, axes). Use for independent UltraPlot/Cartopy plots
+        with parallel rendering; requires plotfunc. Factory figures are closed
+        after saving. It cannot be combined with existing fig/axes.
+    fig_kwargs : mapping or None
+        Keyword arguments passed to figfunc.
+    remove_frames : bool
+        True (default) deletes the frame directory, including after failures.
+        False retains it and returns (animation_path, frame_directory).
+        On failure the directory path is reported in a warning.
+    temp_dir : str or pathlib.Path or None
+        Parent directory for a unique frame subdirectory. None uses the output
+        directory. Choose a fast local disk with space for all lossless PNGs.
+
+    Returns
+    -------
+    pathlib.Path or tuple of pathlib.Path
+        Absolute animation path. With remove_frames=False, returns
+        (animation_path, frame_directory).
+
+    Notes
+    -----
+    Each frame is read independently and saved as a lossless PNG in a unique
+    temporary directory. Rendering completes before serial GIF/MP4 encoding.
+    PNGs are deleted by default on success or failure. FFmpeg uses one encoder
+    thread; Pillow still caches decoded frames during GIF assembly.
+    For workers>1, callbacks and factories are serialized with cloudpickle.
+    Do not capture a live Figure/Axes/artist or an open Dataset in their
+    closures; create them in figfunc instead. In standalone scripts protect
+    the call with ``if __name__ == '__main__':`` (spawn multiprocessing).
+    This function does not run an inversion or interpolate between frames.
+
+    Examples
+    --------
+    >>> create_animation('iteration.nc', 'iteration.gif',
+    ...                 plot_kwargs={'vmin': -1e6, 'vmax': 1e6})
+    >>> def draw(frame, ax, scale=1):
+    ...     (frame.inverted * scale).plot(ax=ax, vmin=-1, vmax=1)
+    >>> create_animation('iteration.nc', 'iteration.mp4', draw,
+    ...                 plot_kwargs={'scale': 1e-6})
+    """
+    import os
+    import shutil
+    import tempfile
+    from collections.abc import Mapping
+    from pathlib import Path
+
+    if plotfunc is not None and not callable(plotfunc):
+        raise TypeError('plotfunc must be callable or None')
+    options = {}
+    for name, value in [('plot_kwargs', plot_kwargs), ('subplot_kw', subplot_kw),
+                        ('fig_kwargs', fig_kwargs)]:
+        if value is not None and not isinstance(value, Mapping):
+            raise TypeError(f'{name} must be a mapping or None')
+        options[name] = dict(value or {})
+    for name, value in [('fps', fps), ('dpi', dpi)]:
+        if (isinstance(value, bool) or not isinstance(value, numbers.Real)
+                or not np.isfinite(value) or value <= 0):
+            raise ValueError(f'{name} must be a positive finite number')
+    if isinstance(workers, bool) or not isinstance(workers, numbers.Integral) or workers < 1:
+        raise ValueError('workers must be a positive integer')
+    if not isinstance(remove_frames, bool):
+        raise TypeError('remove_frames must be boolean')
+    if figfunc is not None and not callable(figfunc):
+        raise TypeError('figfunc must be callable or None')
+    if figfunc is not None and (fig is not None or axes is not None or plotfunc is None):
+        raise ValueError('figfunc requires plotfunc and cannot be combined with fig/axes')
+    if workers > 1 and (fig is not None or axes is not None):
+        raise ValueError('parallel rendering cannot share fig/axes; use figfunc instead')
+    if not isinstance(overwrite, bool):
+        raise TypeError('overwrite must be boolean')
+    source, target = Path(input_file).expanduser().resolve(), Path(output_file).expanduser().resolve()
+    suffix = target.suffix.lower()
+    if suffix not in ('.gif', '.mp4'):
+        raise ValueError('output_file must end in .gif or .mp4')
+    if source == target:
+        raise ValueError('input and output must be different files')
+    if target.exists() and not overwrite:
+        raise FileExistsError(target)
+    if not isinstance(writer, str) or writer.strip().lower() not in ('auto', 'ffmpeg', 'pillow'):
+        raise ValueError("writer must be 'auto', 'ffmpeg' or 'pillow'")
+    writer = writer.strip().lower()
+    if writer == 'pillow' and suffix != '.gif':
+        raise ValueError('Pillow supports GIF only; MP4 requires FFmpeg')
+
+    # Keep plotting imports lazy: ordinary inversions do not initialize a GUI.
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
+    owned_figure = fig is None
+    if owned_figure:
+        if axes is not None:
+            raise ValueError('axes requires fig')
+    else:
+        if not isinstance(fig, Figure):
+            raise TypeError('fig must be a Matplotlib or UltraPlot Figure')
+        if plotfunc is None:
+            raise ValueError('a supplied fig requires plotfunc')
+        if axes is None:
+            axes = fig.axes[0] if len(fig.axes) == 1 else tuple(fig.axes)
+        flat_axes = [axes] if isinstance(axes, Axes) else np.asarray(axes, dtype=object).ravel()
+        if not len(flat_axes) or any(not isinstance(ax, Axes) or ax.figure is not fig for ax in flat_axes):
+            raise ValueError('axes must be nonempty and belong to fig')
+
+    executable = None
+    if writer != 'pillow':
+        # Check availability before rendering; never reinterpret an encoding
+        # error or a callback failure as a missing FFmpeg installation.
+        import subprocess
+
+        candidates = []
+        if ffmpeg is not None:
+            candidate = shutil.which(os.fspath(ffmpeg))
+            if candidate is None:
+                raise FileNotFoundError(f'FFmpeg executable not found: {ffmpeg}')
+            candidates.append(candidate)
+        else:
+            candidate = shutil.which('ffmpeg')
+            if candidate:
+                candidates.append(candidate)
+            # Only inspect the bundled fallback when the system candidate fails.
+        for candidate in candidates:
+            try:
+                subprocess.run([candidate, '-version'], check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                executable = candidate
+                break
+            except (OSError, subprocess.SubprocessError):
+                pass
+        if executable is None and ffmpeg is None:
+            try:
+                import imageio_ffmpeg
+                candidate = imageio_ffmpeg.get_ffmpeg_exe()
+                subprocess.run([candidate, '-version'], check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                executable = candidate
+            except (ImportError, OSError, RuntimeError, subprocess.SubprocessError):
+                pass
+        if executable is None:
+            if ffmpeg is not None or writer == 'ffmpeg' or suffix == '.mp4':
+                raise RuntimeError('FFmpeg is unavailable; MP4 requires FFmpeg. '
+                                   "For GIF use writer='pillow', or install imageio-ffmpeg.")
+            warnings.warn('FFmpeg is unavailable; using Pillow for GIF. '
+                          'Pillow keeps rendered frames in memory.', UserWarning, stacklevel=2)
+            writer = 'pillow'
+        else:
+            writer = 'ffmpeg'
+
+    with xr.open_dataset(source) as dataset:
+        if framedim is None:
+            framedim = next((dim for dim in ('iter', 'time') if dim in dataset.dims), None)
+        if framedim not in dataset.dims:
+            raise ValueError('specify framedim: expected an iter or time dimension')
+        count = dataset.sizes[framedim]
+        if framedim == 'iter' and 'completed_frames' in dataset.attrs:
+            completed = dataset.attrs['completed_frames']
+            if (isinstance(completed, (bool, np.bool_))
+                    or not isinstance(completed, numbers.Integral)
+                    or not 0 <= completed <= count):
+                raise ValueError('invalid completed_frames in input file')
+            count = int(completed)
+        if count == 0:
+            raise ValueError('input contains no completed frames')
+        plot_variable = None
+        if plotfunc is None:
+            if 'inverted' in dataset:
+                plot_variable = 'inverted'
+            elif len(dataset.data_vars) == 1:
+                plot_variable = next(iter(dataset.data_vars))
+            else:
+                raise ValueError('provide plotfunc for a multi-variable file')
+            if framedim not in dataset[plot_variable].dims:
+                raise ValueError('default plotted variable must contain the frame dimension')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    parent = target.parent if temp_dir is None else Path(temp_dir).expanduser().resolve()
+    parent.mkdir(parents=True, exist_ok=True)
+    folder = Path(tempfile.mkdtemp(prefix='.xinvert-animation-', dir=parent))
+    settings = dict(source=source, plot_variable=plot_variable, framedim=framedim,
+                    folder=folder, figsize=figsize, dpi=dpi,
+                    plotfunc=plotfunc, figfunc=figfunc,
+                    **options)
+    renderer = None
+    try:
+        renderer = _AnimationRenderer(settings, fig, axes)
+        # Render frame zero once to validate the callback/factory and establish
+        # default normalization before copying settings to spawn workers.
+        renderer.render(0)
+        # Spawn starts with fresh Matplotlib defaults. Copy the parent's style
+        # after the first plot/factory has initialized its plotting library.
+        import sys
+
+        import matplotlib as mpl
+
+        settings['ultraplot_loaded'] = 'ultraplot' in sys.modules
+        settings['rc_params'] = {key: mpl.rcParams[key] for key in mpl.rcParams
+                                 if key not in ('backend', 'backend_fallback', 'interactive')}
+        renderer.close()
+        renderer = None
+        if count > 1:
+            if workers > 1:
+                _render_animation_parallel(settings, count, int(workers))
+            else:
+                renderer = _AnimationRenderer(settings, fig, axes)
+                for index in range(1, count):
+                    renderer.render(index)
+                renderer.close()
+                renderer = None
+        # Encoded output stays on the destination filesystem for atomic
+        # publication, even when PNGs are on a different temporary disk.
+        with tempfile.TemporaryDirectory(prefix='.xinvert-encode-', dir=target.parent) as encoding:
+            temporary = Path(encoding) / ('movie' + suffix)
+            _encode_animation_frames(folder, temporary, count, fps, writer, executable)
+            if overwrite:
+                os.replace(temporary, target)
+            else:
+                os.link(temporary, target)
+    except BaseException:
+        if not remove_frames:
+            warnings.warn(f'Animation failed; rendered frames retained at {folder}',
+                          UserWarning, stacklevel=2)
+        raise
+    finally:
+        if renderer is not None:
+            renderer.close()
+        if remove_frames:
+            shutil.rmtree(folder)
+    return target if remove_frames else (target, folder)
+
+
 
 
 def loop_noncore(data, dims=None):
