@@ -24,10 +24,16 @@ jobs:
       - name: List installed packages
         shell: bash -l {0}
         run: conda list
+      - name: Check public module imports
+        shell: bash -l {0}
+        run: python -c "import xinvert; import xinvert.domain; import xinvert.helmholtz"
       - name: Test CPU path
+        env:
+          NUMBA_DISABLE_CUDA: '1'
         shell: bash -l {0}
         run: python -m pytest -q
 
+  # Optional self-hosted GPU runner; normal hosted CI runs the CPU matrix above.
   gpu:
     if: ${{ vars.XINVERT_GPU_RUNNER != '' }}
     runs-on: ${{ vars.XINVERT_GPU_RUNNER }}
@@ -39,6 +45,11 @@ jobs:
           environment-file: environment.yml
           activate-environment: xinvert
           auto-activate-base: false
-      - name: Run GPU consistency tests
+      - name: Install complete GPU dependencies
         shell: bash -l {0}
-        run: python -m pytest -q tests/test_Gpu*.py tests/test_CpuGpuConsistency.py tests/test_backend_math.py tests/test_backend_apps.py tests/test_masked_poisson.py tests/test_masked_applications.py tests/test_Convergence.py tests/test_animation_streaming.py
+        run: python -m pip install -e ".[gpu]"
+      - name: Run GPU consistency tests
+        env:
+          XINVERT_TEST_LI_GPU: '1'
+        shell: bash -l {0}
+        run: python -m pytest -q tests/test_Gpu*.py tests/test_CpuGpuConsistency.py tests/test_backend_math.py tests/test_backend_apps.py tests/test_masked_poisson.py tests/test_masked_applications.py tests/test_Convergence.py tests/test_animation_streaming.py tests/test_li_gpu.py tests/test_li_gpu_errors.py tests/test_helmholtz_diagnostics.py tests/test_dtype_policy.py
