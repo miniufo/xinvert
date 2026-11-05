@@ -118,6 +118,8 @@ _ANIMATION_RENDERER = None
 
 def _init_animation_worker(payload):
     import atexit
+    import importlib
+    import warnings
 
     import cloudpickle
     import matplotlib
@@ -125,9 +127,31 @@ def _init_animation_worker(payload):
     matplotlib.use('Agg', force=True)
     global _ANIMATION_RENDERER
     settings = cloudpickle.loads(payload)
-    if settings['ultraplot_loaded']:
-        __import__('ultraplot')  # register its colors/fonts in this process too
-    matplotlib.rcParams.update(settings['rc_params'])
+    # Replay the plotting-library modules the parent had already imported.  A
+    # spawn worker starts from stock Matplotlib, and the captured style depends
+    # on side effects that a bare ``import ultraplot`` does not produce:
+    # Ultraplot 2 lazy-loads its submodules, and the colormaps it registers (its
+    # default ``image.cmap`` is 'Fire') as well as its rc validators (relative
+    # font sizes such as 'med-large') only arrive with them.  Without the replay
+    # the worker rejects a style value or cannot resolve a colormap, and a dead
+    # worker takes the whole process pool down with it.
+    for name in settings.get('ultraplot_modules', ()):
+        try:
+            importlib.import_module(name)
+        except ImportError:  # pragma: no cover - module layout may move
+            pass
+    # Anything an older or partial install still rejects may cost the frame
+    # style but never the worker; feeding the whole mapping to rcParams in one
+    # call used to abort the pool on the first unusable value.
+    skipped = []
+    for key, value in settings['rc_params'].items():
+        try:
+            matplotlib.rcParams[key] = value
+        except (KeyError, ValueError):
+            skipped.append(key)
+    if skipped:
+        warnings.warn('animation worker kept its own style for '
+                      + ', '.join(sorted(skipped)), RuntimeWarning, stacklevel=2)
     _ANIMATION_RENDERER = _AnimationRenderer(settings)
     atexit.register(_ANIMATION_RENDERER.close)
 
@@ -466,7 +490,11 @@ def create_animation(input_file, output_file, plotfunc=None, *, framedim=None, f
 
         import matplotlib as mpl
 
-        settings['ultraplot_loaded'] = 'ultraplot' in sys.modules
+        # Ultraplot 2 lazy-loads, so record the submodules this process has
+        # already imported; a spawn worker replays them to rebuild the same
+        # style (see _init_animation_worker).
+        settings['ultraplot_modules'] = sorted(
+            name for name in sys.modules if name.partition('.')[0] == 'ultraplot')
         settings['rc_params'] = {key: mpl.rcParams[key] for key in mpl.rcParams
                                  if key not in ('backend', 'backend_fallback', 'interactive')}
         renderer.close()
