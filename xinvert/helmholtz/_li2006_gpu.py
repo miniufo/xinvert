@@ -1,4 +1,4 @@
-"""Optional float64 CUDA implementation of the closed Li operator.
+"""Optional float32/float64 CUDA implementation of the closed Li operator.
 
 Topology and Jacobi setup reuse the CPU oracle. No sparse matrix is built.
 Iteration vectors stay on device; only the final native solution returns.
@@ -119,6 +119,7 @@ class _GPUOperator:
         cp = self.cp = require_cupy()
         if op.scale is None:
             raise ValueError("prepare the CPU topology before GPU transfer")
+        self.dtype = op.dtype
         self.n, self.m = op.size, op.data_size
         self.ny, self.nx = op.shape
         self.nvx, self.npot = op.vm.shape[1], op.npsi
@@ -137,7 +138,7 @@ class _GPUOperator:
                 op.offsets,
             )
         )
-        self.estimated_bytes = maps + 8 * (2 * (self.m + self.n) + 7 * self.n)
+        self.estimated_bytes = maps + self.dtype.itemsize * (2 * (self.m + self.n) + 7 * self.n)
         free = (
             cp.cuda.runtime.memGetInfo()[0] + cp.get_default_memory_pool().free_bytes()
         )
@@ -149,8 +150,8 @@ class _GPUOperator:
             )
         self.maps = tuple(cp.asarray(a) for a in (op.vm, op.cm, op.ui, op.vi))
         self.counts = cp.asarray(op.counts)
-        self.coeff = tuple(cp.asarray(a) for a in op.coeff)
-        self.weights = cp.asarray(op.wu), cp.asarray(op.wv)
+        self.coeff = tuple(cp.asarray(a, dtype=self.dtype) for a in op.coeff)
+        self.weights = cp.asarray(op.wu, dtype=self.dtype), cp.asarray(op.wv, dtype=self.dtype)
         self.scale, self.penalty = cp.asarray(op.scale), cp.asarray(op.penalty)
         self.vertices, self.ids = cp.asarray(op.vertices), cp.asarray(op.coast_ids)
         starts, ends, owners, offsets = [], [], [], [0]
@@ -164,13 +165,15 @@ class _GPUOperator:
         self.ends = cp.asarray(np.asarray(ends, dtype=np.int64))
         self.owners = cp.asarray(np.asarray(owners, dtype=op.vm.dtype))
         self.offsets = cp.asarray(np.asarray(offsets, dtype=np.int64))
-        self.parts = cp.empty(len(starts), dtype=cp.float64)
+        self.parts = cp.empty(len(starts), dtype=self.dtype)
         source = "typedef long long int64_t;\n" + _SOURCE.replace(
             "long long", "int64_t"
         ).replace("long", "int64_t")
         source = source.replace(
             "INDEX", "int" if op.vm.dtype.itemsize == 4 else "int64_t"
         )
+        if self.dtype == np.dtype('float32'):
+            source = source.replace('double', 'float')
         self.module = cp.RawModule(code=source, options=("--std=c++11", "--fmad=false"))
         self.kernels = {
             n: self.module.get_function(n)
@@ -181,10 +184,10 @@ class _GPUOperator:
         """Build augmented RHS on device without a dense host augmentation."""
         # Pad a shorter face vector so its cached block can be reused by LSMR
         # unknown vectors instead of leaving a nearly equal-sized free block.
-        uploaded = self.cp.empty(max(self.m, self.n), dtype=self.cp.float64)
+        uploaded = self.cp.empty(max(self.m, self.n), dtype=self.dtype)
         uploaded[: self.m].set(data)
         data = uploaded
-        out = self.cp.empty(self.m + self.n, dtype=self.cp.float64)
+        out = self.cp.empty(self.m + self.n, dtype=self.dtype)
         size = max(self.ny * self.nx, self.n)
         self.kernels["rhs"](
             ((size + 255) // 256,),
@@ -201,7 +204,7 @@ class _GPUOperator:
         return out
 
     def matvec(self, z):
-        out = self.cp.empty(self.m + self.n, dtype=self.cp.float64)
+        out = self.cp.empty(self.m + self.n, dtype=self.dtype)
         size = max(self.ny * self.nx, self.n)
         self.kernels["forward"](
             ((size + 255) // 256,),
@@ -219,7 +222,7 @@ class _GPUOperator:
         return out
 
     def rmatvec(self, r):
-        out = self.cp.empty(self.n, dtype=self.cp.float64)
+        out = self.cp.empty(self.n, dtype=self.dtype)
         size = max(self.ny * self.nx, (self.ny + 1) * self.nvx)
         self.kernels["transpose"](
             ((size + 255) // 256,),
@@ -283,8 +286,9 @@ def solve_closed_gpu(
     initial=None,
     solver="lsmr",
     show=False,
+    diagnostics=None,
 ):
-    """Solve on device, return physical float64 coefficients and CPU diagnostics."""
+    """Solve on device, return physical coefficients in the selected precision and CPU diagnostics."""
     if solver != "lsmr":
         raise NotImplementedError("Li GPU currently supports solver='lsmr' only")
     cp = require_cupy()
@@ -296,12 +300,12 @@ def solve_closed_gpu(
     b = gpu.rhs(data)
     x0 = None
     if initial is not None:
-        x0 = cp.asarray(initial)
+        x0 = cp.asarray(initial, dtype=gpu.dtype)
         x0 /= gpu.scale
         x0 /= length
     op.scale = op.penalty = None
     operator = LinearOperator(
-        (gpu.m + gpu.n, gpu.n), dtype=cp.float64, matvec=gpu.matvec, rmatvec=gpu.rmatvec
+        (gpu.m + gpu.n, gpu.n), dtype=gpu.dtype, matvec=gpu.matvec, rmatvec=gpu.rmatvec
     )
     result = _lsmr(
         operator,
@@ -312,6 +316,7 @@ def solve_closed_gpu(
         conlim=conlim,
         maxiter=maxiter,
         overwrite_b=True,
+        diagnostics=diagnostics,
     )
     del b, x0, operator
     z = result[0]
@@ -404,13 +409,17 @@ def _lsmr(
     maxiter=None,
     *,
     overwrite_b=False,
+    diagnostics=None,
 ):
-    """Float64 LSMR with fused vector updates and unchanged stopping tests."""
+    """Typed device LSMR vectors with host scalar stopping tests."""
     cp = require_cupy()
     from cupy import cublas
 
-    update = cp.RawKernel(_UPDATES, "lsmr_update", options=("--fmad=false",))
-    axpy = cp.RawKernel(_UPDATES, "lsmr_axpy", options=("--fmad=false",))
+    dtype = np.dtype(A.dtype)
+    scalar = dtype.type
+    updates = _UPDATES if dtype == np.dtype('float64') else _UPDATES.replace('double', 'float')
+    update = cp.RawKernel(updates, "lsmr_update", options=("--fmad=false",))
+    axpy = cp.RawKernel(updates, "lsmr_axpy", options=("--fmad=false",))
     b = b.squeeze()
     matvec = A.matvec
     rmatvec = A.rmatvec
@@ -418,10 +427,6 @@ def _lsmr(
     minDim = min([m, n])
     if maxiter is None:
         maxiter = minDim * 5
-    if x0 is None:
-        dtype = cp.result_type(A, b, float)
-    else:
-        dtype = cp.result_type(A, b, x0, float)
     # solve_closed_gpu owns a disposable RHS; reuse it for bidiagonalization.
     u = b if overwrite_b else b.copy()
     normb = cublas.nrm2(b)
@@ -475,11 +480,13 @@ def _lsmr(
     normr = beta_cpu
     normar = alpha_cpu * beta_cpu
     if normar == 0:
+        if diagnostics is not None:
+            diagnostics(0, 0., 0., 0)
         return (x, istop, itn, normr, normar, normA, condA, normx)
     while itn < maxiter:
         itn = itn + 1
         av = matvec(v)
-        axpy(((m + 255) // 256,), (256,), (u, av, np.float64(-alpha_cpu), np.int64(m)))
+        axpy(((m + 255) // 256,), (256,), (u, av, scalar(-alpha_cpu), np.int64(m)))
         del av
         beta = cublas.nrm2(u)
         beta_cpu = beta.get().item()
@@ -489,7 +496,7 @@ def _lsmr(
             axpy(
                 ((n + 255) // 256,),
                 (256,),
-                (v, atu, np.float64(-beta_cpu), np.int64(n)),
+                (v, atu, scalar(-beta_cpu), np.int64(n)),
             )
             del atu
             alpha = cublas.nrm2(v)
@@ -516,9 +523,9 @@ def _lsmr(
                 h,
                 x,
                 v,
-                np.float64(-(thetabar * rho / (rhoold * rhobarold))),
-                np.float64(zeta / (rho * rhobar)),
-                np.float64(-(thetanew / rho)),
+                scalar(-(thetabar * rho / (rhoold * rhobarold))),
+                scalar(zeta / (rho * rhobar)),
+                scalar(-(thetanew / rho)),
                 np.int64(n),
             ),
         )
@@ -567,7 +574,9 @@ def _lsmr(
             istop = 2
         if test1 <= rtol:
             istop = 1
+        if diagnostics is not None:
+            diagnostics(itn, t1, test2, istop)
         if istop > 0:
             break
-    # The specialized input and all work vectors are already float64.
+    # Return the selected vector precision without an output-only cast.
     return (x, istop, itn, normr, normar, normA, condA, normx)

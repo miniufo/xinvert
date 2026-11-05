@@ -1,8 +1,8 @@
 """Helmholtz decomposition with method-specific, reproducible reconstruction.
 
 decompose returns four velocity components; streamfunction_potential returns
-two scalar potentials for methods that compute both; reconstruct recovers
-the total velocity from either representation. Results are Datasets.
+the available scalar potentials. reconstruct sums velocity components or
+differentiates Li2006 scalar potentials. Results are Datasets.
 The closed projection remainder can include harmonic transport and is not
 represented as an invented streamfunction.
 Method and grid metadata travel with the result, including boundary rules and
@@ -107,27 +107,24 @@ def _solve(
 
     With return_diagnostics=True return (result, diagnostics). Methods:
 
-    * li2006 (default): joint regularized, collocated inversion. All algorithm
-      details and parameters live in _li2006; float64 CPU and optional
-      closed-boundary GPU/LSMR are supported.
-    * sor: divergence/vorticity from FiniteDiff, two existing
-      invert_Poisson calls and cal_flow reconstruction. iParams are ordinary
-      xinvert SOR controls, with solver='sor' optionally accepted. BCs default
-      to fixed/fixed; missing velocities are zero-extended when differentiating
-      and their nodes excluded from inversion. This is not the Li objective.
-    * forget: existing project_vector closed Neumann projection, requiring an
-      explicit wet mask and one eager 2-D slice with inactive nonperiodic edges.
-      Collocated input is averaged to wet faces internally; components return
-      to input centers. Explicit grid='arakawa-c' accepts the cell-indexed east/north
-      storage convention of xinvert.projection and returns physical face axes.
-      BCs are fixed/fixed or fixed/periodic. No psi is invented.
+    * li2006 (default): joint regularized inversion on an internal C grid. All algorithm
+      details and parameters live in _li2006; float32/float64 CPU and optional
+      solid-boundary GPU/LSMR are supported. BCs default to fixed/fixed;
+      coasts are automatic solid boundaries, longitude may be periodic.
+    * sor: one velocity-potential Poisson equation, solved by SOR with
+      standard scalar BCs and matching C-grid operators.
+      The rotational component is input minus the divergent component.
+      Requires one eager 2-D slice.
+      A inputs infer the wet mask; C inputs require an explicit center mask.
+      A outputs are interpolated to centers before subtraction; C outputs
+      use physical face coordinates. No streamfunction is computed.
 
     dims are [Y, X]; infer lat/lon or latitude/longitude. coords is lat-lon
     (degrees) or cartesian (length coordinates). initial is (psi0, chi0) or a
-    named potential Dataset for dual solves; one DataArray or a Dataset with
-    velocity_potential for forget. Model/iteration dictionaries are copied.
+    named potential Dataset for Li; one DataArray or a Dataset with
+    velocity_potential for SOR. Model/iteration dictionaries are copied.
     Results record reconstruction settings. Solver diagnostic histories retain
-    their backend-specific definitions; velocity error is reported separately.
+    their algorithm-specific definitions; velocity error is reported separately.
 
     Examples
     --------
@@ -136,14 +133,14 @@ def _solve(
     """
     if not isinstance(method, str):
         raise TypeError("method must be a string")
-    method = method.lower()
-    if method not in ("li2006", "sor", "forget"):
-        raise ValueError("method must be li2006, sor, or forget")
+    method = method.strip().lower()
+    if method not in ("li2006", "sor"):
+        raise ValueError("method must be li2006 or sor")
     if coords not in ("lat-lon", "cartesian"):
         raise ValueError("coords must be lat-lon or cartesian")
     if not isinstance(return_diagnostics, (bool, np.bool_)):
         raise TypeError("return_diagnostics must be boolean")
-    allowed = ("arakawa-a", "arakawa-c") if method == "forget" else ("arakawa-a",)
+    allowed = ("arakawa-a", "arakawa-c") if method == "sor" else ("arakawa-a",)
     if not isinstance(grid, str):
         raise TypeError("grid must be arakawa-a or arakawa-c")
     grid = grid.lower()
@@ -151,9 +148,25 @@ def _solve(
         raise ValueError(f"{method} requires grid in {allowed!r}")
     u, v, dims, mask = _inputs(u, v, dims, mask)
     mp, ip = _mapping(mParams, "mParams"), _mapping(iParams, "iParams")
+    from ..apps import _solve_dtype
+
+    ip['dtype'] = _solve_dtype(ip, u.dtype, v.dtype)
+    u, v = u.astype(ip['dtype']), v.astype(ip['dtype'])
+    if return_diagnostics and ip.get('diag_interval', 0) <= 0:
+        ip['diag_interval'] = 10
     if method == "li2006":
+        from ..core import _normalize_scalar_bcs
         from . import _li2006
 
+        bcs = _normalize_scalar_bcs(ip.get('BCs', ['fixed', 'fixed']), 2,
+                                    valid=('fixed', 'extend', 'periodic'))
+        if 'extend' in bcs:
+            raise NotImplementedError('Li2006 uses automatic solid boundaries; extend is unsupported')
+        if bcs[0] != 'fixed':
+            raise NotImplementedError('Li2006 requires a fixed nonperiodic y boundary')
+        if 'internal_bcs' in ip:
+            raise ValueError('Li2006 sets coastal boundaries automatically; omit internal_bcs')
+        backend_ip = dict(ip, BCs=['closed', 'periodic' if bcs[1] == 'periodic' else 'closed'])
         solve = _li2006._helmholtz_impl if _components else _li2006.helmholtz
         extra = {"return_components": True} if _components else {}
         solved = solve(
@@ -163,7 +176,7 @@ def _solve(
             coords,
             mask=mask,
             mParams=mp,
-            iParams=ip,
+            iParams=backend_ip,
             initial=initial,
             return_diagnostics=return_diagnostics,
             **extra,
@@ -174,22 +187,18 @@ def _solve(
         if _components:
             result.update(solved[2])
             result.attrs.update(solved[2].attrs)
-        bcs = ip.get("BCs", ("open", "open"))
         diagnostic = solved[3 if _components else 2] if return_diagnostics else None
-    elif method == "sor":
+    else:
+        from ..core import _normalize_scalar_bcs
         from . import _sor
 
+        ip['BCs'] = _normalize_scalar_bcs(ip.get('BCs', ['fixed', 'fixed']), 2,
+                                        valid=('fixed', 'extend', 'periodic'))
         result, diagnostic = _sor.decompose(
-            u, v, dims, coords, mask, mp, ip, initial, return_diagnostics
-        )
-        bcs = ip.get("BCs", ("fixed", "fixed"))
-    else:
-        from . import _forget
-
-        result, diagnostic = _forget.decompose(
             u, v, dims, coords, mask, mp, ip, initial, return_diagnostics, grid=grid
         )
         bcs = ip.get("BCs", ("fixed", "fixed"))
+    result = result.astype(ip["dtype"])
     result = _metadata(result, method, grid, dims, coords, mp, bcs)
     return (result, diagnostic) if return_diagnostics else result
 
@@ -199,10 +208,8 @@ def _reconstruct_potentials(result, *, components=False):
 
     result must be a Dataset returned by decompose with its metadata intact.
     Default variables u/v are the total reconstructed velocity. With
-    components=True, additionally include udiv/vdiv and
-    urot/vrot (dual potentials) or u_remainder/v_remainder
-    (closed projection). For Li/Poisson, total is the sum of potential-derived
-    velocities and can differ from the input. For forget, total includes the
+    components=True, additionally include urot, vrot, udiv and vdiv. For Li, total is the sum of potential-derived
+    velocities and can differ from the input. For SOR, total includes the
     stored remainder; this identity does not measure projection convergence.
     No discretization, radius or boundary overrides are accepted: recompute
     decompose to change the mathematical problem.
@@ -224,9 +231,7 @@ def _reconstruct_potentials(result, *, components=False):
     if any(key not in result.attrs for key in required):
         raise ValueError("decomposition metadata is missing")
     method = result.attrs["method"]
-    if method == "forget":
-        from ._forget import reconstruct as implementation
-    elif method == "sor":
+    if method == "sor":
         from ._sor import reconstruct as implementation
     elif method == "li2006":
         from . import _li2006
@@ -237,7 +242,8 @@ def _reconstruct_potentials(result, *, components=False):
             "coords": result.attrs["geometry"],
             "mParams": {"Rearth": result.attrs["Rearth"]},
             "iParams": {
-                "BCs": [result.attrs["boundary_y"], result.attrs["boundary_x"]]
+                "BCs": ['closed' if bc == 'fixed' else bc for bc in
+                        [result.attrs["boundary_y"], result.attrs["boundary_x"]]]
             },
         }
         psi, chi = result["streamfunction"], result["velocity_potential"]
@@ -260,6 +266,7 @@ def _reconstruct_potentials(result, *, components=False):
     else:
         raise ValueError("unknown decomposition method in result metadata")
     velocity = implementation(result, components)
+    velocity = velocity.astype(result.velocity_potential.dtype)
     velocity.attrs.update(result.attrs)
     return velocity
 
@@ -282,26 +289,96 @@ def decompose(
     return_potentials=False,
     return_diagnostics=False,
 ):
-    """Return urot, vrot, udiv and vdiv.
+    """Decompose velocity into rotational and divergent components.
 
-    Inputs u/v are xarray.DataArray objects; dims=[Y, X].
-    method is 'sor', 'forget' or 'li2006' (default).
-    grid is 'arakawa-a' (default) or 'arakawa-c' (Forget only),
-    case-insensitive. Arakawa A inputs and outputs share center coordinates.
-    Explicit C input follows xinvert.projection's cell-indexed east/north
-    storage; output carries physical face coordinates.
+    Parameters
+    ----------
+    u, v : xarray.DataArray
+        Real velocities on the same dimensions and coordinates. Select one
+        eager 2-D slice for SOR; Li2006 also accepts independent batch slices.
+    dims : sequence of str or None
+        Spatial dimensions in [Y, X] order. None infers lat/lon or
+        latitude/longitude; specify custom dimension names explicitly.
+    coords : {'lat-lon', 'cartesian'}
+        Coordinates in degrees or consistent Cartesian length units.
+        Exact polar rows are unsupported.
+    method : {'li2006', 'sor'}
+        Case-insensitive. Li2006 fits both potentials jointly; SOR solves only
+        the velocity potential, then subtracts its gradient from the input.
+        The rotational remainder can include harmonic circulation.
+    grid : {'arakawa-a', 'arakawa-c'}
+        Case-insensitive. A-grid input/output velocities share cell centers.
+        C is supported by SOR only: both arrays use cell-indexed east/north
+        face storage. Output velocities have physical half-step face
+        coordinates; potentials retain cell-center coordinates.
+    mask : xarray.DataArray of bool or None
+        True for active cells. A-grid inputs infer finite(u) & finite(v)
+        when omitted; C-grid inputs require an explicit center mask.
+    mParams : mapping or None
+        Rearth sets the radius for latitude/longitude geometry. Li2006 also
+        accepts alpha, the coefficient of the potential-amplitude penalty,
+        in inverse squared length units (m^-2 for metre-based coordinates).
+        Larger alpha favors smaller potentials and usually a larger velocity
+        error; smaller alpha favors the fit but weakens poorly constrained
+        modes. None uses the grid-scaled default. To assess sensitivity,
+        reduce alpha by factors of ten and compare converged solutions; use
+        the same explicit alpha across grids. Zero is allowed but leaves
+        constant offsets nonunique.
+    iParams : mapping or None
+        Solver controls; the mapping is copied. Boundary settings are:
 
-    mask is a boolean DataArray (True for active cells).
-    mParams['alpha'] controls Li's potential-amplitude penalty;
-    increasing alpha favors smaller potentials at the expense of velocity fit.
-    iParams carries boundary, iteration and execution controls.
-    return_potentials adds the available potentials, increasing output memory.
-    return_diagnostics returns (result, diagnostics), with vel_error,
-    div_error, converged and iterations; see the diagnostics guide.
+        * BCs: one entry per spatial dimension, default ['fixed', 'fixed'].
+          SOR accepts fixed, extend and periodic longitude. Fixed retains
+          initial potential values; extend copies adjacent values for zero
+          normal gradient. Latitude periodicity is unsupported.
+        * internal_bcs: SOR defaults to fixed (hold wet coastal points).
+          Extend gives zero coastal normal derivative; neumann is an alias.
+          Nonzero normal derivatives are not implemented.
+        * Li2006 automatically imposes solid coasts and outer walls: zero
+          normal derivative of chi and one constant psi per connected coast.
+          Different coastal constants are solved independently. Its BCs
+          accept fixed and periodic longitude only; extend is unsupported.
+          Omit internal_bcs for Li2006. Here fixed means a solid wall, not a
+          prescribed scalar potential value.
 
-    reconstruct(result) adds retained velocity components. Reconstructing
-    from Li's centered scalars instead is approximate. Forget's rotational
-    component is the subtraction remainder and can include harmonic flows.
+        Iteration/execution controls include architect, threads, dtype,
+        mxLoop, tolerance and diag_interval. The latter samples the solver
+        error history; it defaults to 10 when diagnostics are requested.
+        Li2006 checks convergence every iteration independently of sampling.
+    initial : xarray.DataArray, xarray.Dataset, pair or None
+        Li2006 accepts (psi0, chi0) or a Dataset containing streamfunction and
+        velocity_potential, as initial guesses only. SOR accepts a potential
+        DataArray or a Dataset containing velocity_potential; its fixed
+        boundary values are retained. Fixed SOR requires the same wet mask
+        as the forcing and finite initial values at all wet points.
+    return_potentials : bool
+        False by default. Add velocity_potential, and streamfunction for
+        Li2006, increasing the number of stored fields and memory use.
+    return_diagnostics : bool
+        Return (result, diagnostics). Common fields are error, final_error,
+        converged, iterations and stop_reason; vel_error/div_error are
+        evaluated once after solving on the returned velocity grid. SOR also
+        retains solution_min/solution_max histories. SOR's stopping error is
+        its normalized correction; Li's is the smaller normalized
+        least-squares stopping test. Equal tolerances do not imply equal
+        physical accuracy. Definitions are retained in variable attributes.
+
+    Returns
+    -------
+    xarray.Dataset or tuple of xarray.Dataset
+        Fields urot, vrot, udiv and vdiv, optional scalar potentials, and
+        optionally a separate diagnostics Dataset. SOR's velocity sum equals
+        the input by subtraction, so near-zero vel_error is not an independent
+        accuracy test; also examine solver error and div_error.
+
+    Notes
+    -----
+    Input A-grid velocities are averaged to internal C-grid faces; derived
+    velocities are interpolated to centers before returning. SOR subtracts
+    on that returned grid. Center interpolation can introduce divergence
+    even when the face operators are consistent. Reconstructing Li velocities
+    from centered potentials is approximate; retain the velocity components
+    when their original reconstruction is needed.
     """
     if not isinstance(return_potentials, (bool, np.bool_)):
         raise TypeError("return_potentials must be boolean")
@@ -324,17 +401,12 @@ def decompose(
         velocity = potential_result
     else:
         velocity = _reconstruct_potentials(potential_result, components=True)
-    nondiv = (
-        ("u_remainder", "v_remainder")
-        if potential_result.attrs["method"] == "forget"
-        else ("urot", "vrot")
-    )
-    names = dict(zip((*nondiv, "udiv", "vdiv"), _COMPONENTS))
-    result = velocity[list(names)].rename(names)
+    result = velocity[list(_COMPONENTS)]
     if return_potentials:
         for name in ("streamfunction", "velocity_potential"):
             if name in potential_result:
                 result[name] = potential_result[name]
+    result = result.astype(potential_result.velocity_potential.dtype)
     result.attrs.update(potential_result.attrs, representation="velocity_components")
     if return_diagnostics:
         diagnostic = _diagnostics(u, v, result, dims, coords, mask, diagnostic)
@@ -355,22 +427,15 @@ def streamfunction_potential(
     initial=None,
     return_diagnostics=False,
 ):
-    """Return streamfunction and velocity_potential in an xarray.Dataset.
+    """Return available potentials in an xarray.Dataset.
 
-    Inputs/settings match decompose. Only li2006 and sor compute
-    both scalar potentials. For forget, use decompose(return_potentials=True)
-    to retrieve chi with the two vector components; that projection does not
-    uniquely determine a streamfunction. This entry point avoids allocating
-    four output velocity arrays when only the scalar potentials are needed.
-    return_diagnostics=True returns (potentials, diagnostics). Centered Li psi
-    has lost vertex information: reconstruct of these two scalars is approximate
-    and its diagnostic velocity error refers to that scalar reconstruction.
-    Use decompose for velocities interpolated directly from the native fit.
+    Li2006 returns streamfunction and velocity_potential; SOR returns only
+    velocity_potential. Inputs/settings match decompose. A scalar potential
+    alone cannot reconstruct SOR's rotational remainder: use decompose to
+    retain both velocity components. Centered Li scalars reconstruct an
+    approximate velocity because corner information has been interpolated.
+    return_diagnostics=True returns (potentials, diagnostics).
     """
-    if isinstance(method, str) and method.lower() == "forget":
-        raise NotImplementedError(
-            "forget determines one potential; use decompose(return_potentials=True)"
-        )
     solved = _solve(
         u,
         v,
@@ -389,11 +454,13 @@ def streamfunction_potential(
     if return_diagnostics:
         velocity = reconstruct(result, components=True)
         diagnostic = _diagnostics(u, v, velocity, dims, coords, mask, diagnostic)
+    if result.attrs["method"] == "sor":
+        result = result[["velocity_potential"]]
     return (result, diagnostic) if return_diagnostics else result
 
 
 def reconstruct(result, *, components=False):
-    """Return total u/v from a decomposition or a pair of scalar potentials.
+    """Return total u/v from velocity components or Li2006 scalar potentials.
 
     Pass a Dataset from decompose or streamfunction_potential. Velocity fields
     are added directly; potentials use their recorded method, boundary rules
@@ -417,15 +484,6 @@ def reconstruct(result, *, components=False):
             velocity.update({name: result[name] for name in _COMPONENTS})
         return velocity
     velocity = _reconstruct_potentials(result, components=components)
-    if components:
-        nondiv = (
-            ("u_remainder", "v_remainder")
-            if result.attrs["method"] == "forget"
-            else ("urot", "vrot")
-        )
-        velocity = velocity.rename(
-            dict(zip((*nondiv, "udiv", "vdiv"), _COMPONENTS))
-        )
     return velocity
 
 
@@ -472,14 +530,8 @@ def _diagnostics(u, v, velocity, dims, coords, mask, detail):
             (ur.where(valid, 0), vr.where(valid, 0)), ["X", "Y"]
         ).where(stencil)
         result["div_error"] = np.sqrt((divergence**2).mean(list(dims)))
-    if "converged" in detail:
-        result["converged"] = detail["converged"]
-        result["iterations"] = detail["iterations"]
-    else:
-        result["converged"] = detail["psi_converged"] & detail["chi_converged"]
-        result["iterations"] = xr.apply_ufunc(
-            np.maximum, detail["psi_iterations"], detail["chi_iterations"]
-        )
+    common = _solver_diagnostics(detail)
+    result = xr.merge([common, result], join='exact')
     result["vel_error"].attrs = {
         "long_name": "relative L2 velocity reconstruction error", "units": "1",
         "definition": "norm(rotational + divergent - input) / norm(input)",
@@ -489,6 +541,15 @@ def _diagnostics(u, v, velocity, dims, coords, mask, detail):
         "units": "s-1",
         "definition": "sqrt(mean(divergence(rotational_velocity)**2))",
     }
-    result.attrs = {"grid": velocity.attrs["grid_layout"],
+    result.attrs = {**common.attrs, "grid": velocity.attrs["grid_layout"],
                     "divergence_evaluation": "returned grid; centered stencils require wet neighbours"}
     return result
+
+
+_SOLVER_FIELDS = ('error', 'final_error', 'converged', 'iterations', 'stop_reason',
+                  'solution_min', 'solution_max')
+
+
+def _solver_diagnostics(detail):
+    """Retain the common stopping history of the selected solver."""
+    return detail[[key for key in _SOLVER_FIELDS if key in detail]].copy()

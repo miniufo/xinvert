@@ -12,7 +12,7 @@ differentiates the returned centered potentials and does NOT reproduce the
 native fit exactly. Diagnostics distinguish native_velocity_rmse from the
 returned-field velocity_rmse. Four-component public output follows the latter.
 
-Eager float64 is implemented. Explicit closed boundaries use compact compiled
+Eager float32 and float64 are implemented. Explicit closed boundaries use compact compiled
 operators, Jacobi column scaling, CPU threading and optional CUDA LSMR. Default open
 boundaries retain their original unweighted objective and NumPy operator.
 Independent batch slices may be loaded from Dask. No sparse matrix is stored.
@@ -27,9 +27,9 @@ from contextlib import contextmanager
 import numpy as np
 import xarray as xr
 from numba import njit, prange
-from scipy.sparse.linalg import LinearOperator, lsmr, lsqr
+from scipy.sparse.linalg import LinearOperator, aslinearoperator, lsmr, lsqr
 
-from .._threads import DEFAULT_THREADS, numba_threads, validate_threads
+from ..utils import DEFAULT_THREADS, numba_threads, validate_threads
 
 __all__ = ["helmholtz", "reconstruct_flow"]
 
@@ -89,7 +89,7 @@ def _prepare(u, v, dims, coords, mask, mParams, iParams):
             "solver": "lsmr",
             "architect": "cpu",
             "threads": DEFAULT_THREADS,
-            "dtype": "float64",
+            "dtype": None,
             "BCs": ("open", "open"),
             "tolerance": 1e-8,
             "mxLoop": 5000,
@@ -97,18 +97,22 @@ def _prepare(u, v, dims, coords, mask, mParams, iParams):
             "printInfo": False,
             "on_nonconvergence": "warn",
             "diagnostics_fields": False,
+            "diag_interval": 0,
         },
         "iParams",
     )
+    if not isinstance(ip['architect'], str):
+        raise TypeError("architect must be cpu, cpu-mc or gpu")
+    ip['architect'] = ip['architect'].strip().lower()
     if ip["architect"] not in ("cpu", "cpu-mc", "gpu"):
         raise NotImplementedError(
             "li2006 implements cpu and closed-boundary cpu-mc/gpu"
         )
     if ip["solver"] not in ("lsmr", "lsqr"):
         raise ValueError("solver must be lsmr or lsqr")
-    dtype = np.dtype(ip["dtype"])
-    if dtype != np.dtype("float64"):
-        raise ValueError("this initial li2006 implementation requires dtype=float64")
+    from ..apps import _solve_dtype
+
+    dtype = _solve_dtype(ip, u.dtype, v.dtype)
     ip["dtype"] = dtype
     ip["tolerance"] = _positive(ip["tolerance"], "tolerance")
     ip["conlim"] = _positive(ip["conlim"], "conlim", allow_zero=True)
@@ -118,12 +122,18 @@ def _prepare(u, v, dims, coords, mask, mParams, iParams):
         or ip["mxLoop"] < 1
     ):
         raise ValueError("mxLoop must be a positive integer")
+    if (isinstance(ip["diag_interval"], (bool, np.bool_))
+            or not isinstance(ip["diag_interval"], (int, np.integer))):
+        raise TypeError("diag_interval must be an integer")
     if ip["on_nonconvergence"] not in ("warn", "raise", "ignore"):
         raise ValueError("on_nonconvergence must be warn, raise or ignore")
     for name in ("printInfo", "diagnostics_fields"):
         if not isinstance(ip[name], (bool, np.bool_)):
             raise TypeError(f"{name} must be boolean")
     bcs = ip["BCs"]
+    if isinstance(bcs, (list, tuple)):
+        bcs = tuple('closed' if isinstance(b, str) and b.strip().lower() == 'fixed' else b for b in bcs)
+        ip['BCs'] = bcs
     if (
         not isinstance(bcs, (list, tuple))
         or len(bcs) != 2
@@ -270,7 +280,7 @@ class _Operator:
         self.vertex_shape = (ny if py else ny + 1, nx if px else nx + 1)
         self.npsi = int(np.prod(self.vertex_shape))
         self.size = self.npsi + active.size
-        self.sy, self.sx = sy, np.asarray(sx)[:, None]
+        self.sy, self.sx = dtype.type(sy), np.asarray(sx, dtype=dtype)[:, None]
         self.u_shape = (ny, nx if px else nx - 1)
         self.v_shape = (ny if py else ny - 1, nx)
         self.u_columns = (np.arange(self.u_shape[1]) + 1) % self.vertex_shape[1]
@@ -287,7 +297,7 @@ class _Operator:
                 if py
                 else 0.5 * (np.asarray(sx)[:-1] + np.asarray(sx)[1:])
             )
-        self.sx_north = np.asarray(sx_north)[:, None]
+        self.sx_north = np.asarray(sx_north, dtype=dtype)[:, None]
         self.nu = int(np.prod(self.u_shape))
         self.data_size = self.nu + int(np.prod(self.v_shape))
         self.face_count = int(self.uwet.sum() + self.vwet.sum())
@@ -369,7 +379,7 @@ def _returned_velocity(op, potentials):
     cannot in general recover all native vertex modes. Report this separately.
     """
     if isinstance(op, _ClosedGrid):
-        out = np.empty((2, *op.shape), dtype=np.float64)
+        out = np.empty((2, *op.shape), dtype=op.dtype)
         _closed_returned_velocity(
             op.active, potentials[0], potentials[1], op.sy, op.sx, op.periodic[1], out
         )
@@ -451,7 +461,7 @@ def helmholtz(
         ``threads``: optional positive Numba
         thread count (cpu-mc defaults to None, inheriting the executing Numba
         thread setting; restored after each call);
-        ``dtype``: float64 only in this initial implementation;
+        ``dtype``: None follows u/v precision; float32 or float64 overrides it;
         ``BCs``: [open, open] or
         periodic per axis (longitude must span 360 degrees if periodic).
         Open means unconstrained outside faces, not homogeneous Neumann BC.
@@ -471,6 +481,10 @@ def helmholtz(
     return_diagnostics : bool
         Return a Dataset with per-slice status, objective, RMS velocity error,
         relative L2 error, physical gradient norm, alpha, and active count.
+        Also returns error history sampled by diag_interval (default 10),
+        final_error and stop_reason. Error is the smaller dimensionless
+        least-squares stopping test; weighted augmented-system norm estimates
+        are reused without extra operator evaluations.
 
     Notes
     -----
@@ -484,8 +498,9 @@ def helmholtz(
 
     Examples
     --------
-    >>> from xinvert.li2006 import helmholtz
-    >>> psi, chi = helmholtz(u, v, dims=['lat', 'lon'])
+    >>> from xinvert.helmholtz import streamfunction_potential
+    >>> potentials = streamfunction_potential(
+    ...     u, v, dims=['lat', 'lon'], method='li2006')
     """
     return _helmholtz_impl(
         u, v, dims, coords, mask=mask, mParams=mParams, iParams=iParams,
@@ -527,6 +542,10 @@ def _helmholtz_impl(
         "objective_regularization",
     )
     stats = {n: np.full(batch_shape, np.nan) for n in names}
+    interval = max(int(ip['diag_interval']), 0) or 10
+    histories = {} if return_diagnostics else None
+    stats['final_error'] = np.full(batch_shape, np.nan)
+    stop_reasons = np.full(batch_shape, 'empty_domain', dtype=object)
     fields = (
         np.full((4,) + sizes, np.nan, dtype=ip["dtype"])
         if return_diagnostics and ip["diagnostics_fields"]
@@ -537,15 +556,11 @@ def _helmholtz_impl(
             selection = dict(zip(batch, index))
             us = np.asarray(
                 u.isel(selection).transpose(*dims).values,
-                dtype=None
-                if ip["closed"] and u.dtype == np.dtype("float32")
-                else ip["dtype"],
+                dtype=ip["dtype"],
             )
             vs = np.asarray(
                 v.isel(selection).transpose(*dims).values,
-                dtype=None
-                if ip["closed"] and v.dtype == np.dtype("float32")
-                else ip["dtype"],
+                dtype=ip["dtype"],
             )
             active = (
                 np.asarray(mask.isel(selection).transpose(*dims).values)
@@ -553,6 +568,7 @@ def _helmholtz_impl(
                 & np.isfinite(vs)
             )
             count = int(active.sum())
+            monitor = _KrylovDiagnostics(interval) if return_diagnostics else None
             if count == 0:
                 for key in ("iterations", "stop_code", "active_count", "face_count"):
                     stats[key][index] = 0
@@ -578,6 +594,7 @@ def _helmholtz_impl(
                     ip["BCs"][1] == "periodic",
                     weight,
                     north_weight,
+                    dtype=ip["dtype"],
                 )
                 data = op.sample_velocity(us, vs)
                 start = None
@@ -609,6 +626,7 @@ def _helmholtz_impl(
                     show=ip["printInfo"],
                     initial=start,
                     solver=ip["solver"],
+                    diagnostics=monitor,
                 )
                 code, iterations = status["stop_code"], status["iterations"]
                 del start
@@ -626,13 +644,14 @@ def _helmholtz_impl(
                 )
                 n = op.size
                 m = data.size
-                damping = np.sqrt(mp["alpha"]) * length
+                fit_length = ip["dtype"].type(length)
+                damping = ip["dtype"].type(np.sqrt(mp["alpha"]) * length)
 
-                def matvec(z, op=op, damping=damping):
-                    return np.concatenate((op.forward(z) * length, damping * z))
+                def matvec(z, op=op, damping=damping, fit_length=fit_length):
+                    return np.concatenate((op.forward(z) * fit_length, damping * z))
 
-                def rmatvec(r, op=op, damping=damping, m=m):
-                    return op.adjoint(r[:m]) * length + damping * r[m:]
+                def rmatvec(r, op=op, damping=damping, m=m, fit_length=fit_length):
+                    return op.adjoint(r[:m]) * fit_length + damping * r[m:]
 
                 operator = LinearOperator(
                     (m + n, n), matvec=matvec, rmatvec=rmatvec, dtype=ip["dtype"]
@@ -652,8 +671,8 @@ def _helmholtz_impl(
                         )
                     x0 = (
                         op.from_centers(*[np.where(active, a, 0) for a in values])
-                        / length
-                    )
+                        / fit_length
+                    ).astype(ip["dtype"], copy=False)
                 kwargs = {
                     "atol": ip["tolerance"],
                     "btol": ip["tolerance"],
@@ -662,9 +681,19 @@ def _helmholtz_impl(
                     "x0": x0,
                 }
                 if ip["solver"] == "lsmr":
-                    result = lsmr(operator, rhs, maxiter=ip["mxLoop"], **kwargs)
+                    if monitor is not None or ip['dtype'] == np.dtype('float32'):
+                        result = _lsmr_closed_cpu(
+                            _AugmentedCPU(operator), rhs,
+                            maxiter=ip['mxLoop'], diagnostics=monitor, **kwargs,
+                        )
+                    else:
+                        result = lsmr(operator, rhs, maxiter=ip["mxLoop"], **kwargs)
                 else:
-                    result = lsqr(operator, rhs, iter_lim=ip["mxLoop"], **kwargs)
+                    if x0 is None and ip['dtype'] == np.dtype('float32'):
+                        kwargs['x0'] = np.zeros(n, dtype=ip['dtype'])
+                    solve_lsqr = lsqr if monitor is None else _lsqr_diagnostics
+                    extra = {} if monitor is None else {'diagnostics': monitor}
+                    result = solve_lsqr(operator, rhs, iter_lim=ip["mxLoop"], **extra, **kwargs)
                 x = np.asarray(result[0] * length, dtype=ip["dtype"])
                 code, iterations = result[1:3]
                 del result, operator, rhs, kwargs, matvec, rmatvec, x0
@@ -677,6 +706,10 @@ def _helmholtz_impl(
                     raise RuntimeError(message)
                 if ip["on_nonconvergence"] == "warn":
                     warnings.warn(message, RuntimeWarning, stacklevel=2)
+            if monitor is not None:
+                stats['final_error'][index] = monitor.final_error
+                stop_reasons[index] = monitor.stop_reason
+                histories[index] = monitor.records
             native_components = None
             if return_components:
                 native_components = component_output[(slice(None),) + index]
@@ -814,6 +847,22 @@ def _helmholtz_impl(
         elif key in ("iterations", "stop_code", "active_count", "face_count"):
             value = value.astype(np.int64)
         diagnostic[key] = xr.DataArray(value, dims=batch, coords=batch_coords)
+    diagnostic['stop_reason'] = xr.DataArray(stop_reasons, dims=batch, coords=batch_coords)
+    points = sorted({step for rows in histories.values() for step, _ in rows})
+    history = np.full(batch_shape + (len(points),), np.nan)
+    positions = {step: j for j, step in enumerate(points)}
+    for index, rows in histories.items():
+        for step, value in rows:
+            history[index + (positions[step],)] = value
+    diagnostic['error'] = xr.DataArray(history, dims=(*batch, 'iteration'),
+                                      coords={**batch_coords, 'iteration': np.asarray(points, dtype=np.int64)})
+    diagnostic.attrs.update(tolerance=ip['tolerance'], max_iterations=ip['mxLoop'],
+                            diag_interval=interval)
+    for key in ('error', 'final_error'):
+        diagnostic[key].attrs.update(
+            units='1', long_name='Dimensionless least-squares stopping error',
+            definition='min(||r||/(||b||+||A||*||x||), ||A.T*r||/(||A||*||r||)); '
+                       'augmented, weighted and column-scaled system; solver norm estimates')
     if fields is not None:
         for j, name in enumerate(
             ("u_reconstructed", "v_reconstructed", "u_residual", "v_residual")
@@ -874,7 +923,7 @@ def _native_velocity_to_centers(op, x, *, components=False, out=None):
     """
     count = 4 if components else 2
     if out is None:
-        out = np.empty((count, *op.shape), dtype=np.float64)
+        out = np.empty((count, *op.shape), dtype=op.dtype)
     if isinstance(op, _ClosedGrid):
         _closed_native_velocity(
             x, op.vm, op.cm, op.ui, op.vi, op.npsi,
@@ -894,7 +943,7 @@ def _native_velocity_to_centers(op, x, *, components=False, out=None):
             total = value + np.roll(value, 1, axis=axis)
             number = valid.astype(np.int8) + np.roll(valid, 1, axis=axis)
         else:
-            total = np.zeros(op.shape, dtype=np.float64)
+            total = np.zeros(op.shape, dtype=op.dtype)
             number = np.zeros(op.shape, dtype=np.int8)
             low, high = [slice(None), slice(None)], [slice(None), slice(None)]
             low[axis], high[axis] = slice(None, -1), slice(1, None)
@@ -1422,14 +1471,16 @@ class _ClosedGrid:
         periodic_x=True,
         cell_weights=None,
         north_weights=None,
+        dtype=np.float64,
     ):
+        self.dtype = np.dtype(dtype)
         self.active = np.asarray(active, bool)
         self.shape = active.shape
         ny, nx = self.shape
         self.periodic = (False, periodic_x)
-        self.sy = sy
-        self.sx = np.asarray(sx)[:, None]
-        self.sx_north = np.asarray(sx_north)
+        self.sy = self.dtype.type(sy)
+        self.sx = np.asarray(sx, dtype=self.dtype)[:, None]
+        self.sx_north = np.asarray(sx_north, dtype=self.dtype)
         nvx = nx if periodic_x else nx + 1
         dtype = (
             np.int32
@@ -1463,12 +1514,15 @@ class _ClosedGrid:
         self.offsets = np.r_[starts, len(vertices)]
         self.wu = np.sqrt(np.ones(ny) if cell_weights is None else cell_weights)
         self.wv = np.sqrt(np.ones(ny - 1) if north_weights is None else north_weights)
+        self.wu = self.wu.astype(self.dtype)
+        self.wv = self.wv.astype(self.dtype)
         self.scale = None
         self.penalty = None
 
     def _coefficients(self, length=1.0, weighted=False):
-        wu = self.wu if weighted else np.ones(self.shape[0])
-        wv = self.wv if weighted else np.ones(self.shape[0] - 1)
+        wu = self.wu if weighted else np.ones(self.shape[0], dtype=self.dtype)
+        wv = self.wv if weighted else np.ones(self.shape[0] - 1, dtype=self.dtype)
+        length = self.dtype.type(length)
         return (
             (wu * self.sy) * length,
             (wu * self.sx[:, 0]) * length,
@@ -1477,19 +1531,19 @@ class _ClosedGrid:
         )
 
     def pack_faces(self, u, v):
-        out = np.empty(self.data_size)
+        out = np.empty(self.data_size, dtype=self.dtype)
         _closed_pack(u, v, self.cm, self.ui, self.vi, out, False)
         return out
 
     def sample_velocity(self, u, v):
-        out = np.empty(self.data_size)
+        out = np.empty(self.data_size, dtype=self.dtype)
         _closed_pack(u, v, self.cm, self.ui, self.vi, out, True)
         return out
 
     def prepare(self, length, alpha):
         coeff = self._coefficients(length, True)
-        scale = np.empty(self.size)
-        dummy = np.empty(0)
+        scale = np.empty(self.size, dtype=self.dtype)
+        dummy = np.empty(0, dtype=self.dtype)
         _closed_transpose(
             dummy,
             scale,
@@ -1508,13 +1562,13 @@ class _ClosedGrid:
             alpha,
         )
         _closed_prepare_diagonal(scale, self.counts, alpha)
-        penalty = np.empty(self.size)
+        penalty = np.empty(self.size, dtype=self.dtype)
         _closed_penalty(scale, self.counts, alpha, penalty)
         self.scale, self.penalty, self.coeff = scale, penalty, coeff
 
     def matvec(self, z, out=None):
         if out is None:
-            out = np.empty(self.data_size + self.size)
+            out = np.empty(self.data_size + self.size, dtype=self.dtype)
         _closed_forward(
             z,
             out,
@@ -1532,7 +1586,7 @@ class _ClosedGrid:
 
     def rmatvec(self, r, out=None):
         if out is None:
-            out = np.empty(self.size)
+            out = np.empty(self.size, dtype=self.dtype)
         _closed_transpose(
             r,
             out,
@@ -1553,8 +1607,8 @@ class _ClosedGrid:
         return out
 
     def adjoint(self, r):
-        out = np.empty(self.size)
-        dummy = np.empty(0)
+        out = np.empty(self.size, dtype=self.dtype)
+        dummy = np.empty(0, dtype=self.dtype)
         _closed_transpose(
             r,
             out,
@@ -1592,19 +1646,19 @@ class _ClosedGrid:
         return out
 
     def from_centers(self, psi, chi):
-        out = np.zeros(self.size)
+        out = np.zeros(self.size, dtype=self.dtype)
         _closed_initial(psi, chi, self.vm, self.cm, self.counts, out)
         return out
 
     def potentials_to_centers(self, z):
-        out = np.empty((2,) + self.shape)
+        out = np.empty((2,) + self.shape, dtype=self.dtype)
         _closed_centers(z, self.vm, self.cm, self.npsi, out)
         return out
 
     def forward(self, z):
         # Native physical operator; avoids persistent dense row weights.
-        dummy = np.empty(0)
-        out = np.empty(self.data_size)
+        dummy = np.empty(0, dtype=self.dtype)
+        out = np.empty(self.data_size, dtype=self.dtype)
         _closed_forward(
             z,
             out,
@@ -1621,6 +1675,22 @@ class _ClosedGrid:
         return out
 
 
+class _AugmentedCPU:
+    """Out-buffer adapter for the open-grid float32 LSMR recurrence."""
+
+    def __init__(self, operator):
+        self.operator = operator
+        self.size = operator.shape[1]
+        self.data_size = operator.shape[0] - self.size
+        self.dtype = operator.dtype
+
+    def matvec(self, value, out):
+        out[:] = self.operator.matvec(value)
+
+    def rmatvec(self, value, out):
+        out[:] = self.operator.rmatvec(value)
+
+
 def _solve_closed_grid(
     op,
     data,
@@ -1634,6 +1704,7 @@ def _solve_closed_grid(
     initial=None,
     solver="lsmr",
     check_adjoint=False,
+    diagnostics=None,
 ):
     """Same augmented Jacobi-scaled objective as the CSR reference."""
     op.prepare(length, alpha)
@@ -1641,7 +1712,7 @@ def _solve_closed_grid(
         (op.data_size + op.size, op.size),
         matvec=op.matvec,
         rmatvec=op.rmatvec,
-        dtype=float,
+        dtype=op.dtype,
     )
     adjerror = None
     if check_adjoint:
@@ -1650,12 +1721,17 @@ def _solve_closed_grid(
         y = rng.normal(size=op.data_size + op.size)
         a, b = np.dot(op.matvec(x), y), np.dot(x, op.rmatvec(y))
         adjerror = float(abs(a - b) / max(abs(a), abs(b), 1.0))
-        if adjerror > 1e-12:
+        if adjerror > 100 * np.finfo(op.dtype).eps:
             raise RuntimeError(f"Adjoint error: {adjerror}")
         del x, y
-    rhs = np.empty(op.data_size + op.size)
+    rhs = np.empty(op.data_size + op.size, dtype=op.dtype)
     _closed_rhs(data, rhs, op.ui, op.vi, op.wu, op.wv)
-    x0 = None if initial is None else initial / (length * op.scale)
+    x0 = None if initial is None else np.asarray(
+        initial / (length * op.scale), dtype=op.dtype
+    )
+    # SciPy LSQR otherwise initializes its unknown vector in float64.
+    if x0 is None and solver == 'lsqr' and op.dtype == np.dtype('float32'):
+        x0 = np.zeros(op.size, dtype=op.dtype)
     start = time.perf_counter()
     # Neither Krylov method parallelizes its iteration sequence. Both reuse
     # the same parallel matrix-free forward/adjoint kernels. Our closed CPU
@@ -1669,6 +1745,7 @@ def _solve_closed_grid(
             op,
             rhs,
             overwrite_b=True,
+            diagnostics=diagnostics,
             atol=tolerance,
             btol=tolerance,
             conlim=conlim,
@@ -1677,13 +1754,16 @@ def _solve_closed_grid(
             x0=x0,
         )
     else:
-        result = lsqr(
+        solve_lsqr = lsqr if diagnostics is None else _lsqr_diagnostics
+        extra = {} if diagnostics is None else {'diagnostics': diagnostics}
+        result = solve_lsqr(
             operator,
             rhs,
             atol=tolerance,
             btol=tolerance,
             conlim=conlim,
             iter_lim=maxiter,
+            **extra,
             show=show,
             x0=x0,
         )
@@ -1928,23 +2008,23 @@ def _cpu_update_norm(x, h, hbar, v, a, b, c, parts):
 # Givens helper adapted from SciPy LSQR; retain its upstream notice.
 # Copyright (c) 2006, Systems Optimization Laboratory
 # All rights reserved.
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
 # met:
-# 
+#
 #     * Redistributions of source code must retain the above copyright
 #       notice, this list of conditions and the following disclaimer.
-# 
+#
 #     * Redistributions in binary form must reproduce the above
 #       copyright notice, this list of conditions and the following
 #       disclaimer in the documentation and/or other materials provided
 #       with the distribution.
-# 
+#
 #     * Neither the name of Stanford University nor the names of its
 #       contributors may be used to endorse or promote products derived
 #       from this software without specific prior written permission.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 # "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 # LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -1956,7 +2036,7 @@ def _cpu_update_norm(x, h, hbar, v, a, b, c, parts):
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-# 
+#
 
 
 def _cpu_sym_ortho(a, b):
@@ -2006,8 +2086,9 @@ def _lsmr_closed_cpu(
     x0=None,
     *,
     overwrite_b=False,
+    diagnostics=None,
 ):
-    """Float64 closed-grid LSMR with reusable buffers and fused CPU kernels."""
+    """Typed LSMR vectors with float64 scalar/reduction accumulation."""
     A = op
     b = np.atleast_1d(b)
     if b.ndim > 1:
@@ -2030,7 +2111,7 @@ def _lsmr_closed_cpu(
     minDim = min([m, n])
     if maxiter is None:
         maxiter = minDim
-    dtype = np.float64
+    dtype = op.dtype
     if show:
         print(" ")
         print("LSMR            Least-squares solution of  Ax = b\n")
@@ -2038,7 +2119,7 @@ def _lsmr_closed_cpu(
         print(f"damp = {damp:20.14e}\n")
         print(f"atol = {atol:8.2e}                 conlim = {conlim:8.2e}\n")
         print(f"btol = {btol:8.2e}             maxiter = {maxiter:8g}\n")
-    scratch = np.empty(m)
+    scratch = np.empty(m, dtype=dtype)
     parts = np.empty(((m + _CPU_BLOCK - 1) // _CPU_BLOCK, 2))
     u = b if overwrite_b else b.copy()
     normb = _cpu_norm(b, parts)
@@ -2046,12 +2127,12 @@ def _lsmr_closed_cpu(
         x = np.zeros(n, dtype)
         beta = normb
     else:
-        x = np.atleast_1d(x0.copy()).ravel()
+        x = np.atleast_1d(np.asarray(x0, dtype=dtype).copy()).ravel()
         A.matvec(x, out=scratch)
         beta = _cpu_axpy_norm(u, scratch, 1.0, -1.0, parts)
     if beta > 0:
         _cpu_scale(u, 1 / beta)
-        v = np.empty(n)
+        v = np.empty(n, dtype=dtype)
         A.rmatvec(u, out=v)
         alpha = _cpu_norm(v, parts)
     else:
@@ -2088,10 +2169,14 @@ def _lsmr_closed_cpu(
     normr = beta
     normar = alpha * beta
     if normar == 0:
+        if diagnostics is not None:
+            diagnostics(0, 0., 0., 0)
         if show:
             print(msg[0])
         return (x, istop, itn, normr, normar, normA, condA, normx)
     if normb == 0:
+        if diagnostics is not None:
+            diagnostics(0, 0., 0., 0)
         x[()] = 0
         return (x, istop, itn, normr, normar, normA, condA, normx)
     if show:
@@ -2178,6 +2263,8 @@ def _lsmr_closed_cpu(
             istop = 2
         if test1 <= rtol:
             istop = 1
+        if diagnostics is not None:
+            diagnostics(itn, t1, test2, istop)
         if show and (
             n <= 40
             or itn <= 10
@@ -2211,3 +2298,308 @@ def _lsmr_closed_cpu(
         print(str1, str2)
         print(str3, str4)
     return (x, istop, itn, normr, normar, normA, condA, normx)
+
+class _KrylovDiagnostics:
+    """Sample existing scalar stopping tests; never reapply the operator.
+
+    With atol=btol=tolerance, test1 <= btol+atol*||A||*||x||/||b||
+    is equivalent to t1 <= tolerance. The other successful test is
+    test2 <= tolerance. Their minimum therefore supplies one dimensionless
+    stopping error without changing the solver. A includes all face weights,
+    potential penalties and column scaling. It is not a velocity-fit error.
+    """
+
+    def __init__(self, interval):
+        self.interval = interval
+        self.records = []
+        self.final_error = np.nan
+        self.stop_reason = 'max_iterations'
+
+    def __call__(self, iteration, compatible, optimal, code):
+        self.final_error = float(min(compatible, optimal))
+        if not np.isfinite(self.final_error):
+            self.stop_reason = 'overflow'
+        elif code in (0, 1, 2):
+            self.stop_reason = 'converged'
+        elif code in (4, 5):
+            self.stop_reason = 'machine_precision'
+        elif code in (3, 6):
+            self.stop_reason = 'condition_limit'
+        else:
+            self.stop_reason = 'max_iterations'
+        if iteration % self.interval == 0 or code != 0 or iteration == 0:
+            record = (int(iteration), self.final_error)
+            if self.records and self.records[-1][0] == iteration:
+                self.records[-1] = record
+            else:
+                self.records.append(record)
+
+
+
+# LSQR adapted from SciPy (Paige/Saunders reference implementation).
+# It is licensed under the following BSD license:
+#
+# Copyright (c) 2006, Systems Optimization Laboratory
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met:
+#
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#
+#     * Redistributions in binary form must reproduce the above
+#       copyright notice, this list of conditions and the following
+#       disclaimer in the documentation and/or other materials provided
+#       with the distribution.
+#
+#     * Neither the name of Stanford University nor the names of its
+#       contributors may be used to endorse or promote products derived
+#       from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# The Fortran code was translated to Python for use in CVXOPT by Jeffery
+# Kline with contributions by Mridul Aanjaneya and Bob Myhill.
+#
+# Adapted for SciPy by Stefan van der Walt.
+def _lsqr_diagnostics(
+    A,
+    b,
+    damp=0.0,
+    atol=1e-06,
+    btol=1e-06,
+    conlim=100000000.0,
+    iter_lim=None,
+    show=False,
+    calc_var=False,
+    x0=None,
+    *,
+    diagnostics=None,
+):
+    """SciPy LSQR recurrence with scalar diagnostic sampling."""
+    eps = np.finfo(float).eps
+    A = aslinearoperator(A)
+    b = np.atleast_1d(b)
+    if b.ndim > 1:
+        b = b.squeeze()
+    m, n = A.shape
+    if iter_lim is None:
+        iter_lim = 2 * n
+    var = np.zeros(n)
+    msg = (
+        "The exact solution is  x = 0                              ",
+        "Ax - b is small enough, given atol, btol                  ",
+        "The least-squares solution is good enough, given atol     ",
+        "The estimate of cond(Abar) has exceeded conlim            ",
+        "Ax - b is small enough for this machine                   ",
+        "The least-squares solution is good enough for this machine",
+        "Cond(Abar) seems to be too large for this machine         ",
+        "The iteration limit has been reached                      ",
+    )
+    if show:
+        print(" ")
+        print("LSQR            Least-squares solution of  Ax = b")
+        str1 = f"The matrix A has {m} rows and {n} columns"
+        str2 = f"damp = {damp:20.14e}   calc_var = {calc_var:8g}"
+        str3 = f"atol = {atol:8.2e}                 conlim = {conlim:8.2e}"
+        str4 = f"btol = {btol:8.2e}               iter_lim = {iter_lim:8g}"
+        print(str1)
+        print(str2)
+        print(str3)
+        print(str4)
+    itn = 0
+    istop = 0
+    ctol = 0
+    if conlim > 0:
+        ctol = 1 / conlim
+    anorm = 0
+    acond = 0
+    dampsq = damp**2
+    ddnorm = 0
+    res2 = 0
+    xnorm = 0
+    xxnorm = 0
+    z = 0
+    cs2 = -1
+    sn2 = 0
+    u = b
+    bnorm = np.linalg.norm(b)
+    if x0 is None:
+        x = np.zeros(n)
+        beta = bnorm.copy()
+    else:
+        x = np.asarray(x0)
+        u = u - A.matvec(x)
+        beta = np.linalg.norm(u)
+    if beta > 0:
+        u = 1 / beta * u
+        v = A.rmatvec(u)
+        alfa = np.linalg.norm(v)
+    else:
+        v = x.copy()
+        alfa = 0
+    if alfa > 0:
+        v = 1 / alfa * v
+    w = v.copy()
+    rhobar = alfa
+    phibar = beta
+    rnorm = beta
+    r1norm = rnorm
+    r2norm = rnorm
+    arnorm = alfa * beta
+    if arnorm == 0:
+        if show:
+            print(msg[0])
+        if diagnostics is not None and itn == 0:
+            diagnostics(
+                itn,
+                0.0 if arnorm == 0 else r2norm / (bnorm + anorm * xnorm),
+                0.0 if arnorm == 0 else arnorm / (anorm * r2norm + eps),
+                istop,
+            )
+        return (x, istop, itn, r1norm, r2norm, anorm, acond, arnorm, xnorm, var)
+    head1 = "   Itn      x[0]       r1norm     r2norm "
+    head2 = " Compatible    LS      Norm A   Cond A"
+    if show:
+        print(" ")
+        print(head1, head2)
+        test1 = 1
+        test2 = alfa / beta
+        str1 = f"{itn:6g} {x[0]:12.5e}"
+        str2 = f" {r1norm:10.3e} {r2norm:10.3e}"
+        str3 = f"  {test1:8.1e} {test2:8.1e}"
+        print(str1, str2, str3)
+    while itn < iter_lim:
+        itn = itn + 1
+        u = A.matvec(v) - alfa * u
+        beta = np.linalg.norm(u)
+        if beta > 0:
+            u = 1 / beta * u
+            anorm = np.sqrt(anorm**2 + alfa**2 + beta**2 + dampsq)
+            v = A.rmatvec(u) - beta * v
+            alfa = np.linalg.norm(v)
+            if alfa > 0:
+                v = 1 / alfa * v
+        if damp > 0:
+            rhobar1 = np.sqrt(rhobar**2 + dampsq)
+            cs1 = rhobar / rhobar1
+            sn1 = damp / rhobar1
+            psi = sn1 * phibar
+            phibar = cs1 * phibar
+        else:
+            rhobar1 = rhobar
+            psi = 0.0
+        cs, sn, rho = _cpu_sym_ortho(rhobar1, beta)
+        theta = sn * alfa
+        rhobar = -cs * alfa
+        phi = cs * phibar
+        phibar = sn * phibar
+        tau = sn * phi
+        t1 = phi / rho
+        t2 = -theta / rho
+        dk = 1 / rho * w
+        x = x + t1 * w
+        w = v + t2 * w
+        ddnorm = ddnorm + np.linalg.norm(dk) ** 2
+        if calc_var:
+            var = var + dk**2
+        delta = sn2 * rho
+        gambar = -cs2 * rho
+        rhs = phi - delta * z
+        zbar = rhs / gambar
+        xnorm = np.sqrt(xxnorm + zbar**2)
+        gamma = np.sqrt(gambar**2 + theta**2)
+        cs2 = gambar / gamma
+        sn2 = theta / gamma
+        z = rhs / gamma
+        xxnorm = xxnorm + z**2
+        acond = anorm * np.sqrt(ddnorm)
+        res1 = phibar**2
+        res2 = res2 + psi**2
+        rnorm = np.sqrt(res1 + res2)
+        arnorm = alfa * abs(tau)
+        if damp > 0:
+            r1sq = rnorm**2 - dampsq * xxnorm
+            r1norm = np.sqrt(abs(r1sq))
+            if r1sq < 0:
+                r1norm = -r1norm
+        else:
+            r1norm = rnorm
+        r2norm = rnorm
+        test1 = rnorm / bnorm
+        test2 = arnorm / (anorm * rnorm + eps)
+        test3 = 1 / (acond + eps)
+        t1 = test1 / (1 + anorm * xnorm / bnorm)
+        rtol = btol + atol * anorm * xnorm / bnorm
+        if itn >= iter_lim:
+            istop = 7
+        if 1 + test3 <= 1:
+            istop = 6
+        if 1 + test2 <= 1:
+            istop = 5
+        if 1 + t1 <= 1:
+            istop = 4
+        if test3 <= ctol:
+            istop = 3
+        if test2 <= atol:
+            istop = 2
+        if test1 <= rtol:
+            istop = 1
+        if show:
+            prnt = False
+            if n <= 40:
+                prnt = True
+            if itn <= 10:
+                prnt = True
+            if itn >= iter_lim - 10:
+                prnt = True
+            if test3 <= 2 * ctol:
+                prnt = True
+            if test2 <= 10 * atol:
+                prnt = True
+            if test1 <= 10 * rtol:
+                prnt = True
+            if istop != 0:
+                prnt = True
+            if prnt:
+                str1 = f"{itn:6g} {x[0]:12.5e}"
+                str2 = f" {r1norm:10.3e} {r2norm:10.3e}"
+                str3 = f"  {test1:8.1e} {test2:8.1e}"
+                str4 = f" {anorm:8.1e} {acond:8.1e}"
+                print(str1, str2, str3, str4)
+        if diagnostics is not None:
+            diagnostics(itn, t1, test2, istop)
+        if istop != 0:
+            break
+    if show:
+        print(" ")
+        print("LSQR finished")
+        print(msg[istop])
+        print(" ")
+        str1 = f"istop ={istop:8g}   r1norm ={r1norm:8.1e}"
+        str2 = f"anorm ={anorm:8.1e}   arnorm ={arnorm:8.1e}"
+        str3 = f"itn   ={itn:8g}   r2norm ={r2norm:8.1e}"
+        str4 = f"acond ={acond:8.1e}   xnorm  ={xnorm:8.1e}"
+        print(str1 + "   " + str2)
+        print(str3 + "   " + str4)
+        print(" ")
+    if diagnostics is not None and itn == 0:
+        diagnostics(
+            itn,
+            0.0 if arnorm == 0 else r2norm / (bnorm + anorm * xnorm),
+            0.0 if arnorm == 0 else arnorm / (anorm * r2norm + eps),
+            istop,
+        )
+    return (x, istop, itn, r1norm, r2norm, anorm, acond, arnorm, xnorm, var)
