@@ -24,6 +24,20 @@ jobs:
       - name: List installed packages
         shell: bash -l {0}
         run: conda list
+      # create_animation falls back to ``shutil.which('ffmpeg')``, and the conda
+      # imageio-ffmpeg package ships no binary of its own, so the encoder tests
+      # need a real ffmpeg on PATH.  Installed here rather than in
+      # environment.yml: adding it there re-solved the whole environment (numpy
+      # 2.0.2 -> 1.26.4 on py3.9) and broke unrelated numerical tests.
+      - name: Install FFmpeg
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            choco install ffmpeg --no-progress -y
+          else
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
       - name: Check public module imports
         shell: bash -l {0}
         run: python -c "import xinvert; import xinvert.domain; import xinvert.helmholtz"
