@@ -37,9 +37,18 @@ def read_video(path, ffmpeg):
 @pytest.mark.parametrize('bundled', [False, True])
 def test_default_real_encoding(nc, tmp_path, suffix, bundled):
     import imageio_ffmpeg
-    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe() if bundled else shutil.which('ffmpeg')
-    if ffmpeg is None:
-        pytest.skip('system FFmpeg unavailable')
+    if bundled:
+        # The conda package is a wrapper only - the binary rides along with the
+        # PyPI wheels - so get_ffmpeg_exe() raises for a conda-forge install.
+        # That is a missing capability of the environment, not a defect.
+        try:
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        except RuntimeError:
+            pytest.skip('imageio-ffmpeg installed without a bundled binary')
+    else:
+        ffmpeg = shutil.which('ffmpeg')
+        if ffmpeg is None:
+            pytest.skip('system FFmpeg unavailable')
     settings = {'vmin': 0., 'vmax': 47., 'cmap': 'viridis'}
     saved = settings.copy()
     result = create_animation(nc, tmp_path / ('output with spaces.'+suffix),

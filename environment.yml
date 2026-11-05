@@ -12,6 +12,10 @@ dependencies:
   - matplotlib
   - imageio-ffmpeg
   - cloudpickle
+  # create_animation falls back to ``shutil.which('ffmpeg')``, and the conda
+  # imageio-ffmpeg package ships no binary of its own, so the CI matrix needs a
+  # real ffmpeg on PATH or the encoding tests can only skip.
+  - ffmpeg
   - numba
   - ultraplot
   - cartopy
